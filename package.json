@@ -1,0 +1,36 @@
+{
+  "name": "unq-be",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node-dev -r dotenv/config --respawn --pretty --transpile-only ./src",
+    "start": "node ./build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Nando-C/UnQ-BE.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Nando-C/UnQ-BE/issues"
+  },
+  "homepage": "https://github.com/Nando-C/UnQ-BE#readme",
+  "devDependencies": {
+    "dotenv": "^10.0.0",
+    "nodemon": "^2.0.12",
+    "ts-node-dev": "^1.1.8",
+    "typescript": "^4.4.3"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.17.1",
+    "express-list-endpoints": "^6.0.0",
+    "http-errors": "^1.8.0",
+    "mongoose": "^6.0.7"
+  }
+}
