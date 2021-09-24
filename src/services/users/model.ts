@@ -26,8 +26,8 @@ const UserSchema = new Schema<IUserDocument,IUserModel>(
         avatar: String,
         role: {
             type: String,
-            enum: ["Customer", "StoreMg"],
-            default: "Customer"
+            enum: ["customer", "storeMg"],
+            default: "customer"
         },
         refreshToken: String,
     },

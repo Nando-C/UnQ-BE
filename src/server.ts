@@ -5,7 +5,7 @@ import cors from "cors"
 import { errorsHandler } from "./errorMddlewares"
 
 // ===================== Routers =============================
-import authRouter from "./auth/routes"
+import authRouter from "./services/auth/routes"
 
 
 const app = express()
