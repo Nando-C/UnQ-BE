@@ -12,7 +12,6 @@ const googleStrategy = new GoogleStrategy.Strategy(
 
     async(accessToken, refreshToken, profile, passportNext) => {
         try {
-            console.log(profile)
             const user = await UserModel.findOne({googleId: profile.id})
 
             if (user) {
@@ -29,6 +28,7 @@ const googleStrategy = new GoogleStrategy.Strategy(
                 const createdUser = new UserModel(newUser)
                 const savedUser = await createdUser.save()
                 const tokens = await getTokens(savedUser)
+                // console.log(savedUser)
 
                 passportNext(null, {user: savedUser, tokens})
             }

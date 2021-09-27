@@ -3,6 +3,7 @@ import express from "express"
 import cors from "cors"
 import passport from "passport"
 import googleStrategy from "./services/auth/oauth"
+import cookieParser from "cookie-parser"
 
 import { errorsHandler } from "./errorMddlewares"
 import { corsOptions } from "./settings/cors"
@@ -17,6 +18,7 @@ passport.use("google", googleStrategy)
 // ===================== MIDDLEWARES =============================
 app.use(express.json())
 app.use(cors(corsOptions))
+app.use(cookieParser())
 app.use(passport.initialize())
 
 // ===================== ENDPOINTS  =================================

@@ -21,7 +21,7 @@ const UserSchema = new Schema<IUserDocument,IUserModel>(
         },
         password: {
             type: String,
-            required: true,
+            // required: true,
         },
         avatar: String,
         role: {
