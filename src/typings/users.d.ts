@@ -15,3 +15,10 @@ export interface IUserDocument extends Document, IUser {}
 export interface IUserModel extends Model<IUserDocument> {
     checkCredentials (email: string, password: string): Promise<IUserDocument | null>
 }
+
+export interface IPassportUser extends IUserDocument {
+    tokens: {
+        accessToken: string
+        refreshToken: string
+    }
+}

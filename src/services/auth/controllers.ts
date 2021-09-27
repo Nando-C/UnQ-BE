@@ -2,6 +2,7 @@ import { TController } from "src/typings/controllers"
 import UserModel from "../users/model"
 import { getTokens, refreshTokens } from "./tools"
 import createError from "http-errors"
+import { IPassportUser } from "src/typings/users"
 
 export const registerUser: TController = async (req, res, next) => {
     const newUser = { ...req.body }
@@ -14,12 +15,12 @@ export const registerUser: TController = async (req, res, next) => {
         res.cookie("accessToken", accessToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === "production" ? true : false,
-            // sameSite: "none",
+            sameSite: "none",
         })
         res.cookie("refreshToken", refreshToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === "production" ? true : false,
-            // sameSite: "none",
+            sameSite: "none",
         })
         res.status(204).send()
     } catch (error) {
@@ -39,12 +40,12 @@ export const loginUser: TController = async ( req, res, next ) => {
         res.cookie("accessToken", accessToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === "production" ? true : false,
-            // sameSite: "none"
+            sameSite: "none"
         })
         res.cookie("refreshToken", refreshToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === "production" ? true : false,
-            // sameSite: "none",
+            sameSite: "none",
         })
         res.status(204).send()
     } catch (error) {
@@ -63,15 +64,38 @@ export const refresh: TController = async (req, res, next) => {
         res.cookie("accessToken", tokens.accessToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === "production" ? true : false,
-            // sameSite: "none",
+            sameSite: "none",
         })
         res.cookie("refreshToken", refreshToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === "production" ? true : false,
-            // sameSite: "none",
+            sameSite: "none",
         })
         res.status(204).send()
     } catch (error) {
         next(createError(500, error as Error))
+    }
+}
+
+export const googleRedirect: TController =  async (req, res, next) => {
+    try {
+        const user = req.user as IPassportUser
+        const { accessToken, refreshToken } = user.tokens
+
+        res.cookie("accessToken", accessToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production" ? true : false,
+            sameSite: "none"
+        })
+        res.cookie("refreshToken", refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production" ? true : false,
+            sameSite: "none",
+        })
+
+        res.redirect(`${process.env.FRONTEND_DEV_URL}`)
+    } catch (error) {
+        console.log(error)
+        next(error)
     }
 }
