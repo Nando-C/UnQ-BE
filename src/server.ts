@@ -10,6 +10,7 @@ import { corsOptions } from "./settings/cors"
 
 // ===================== Routers =============================
 import authRouter from "./services/auth/routes"
+import userRouter from "./services/users/routes"
 
 
 const app = express()
@@ -23,6 +24,7 @@ app.use(passport.initialize())
 
 // ===================== ENDPOINTS  =================================
 app.use("/auth", authRouter)
+app.use("/users", userRouter)
 
 // ===================== ERROR HANDLERS ==========================
 app.use(errorsHandler)

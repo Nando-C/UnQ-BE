@@ -7,6 +7,7 @@ export const errorsHandler: TErrorHandler = (err, req, res, next) => {
       console.log(err)
       res.status(500).json("Generic Server Error")
     } else {
+      console.log(err)
       res.status(err.status).json(err)
     }
   }
