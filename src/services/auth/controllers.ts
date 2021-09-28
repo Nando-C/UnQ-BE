@@ -2,7 +2,7 @@ import { TController } from "src/typings/controllers"
 import UserModel from "../users/model"
 import { getTokens, refreshTokens } from "./tools"
 import createError from "http-errors"
-import { IPassportUser } from "src/typings/users"
+import { IGoogleUser } from "src/typings/users"
 
 export const registerUser: TController = async (req, res, next) => {
     const newUser = { ...req.body }
@@ -22,7 +22,7 @@ export const registerUser: TController = async (req, res, next) => {
             secure: process.env.NODE_ENV === "production" ? true : false,
             // sameSite: "none",
         })
-        res.status(204).send()
+        res.status(204).send(user)
     } catch (error) {
         next(createError(400, error as Error))
     }
@@ -53,7 +53,7 @@ export const loginUser: TController = async ( req, res, next ) => {
     }
 } 
 
-export const refresh: TController = async (req, res, next) => {
+export const tokenRefresh: TController = async (req, res, next) => {
     const { refreshToken } = req.cookies
     if (!refreshToken) return next(createError(400, "Refresh token MUST be provided!"))
 
@@ -79,7 +79,7 @@ export const refresh: TController = async (req, res, next) => {
 
 export const googleRedirect: TController =  async (req, res, next) => {
     try {
-        const user = req.user as IPassportUser
+        const user = req.user as IGoogleUser
         const { accessToken, refreshToken } = user.tokens
 
         res.cookie("accessToken", accessToken, {
@@ -94,6 +94,17 @@ export const googleRedirect: TController =  async (req, res, next) => {
         })
 
         res.redirect(`${process.env.FRONTEND_DEV_URL}`)
+    } catch (error) {
+        console.log(error)
+        next(createError(500, error as Error))
+    }
+}
+
+export const logoutUser: TController = async (req, res, next) => {
+    try {
+        res.clearCookie("accessToken")
+        res.clearCookie("refreshToken")
+        res.status(204).send()
     } catch (error) {
         console.log(error)
         next(error)
