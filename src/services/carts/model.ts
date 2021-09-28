@@ -1,5 +1,5 @@
 import mongoose from "mongoose"
-import { ICart } from "src/typings/cart"
+import { ICart, ICartDocument } from "src/typings/cart"
 
 const { Schema, model } = mongoose
 
@@ -44,10 +44,18 @@ const CartSchema = new Schema<ICart>(
                 splitStatus: {
                     type: String,
                     enum: ["open", "closed"],
-                    default: "open",
+                    default: "closed",
                 },
             }
-        ]
-
-    }
+        ],
+    },
+    { timestamps: true}
 )
+
+CartSchema.methods.toJSON = function () {
+    const cart = this.toObject()
+    delete cart.__v
+    return cart
+}
+
+export default model<ICartDocument>("Cart", CartSchema)
