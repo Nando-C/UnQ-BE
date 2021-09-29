@@ -22,7 +22,7 @@ export const JWTAuthMiddleware: TController = async (req, res, next) => {
 export const adminOnly: TController = async ( req, res, next ) => {
     const user = req.user as IUserDocument
 
-    if (user.role === "storeMg") {
+    if (user.role === "shopMg") {
         next()
     } else {
         next(createError(403, "Shop Manager Only!!"))
