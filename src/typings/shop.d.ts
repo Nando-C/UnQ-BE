@@ -7,7 +7,7 @@ export interface IShop {
     open_times: string
     phone: number
     web_URL: string
-    storeMg: Schema.Types.ObjectId[]
+    shopMg: Schema.Types.ObjectId[]
     tables: [
         {
             id: string

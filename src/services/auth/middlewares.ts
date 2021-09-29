@@ -3,6 +3,7 @@ import createError from "http-errors"
 import { verifyJWT } from "./tools"
 import { JwtPayload } from "jsonwebtoken"
 import UserModel from "../users/model"
+import { IUserDocument } from "src/typings/users"
 
 export const JWTAuthMiddleware: TController = async (req, res, next) => {
     if (!req.cookies.accessToken) return next(createError(401, "Please provide credentials in cookies!"))
@@ -15,5 +16,15 @@ export const JWTAuthMiddleware: TController = async (req, res, next) => {
         next()
     } catch (error) {
         next(createError(401, "Invalid token"))
+    }
+}
+
+export const adminOnly: TController = async ( req, res, next ) => {
+    const user = req.user as IUserDocument
+
+    if (user.role === "storeMg") {
+        next()
+    } else {
+        next(createError(403, "Shop Manager Only!!"))
     }
 }

@@ -29,7 +29,7 @@ const ShopSchema = new Schema<IShopDocument> (
             type: String,
             required: false,
         },
-        storeMg: {
+        shopMg: {
             type: [Schema.Types.ObjectId],
             ref: "User",
             required: true,

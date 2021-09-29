@@ -1,7 +1,6 @@
 import { TController } from "../../typings/controllers"
 import { IUserDocument } from "src/typings/users"
 import createError from "http-errors"
-import UserModel from "./model"
 
 export const getMe: TController = async ( req, res, next) => {
     res.json(req.user)
