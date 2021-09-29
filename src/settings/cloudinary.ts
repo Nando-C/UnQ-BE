@@ -12,3 +12,14 @@ const avatarStorage = new CloudinaryStorage({
 })
 
 export const userAvatarParser = multer({ storage: avatarStorage})
+
+const coverStorage = new CloudinaryStorage({
+    cloudinary,
+    params: async (req, file) => {
+        return {
+            folder: "UnQ-App/Shops",
+        }
+    },
+})
+
+export const shopCoverParser = multer({ storage: coverStorage})

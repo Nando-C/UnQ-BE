@@ -80,3 +80,17 @@ export const deleteMyShop: TController = async ( req, res, next ) => {
         next(createError(500, error as Error))
     }
 }
+
+export const editMyShopCover: TController = async ( req, res, next ) => {
+    try {
+        const user = req.user as IUserDocument
+        const shopId = req.params.shopId
+
+        const shopWithNewCover = await ShopModel.findOneAndUpdate({_id: shopId, shopMg: user._id }, { cover: req.file?.path }, {runValidators: true })
+        if (!shopWithNewCover) return next(createError(400, "Shop Not Found or you are not authorized!"))
+
+        res.send(shopWithNewCover)
+    } catch (error) {
+        next(createError(500, error as Error))
+    }
+}
