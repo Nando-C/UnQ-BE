@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { shopCoverParser } from "../../settings/cloudinary"
+import { menuItemImageParser, shopCoverParser } from "../../settings/cloudinary"
 import { adminOnly, isShopManager, JWTAuthMiddleware } from "../auth/middlewares"
 import * as controllers from "./controllers"
 import * as menuControllers from "./menuControllers"
@@ -18,7 +18,8 @@ router.delete("/:shopId", JWTAuthMiddleware, adminOnly, controllers.deleteMyShop
 router.post("/:shopId/menu", JWTAuthMiddleware, adminOnly, menuControllers.createItem)
 router.get("/:shopId/menu", JWTAuthMiddleware, adminOnly, menuControllers.getMenuList)
 router.get("/:shopId/menu/:itemId", JWTAuthMiddleware, adminOnly, menuControllers.getMenuItem)
-router.put("/:shopId/menu/:itemId", JWTAuthMiddleware, adminOnly, isShopManager, menuControllers.editMenuItem)
-router.delete("/:shopId/menu/:itemId", JWTAuthMiddleware, adminOnly, isShopManager, menuControllers.deleteMenuItem)
+router.put("/:shopId/menu/:itemId", JWTAuthMiddleware, adminOnly, isShopManager, menuControllers.editItem)
+router.put("/:shopId/menu/:itemId/img", JWTAuthMiddleware, isShopManager, menuItemImageParser.single("image"), menuControllers.editItemImage)
+router.delete("/:shopId/menu/:itemId", JWTAuthMiddleware, adminOnly, isShopManager, menuControllers.deleteItem)
 
 export default router

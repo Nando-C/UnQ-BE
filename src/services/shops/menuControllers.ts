@@ -54,7 +54,7 @@ export const getMenuItem: TController = async ( req, res, next ) => {
 
 // -------------------------------------------------------------------------
 
-export const editMenuItem: TController = async ( req, res, next ) => {
+export const editItem: TController = async ( req, res, next ) => {
     try {
         // const user = req.user as IUserDocument
         const shopId = req.params.shopId
@@ -75,7 +75,7 @@ export const editMenuItem: TController = async ( req, res, next ) => {
 
 // -------------------------------------------------------------------------
 
-export const deleteMenuItem: TController = async ( req, res, next ) => {
+export const deleteItem: TController = async ( req, res, next ) => {
     try {
         const shopId = req.params.shopId
         const itemId = req.params.itemId
@@ -83,7 +83,27 @@ export const deleteMenuItem: TController = async ( req, res, next ) => {
         const modifiedShop = await ShopModel.findByIdAndUpdate(shopId, { $pull: { menu: { _id: itemId} } })
         if (!modifiedShop) return next(createError(404, "Menu Item Not Found!"))
 
-        res.send(modifiedShop)
+        res.send(modifiedShop.menu)
+    } catch (error) {
+        next(createError(500, error as Error))
+    }
+}
+
+// -------------------------------------------------------------------------
+
+export const editItemImage: TController = async ( req, res, next ) => {
+    try {
+        const shopId = req.params.shopId
+        const itemId = req.params.itemId
+
+        const modifiedShop = await ShopModel.findOneAndUpdate( 
+            { _id: shopId, "menu._id": itemId },
+            { $set: { "menu.$.image": req.file?.path } },
+            { runValidators: true } 
+        )
+        if (!modifiedShop) return next(createError(404, "Menu Item Not Found!"))
+
+        res.send(modifiedShop.menu)
     } catch (error) {
         next(createError(500, error as Error))
     }
