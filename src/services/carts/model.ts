@@ -5,19 +5,25 @@ const { Schema, model } = mongoose
 
 const CartSchema = new Schema<ICart>(
     {
+        shopId: {
+            type: Schema.Types.ObjectId,
+            ref: "Shop",
+            required: true,
+        },
         tableId: {
             type: String,
             required: true,
         },
         status: {
             type: String,
-            enum: ["open", "closed"],
+            enum: ["open", "splited", "closed"],
             default: "open",
         },
         items: [
             {
-                item_id: {
+                menuId: {
                     type: Schema.Types.ObjectId,
+                    ref: "Menu",
                     required: true,
                 },
                 qty: {
@@ -33,8 +39,9 @@ const CartSchema = new Schema<ICart>(
                     type: Schema.Types.ObjectId,
                     // required: true,
                 },
-                itemId: {
+                menuId: {
                     type: Schema.Types.ObjectId,
+                    ref: "Menu",
                     // required: true,
                 },
                 qty: {

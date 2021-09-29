@@ -20,7 +20,7 @@ export interface IShop {
 export interface IMenuItem {
     name: string
     image: string
-    short_decription: string
+    short_description: string
     description: string
     price: number
     available: boolean

@@ -10,7 +10,6 @@ export const createShop: TController = async ( req, res, next ) => {
     const newShop = { 
         ...req.body, 
         shopMg: [ user._id ],
-        cover: `https://nayemdevs.com/wp-content/uploads/2020/03/default-product-image.png`,
     }
 
         const shop = await new ShopModel(newShop).save()

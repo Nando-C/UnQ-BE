@@ -1,6 +1,7 @@
 import { Document, Schema } from "mongoose";
 
 export interface ICart {
+    shopId: Schema.Types.ObjectId
     tableId: string
     status: string
     items: IItem[]
@@ -8,14 +9,14 @@ export interface ICart {
 }
 
 export interface IItem {
-    itemId: Schema.Types.ObjectId
+    menuId: Schema.Types.ObjectId
     qty: number
     // totalPriceItems: number
 }
 
 export interface ISplitItem {
     userId: Schema.Types.ObjectId
-    itemId: Schema.Types.ObjectId
+    menuId: Schema.Types.ObjectId
     qty: number
     splitStatus: string
     // total_price_items: number

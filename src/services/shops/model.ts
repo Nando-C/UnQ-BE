@@ -11,7 +11,7 @@ const ShopSchema = new Schema<IShopDocument> (
         },
         cover: {
             type: String,
-            required: false
+            default: `https://nayemdevs.com/wp-content/uploads/2020/03/default-product-image.png`,
         },
         bio: {
             type: String,
@@ -48,9 +48,9 @@ const ShopSchema = new Schema<IShopDocument> (
                 },
                 image: {
                     type: String,
-                    required: false,
+                    default: `https://nayemdevs.com/wp-content/uploads/2020/03/default-product-image.png`,
                 },
-                short_decription: {
+                short_description: {
                     type: String,
                     required: true,
                 },
