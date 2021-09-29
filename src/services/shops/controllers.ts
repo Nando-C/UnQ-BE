@@ -3,6 +3,8 @@ import ShopModel from "./model"
 import createError from "http-errors"
 import { IUserDocument } from "src/typings/users"
 
+// -------------------------------------------------------------------------
+
 export const createShop: TController = async ( req, res, next ) => {
     try {
     const user = req.user as IUserDocument
@@ -19,6 +21,8 @@ export const createShop: TController = async ( req, res, next ) => {
     }
 }
 
+// -------------------------------------------------------------------------
+
 export const getMyShops: TController = async ( req, res, next) => {
     try {
         const user = req.user as IUserDocument
@@ -31,6 +35,8 @@ export const getMyShops: TController = async ( req, res, next) => {
         next(createError(500, error as Error))
     }
 }
+
+// -------------------------------------------------------------------------
 
 export const getMySingleShop: TController = async ( req, res, next ) => {
     try {
@@ -52,6 +58,8 @@ export const getMySingleShop: TController = async ( req, res, next ) => {
     }
 }
 
+// -------------------------------------------------------------------------
+
 export const editMyShop: TController = async ( req, res, next ) => {
     try {
         const user = req.user as IUserDocument
@@ -65,6 +73,8 @@ export const editMyShop: TController = async ( req, res, next ) => {
         next(createError(500, error as Error))
     }
 }
+
+// -------------------------------------------------------------------------
 
 export const deleteMyShop: TController = async ( req, res, next ) => {
     try {
@@ -80,6 +90,8 @@ export const deleteMyShop: TController = async ( req, res, next ) => {
     }
 }
 
+// -------------------------------------------------------------------------
+
 export const editMyShopCover: TController = async ( req, res, next ) => {
     try {
         const user = req.user as IUserDocument
@@ -93,3 +105,5 @@ export const editMyShopCover: TController = async ( req, res, next ) => {
         next(createError(500, error as Error))
     }
 }
+
+// -------------------------------------------------------------------------

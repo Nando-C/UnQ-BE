@@ -3,6 +3,7 @@ import ShopModel from "./model"
 import createError from "http-errors"
 import { IUserDocument } from "src/typings/users"
 
+// -------------------------------------------------------------------------
 
 export const createItem: TController = async ( req, res, next ) => {
     try {
@@ -19,6 +20,8 @@ export const createItem: TController = async ( req, res, next ) => {
     }
 }
 
+// -------------------------------------------------------------------------
+
 export const getMenuList: TController = async ( req, res, next ) => {
     try {
         const user = req.user as IUserDocument
@@ -33,6 +36,8 @@ export const getMenuList: TController = async ( req, res, next ) => {
     }
 }
 
+// -------------------------------------------------------------------------
+
 export const getMenuItem: TController = async ( req, res, next ) => {
     try {
         const shopId = req.params.shopId
@@ -46,6 +51,8 @@ export const getMenuItem: TController = async ( req, res, next ) => {
         next(createError(500, error as Error))
     }
 }
+
+// -------------------------------------------------------------------------
 
 export const editMenuItem: TController = async ( req, res, next ) => {
     try {
@@ -66,6 +73,8 @@ export const editMenuItem: TController = async ( req, res, next ) => {
     }
 }
 
+// -------------------------------------------------------------------------
+
 export const deleteMenuItem: TController = async ( req, res, next ) => {
     try {
         const shopId = req.params.shopId
@@ -79,3 +88,5 @@ export const deleteMenuItem: TController = async ( req, res, next ) => {
         next(createError(500, error as Error))
     }
 }
+
+// -------------------------------------------------------------------------

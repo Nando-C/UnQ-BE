@@ -7,6 +7,8 @@ import ShopModel from "../shops/model"
 import { IUserDocument } from "src/typings/users"
 
 
+// -------------------------------------------------------------------------
+
 export const JWTAuthMiddleware: TController = async (req, res, next) => {
     if (!req.cookies.accessToken) return next(createError(401, "Please provide credentials in cookies!"))
     const token = req.cookies.accessToken
@@ -21,6 +23,8 @@ export const JWTAuthMiddleware: TController = async (req, res, next) => {
     }
 }
 
+// -------------------------------------------------------------------------
+
 export const adminOnly: TController = async ( req, res, next ) => {
     const user = req.user as IUserDocument
 
@@ -30,6 +34,8 @@ export const adminOnly: TController = async ( req, res, next ) => {
         next(createError(403, "Shop Manager Only!!"))
     }
 }
+
+// -------------------------------------------------------------------------
 
 export const isShopManager: TController = async ( req, res, next ) => {
     try {
@@ -51,3 +57,5 @@ export const isShopManager: TController = async ( req, res, next ) => {
         next(error)
     }
 }
+
+// -------------------------------------------------------------------------

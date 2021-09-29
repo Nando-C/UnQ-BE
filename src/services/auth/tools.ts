@@ -3,6 +3,8 @@ import { IJWTPayload } from "src/typings/jwt"
 import { IUserDocument } from "src/typings/users"
 import UserModel from "../users/model"
 
+// -------------------------------------------------------------------------
+
 const generateJWT = (payload: IJWTPayload) => 
     new Promise((resolve, reject)=> 
         jwt.sign(payload, process.env.JWT_SECRET!, { expiresIn: "2w"}, (err, token) => {
@@ -18,7 +20,9 @@ const generateRefreshJWT = (payload: IJWTPayload) =>
             resolve(token)
         })
     )
-   
+
+// -------------------------------------------------------------------------
+    
 export const getTokens = async (user: IUserDocument) => {
     const accessToken = (await generateJWT({ _id: user._id })) as string
     const refreshToken = (await generateRefreshJWT({ _id: user._id })) as string
@@ -30,6 +34,8 @@ export const getTokens = async (user: IUserDocument) => {
     return { accessToken, refreshToken}
 }
 
+// -------------------------------------------------------------------------
+
 export const verifyJWT = (token: string) => 
     new Promise((resolve, reject) => 
         jwt.verify(token, process.env.JWT_SECRET!, (err, decodedToken) => {
@@ -38,6 +44,8 @@ export const verifyJWT = (token: string) =>
         })
     )
 
+// -------------------------------------------------------------------------
+
 export const verifyRefreshJWT = (token: string) => 
     new Promise((resolve, reject) => 
         jwt.verify(token, process.env.JWT_REFRESH_SECRET!, (err, decodedToken) => {
@@ -45,6 +53,8 @@ export const verifyRefreshJWT = (token: string) =>
             resolve(decodedToken)
         })
     )
+
+// -------------------------------------------------------------------------
 
 export const refreshTokens = async ( currentRefreshToken: string) => {
     try {
@@ -61,3 +71,5 @@ export const refreshTokens = async ( currentRefreshToken: string) => {
         throw new Error("Token not valid!")
     }
 }
+
+// -------------------------------------------------------------------------

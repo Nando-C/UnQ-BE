@@ -1,4 +1,4 @@
-// ===================== Packages =============================
+// ===================== Packages ===================================
 import express from "express"
 import cors from "cors"
 import passport from "passport"
@@ -8,7 +8,7 @@ import cookieParser from "cookie-parser"
 import { errorsHandler } from "./errorMddlewares"
 import { corsOptions } from "./settings/cors"
 
-// ===================== Routers =============================
+// ===================== Routers ====================================
 import authRouter from "./services/auth/routes"
 import userRouter from "./services/users/routes"
 import shopRouter from "./services/shops/routes"
@@ -17,7 +17,7 @@ import shopRouter from "./services/shops/routes"
 const app = express()
 passport.use("google", googleStrategy)
 
-// ===================== MIDDLEWARES =============================
+// ===================== MIDDLEWARES ================================
 app.use(express.json())
 app.use(cors(corsOptions))
 app.use(cookieParser())
@@ -28,7 +28,7 @@ app.use("/auth", authRouter)
 app.use("/users", userRouter)
 app.use("/shops", shopRouter)
 
-// ===================== ERROR HANDLERS ==========================
+// ===================== ERROR HANDLERS =============================
 app.use(errorsHandler)
 
 export default app

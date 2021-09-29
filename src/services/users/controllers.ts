@@ -2,9 +2,13 @@ import { TController } from "../../typings/controllers"
 import { IUserDocument } from "src/typings/users"
 import createError from "http-errors"
 
+// -------------------------------------------------------------------------
+
 export const getMe: TController = async ( req, res, next) => {
     res.json(req.user)
 }
+
+// -------------------------------------------------------------------------
 
 export const editMe: TController = async ( req, res, next) => {
     const me = req.user as IUserDocument
@@ -15,6 +19,8 @@ export const editMe: TController = async ( req, res, next) => {
         next(createError(500, "An Error ocurred while updating the user"))
     }
 }
+
+// -------------------------------------------------------------------------
 
 export const editMyAvatar: TController = async ( req, res, next) => {
     const me = req.user as IUserDocument
@@ -27,6 +33,8 @@ export const editMyAvatar: TController = async ( req, res, next) => {
     }
 }
 
+// -------------------------------------------------------------------------
+
 export const deleteMe: TController = async ( req, res, next ) => {
     const me = req.user as IUserDocument
     try {
@@ -36,3 +44,5 @@ export const deleteMe: TController = async ( req, res, next ) => {
         next(createError(500, "An Error ocurred while deleting the user"))
     }
 }
+
+// -------------------------------------------------------------------------

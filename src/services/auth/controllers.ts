@@ -4,6 +4,8 @@ import { getTokens, refreshTokens } from "./tools"
 import createError from "http-errors"
 import { IGoogleUser } from "src/typings/users"
 
+// -------------------------------------------------------------------------
+
 export const registerUser: TController = async (req, res, next) => {
     const newUser = { ...req.body }
 
@@ -27,6 +29,8 @@ export const registerUser: TController = async (req, res, next) => {
         next(createError(400, error as Error))
     }
 }
+
+// -------------------------------------------------------------------------
 
 export const loginUser: TController = async ( req, res, next ) => {
     const { email, password } = req.body
@@ -53,6 +57,8 @@ export const loginUser: TController = async ( req, res, next ) => {
     }
 } 
 
+// -------------------------------------------------------------------------
+
 export const tokenRefresh: TController = async (req, res, next) => {
     const { refreshToken } = req.cookies
     if (!refreshToken) return next(createError(400, "Refresh token MUST be provided!"))
@@ -77,6 +83,8 @@ export const tokenRefresh: TController = async (req, res, next) => {
     }
 }
 
+// -------------------------------------------------------------------------
+
 export const googleRedirect: TController =  async (req, res, next) => {
     try {
         const user = req.user as IGoogleUser
@@ -100,6 +108,8 @@ export const googleRedirect: TController =  async (req, res, next) => {
     }
 }
 
+// -------------------------------------------------------------------------
+
 export const logoutUser: TController = async (req, res, next) => {
     try {
         res.clearCookie("accessToken")
@@ -110,3 +120,5 @@ export const logoutUser: TController = async (req, res, next) => {
         next(error)
     }
 }
+
+// -------------------------------------------------------------------------
