@@ -1,7 +1,7 @@
-import { TController } from "src/typings/controllers"
-import ShopModel from "./model"
-import createError from "http-errors"
+import { TController } from "../../../typings/controllers"
 import { IUserDocument } from "src/typings/users"
+import ShopModel from "../model"
+import createError from "http-errors"
 
 // -------------------------------------------------------------------------
 
