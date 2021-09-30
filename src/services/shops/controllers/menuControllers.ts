@@ -83,7 +83,7 @@ export const deleteItem: TController = async ( req, res, next ) => {
         const modifiedShop = await ShopModel.findByIdAndUpdate(shopId, { $pull: { menu: { _id: itemId} } })
         if (!modifiedShop) return next(createError(404, "Menu Item Not Found!"))
 
-        res.send(modifiedShop.menu)
+        res.status(204).send()
     } catch (error) {
         next(createError(500, error as Error))
     }

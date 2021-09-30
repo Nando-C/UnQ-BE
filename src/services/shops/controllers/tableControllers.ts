@@ -8,7 +8,7 @@ export const createTable: TController = async ( req, res, next ) => {
     try {
         const shopId = req.params.shopId
         const newTable = req.body
-        
+
         const existingTableName = await ShopModel.findOne( {_id: shopId, "tables.name": newTable.name} )
          if (existingTableName) return next(createError(400, `Table name: '${newTable.name}' already exist!`))
 
@@ -91,7 +91,7 @@ export const deleteTable: TController = async ( req, res, next ) => {
         const modifiedShop = await ShopModel.findByIdAndUpdate(shopId, { $pull: { tables: { _id: tableId} } })
         if (!modifiedShop) return next(createError(404, "Table Not Found!"))
 
-        res.send(modifiedShop.tables)
+        res.status(204).send()
     } catch (error) {
         next(createError(500, error as Error))
     }
