@@ -1,19 +1,19 @@
 import { Router } from "express"
 import { menuItemImageParser, shopCoverParser } from "../../settings/cloudinary"
 import { adminOnly, isShopManager, JWTAuthMiddleware } from "../auth/middlewares"
-import * as controllers from "./controllers/shopControllers"
+import * as shopControllers from "./controllers/shopControllers"
 import * as menuControllers from "./controllers/menuControllers"
 import * as tableControllers from "./controllers/tableControllers"
 
 const router = Router()
 
 // My Shop Routes
-router.post("/", JWTAuthMiddleware, adminOnly, controllers.createShop)
-router.get("/", JWTAuthMiddleware, adminOnly, controllers.getMyShops)
-router.get("/:shopId", JWTAuthMiddleware, adminOnly, controllers.getMySingleShop)
-router.put("/:shopId", JWTAuthMiddleware, adminOnly, controllers.editMyShop)
-router.put("/:shopId/cover", JWTAuthMiddleware, adminOnly, shopCoverParser.single("cover"), controllers.editMyShopCover)
-router.delete("/:shopId", JWTAuthMiddleware, adminOnly, controllers.deleteMyShop)
+router.post("/", JWTAuthMiddleware, adminOnly, shopControllers.createShop)
+router.get("/", JWTAuthMiddleware, adminOnly, shopControllers.getMyShops)
+router.get("/:shopId", JWTAuthMiddleware, adminOnly, shopControllers.getMySingleShop)
+router.put("/:shopId", JWTAuthMiddleware, adminOnly, shopControllers.editMyShop)
+router.put("/:shopId/cover", JWTAuthMiddleware, adminOnly, shopCoverParser.single("cover"), shopControllers.editMyShopCover)
+router.delete("/:shopId", JWTAuthMiddleware, adminOnly, shopControllers.deleteMyShop)
 
 // Shop's Menu Routes
 router.post("/:shopId/menu", JWTAuthMiddleware, adminOnly, menuControllers.createItem)
