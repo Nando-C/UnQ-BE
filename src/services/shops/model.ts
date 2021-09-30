@@ -36,7 +36,10 @@ const ShopSchema = new Schema<IShopDocument> (
         },
         tables: [
             {
-                tableId: String,
+                name: {
+                    type: String,
+                    required: true,
+                },
                 Qr_Url: String,
             },
         ],

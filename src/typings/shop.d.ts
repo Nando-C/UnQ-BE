@@ -8,13 +8,14 @@ export interface IShop {
     phone: number
     web_URL: string
     shopMg: Schema.Types.ObjectId[]
-    tables: [
-        {
-            id: string
-            Qr_Url: string
-        }
-    ]
+    tables: ITable[]
     menu: IMenuItem[]
+}
+
+export interface ITable {
+    _id: Schema.Types.ObjectId
+    name: string
+    Qr_Url: string
 }
 
 export interface IMenuItem {

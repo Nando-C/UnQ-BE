@@ -8,11 +8,22 @@ export const createTable: TController = async ( req, res, next ) => {
     try {
         const shopId = req.params.shopId
         const newTable = req.body
+        
+        const existingTableName = await ShopModel.findOne( {_id: shopId, "tables.name": newTable.name} )
+         if (existingTableName) return next(createError(400, `Table name: '${newTable.name}' already exist!`))
 
         const modifiedShop = await ShopModel.findByIdAndUpdate({_id: shopId}, { $push: {tables: newTable}}, { runValidators: true})
         if (!modifiedShop) return next(createError(404, "Shop Not Found!"))
 
-        res.send(modifiedShop.tables[modifiedShop.tables.length-1])
+        const tableId = modifiedShop.tables[modifiedShop.tables.length-1]._id
+
+        const modifiedShopWithQr = await ShopModel.findOneAndUpdate(
+            { _id: shopId, "tables.name": newTable.name },
+            { $set: {"tables.$.Qr_Url": `${process.env.FRONTEND_DEV_URL}/shops/${shopId}/tables/${tableId}`}},
+            { runValidators: true }
+        )
+
+        res.send(modifiedShopWithQr.tables[modifiedShopWithQr.tables.length-1])
     } catch (error) {
         next(createError(500, error as Error))
     }
