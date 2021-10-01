@@ -5,10 +5,15 @@ const { Schema, model } = mongoose
 
 const CartSchema = new Schema<ICart>(
     {
+        userId: {
+            type: Schema.Types.ObjectId,
+            required: true,
+            ref: "User",
+        },
         shopId: {
             type: Schema.Types.ObjectId,
-            ref: "Shop",
             required: true,
+            ref: "Shop",
         },
         tableId: {
             type: String,
@@ -23,8 +28,8 @@ const CartSchema = new Schema<ICart>(
             {
                 menuId: {
                     type: Schema.Types.ObjectId,
-                    ref: "Menu",
                     required: true,
+                    ref: "Menu",
                 },
                 qty: {
                     type: Number,

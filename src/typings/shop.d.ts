@@ -29,3 +29,5 @@ export interface IMenuItem {
 }
 
 export interface IShopDocument extends Document, IShop {}
+
+export interface IMenuDocument extends Document, IMenuItem {}
