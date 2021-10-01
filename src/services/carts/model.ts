@@ -21,7 +21,7 @@ const CartSchema = new Schema<ICart>(
         },
         status: {
             type: String,
-            enum: ["open", "splited", "closed"],
+            enum: ["open", "splitted", "closed"],
             default: "open",
         },
         items: [
@@ -35,28 +35,28 @@ const CartSchema = new Schema<ICart>(
                     type: Number,
                     required: true,
                 },
-                // totalPriceItems: Number,
+                // PriceItems: Number,
             }
         ],
         split: [
             {
                 userId: {
                     type: Schema.Types.ObjectId,
-                    // required: true,
+                    required: true,
                 },
                 menuId: {
                     type: Schema.Types.ObjectId,
                     ref: "Menu",
-                    // required: true,
+                    required: true,
                 },
                 qty: {
                     type: Number,
-                    // required: true,
+                    required: true,
                 },
                 splitStatus: {
                     type: String,
                     enum: ["open", "closed"],
-                    default: "closed",
+                    default: "open",
                 },
             }
         ],

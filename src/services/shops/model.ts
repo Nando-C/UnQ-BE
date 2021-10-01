@@ -1,43 +1,8 @@
 import mongoose from "mongoose"
-import { IMenuDocument, IShopDocument } from "src/typings/shop"
+import { IShopDocument } from "src/typings/shop"
+import { MenuSchema } from "../menus/model"
 
 const { Schema, model } = mongoose 
-
-const MenuSchema = new Schema(
-    {
-        name: {
-            type: String,
-            required: true,
-        },
-        image: {
-            type: String,
-            default: `https://nayemdevs.com/wp-content/uploads/2020/03/default-product-image.png`,
-        },
-        short_description: {
-            type: String,
-            required: true,
-        },
-        description: {
-            type: String,
-            required: false,
-        },
-        price: {
-            type: Number,
-            required: true,
-        },
-        available: {
-            type: Boolean,
-            default: true,
-        },
-        category: {
-            type: String,
-            enum: ["food", "drinks"],
-            required: true
-        },
-    },
-    // { timestamps: true }
-)
-export const Menu = model("Menu", MenuSchema)
 
 const ShopSchema = new Schema<IShopDocument> (
     {
@@ -79,7 +44,13 @@ const ShopSchema = new Schema<IShopDocument> (
                 Qr_Url: String,
             },
         ],
-        menu: [ MenuSchema ],
+        menu: [
+            {
+            type: [Schema.Types.ObjectId],
+            ref: "Menu",
+            required: true,
+            }
+        ],
         //     {
         //         name: {
         //             type: String,

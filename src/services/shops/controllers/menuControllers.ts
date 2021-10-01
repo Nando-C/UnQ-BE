@@ -1,6 +1,7 @@
 import { TController } from "../../../typings/controllers"
 import { IUserDocument } from "src/typings/users"
 import ShopModel from "../model"
+import MenuModel from "../../menus/model"
 import createError from "http-errors"
 
 // -------------------------------------------------------------------------
@@ -9,7 +10,7 @@ export const createItem: TController = async ( req, res, next ) => {
     try {
         const user = req.user as IUserDocument
         const shopId = req.params.shopId
-        const newItem = req.body
+        const newItem = await new MenuModel(req.body).save()
 
         const updatedShopMenu = await ShopModel.findOneAndUpdate({_id: shopId, shopMg: user._id }, { $push: {menu: newItem}}, { runValidators: true})
         if (!updatedShopMenu) return next(createError(400, "Shop Not Found or you are not authorized!"))

@@ -1,8 +1,8 @@
 import { Router } from "express"
-import { menuItemImageParser, shopCoverParser } from "../../settings/cloudinary"
+import { shopCoverParser } from "../../settings/cloudinary"
 import { adminOnly, isShopManager, JWTAuthMiddleware } from "../auth/middlewares"
 import * as shopControllers from "./controllers/shopControllers"
-import * as menuControllers from "./controllers/menuControllers"
+// import * as menuControllers from "./controllers/menuControllers"
 import * as tableControllers from "./controllers/tableControllers"
 
 const router = Router()
@@ -16,12 +16,12 @@ router.put("/:shopId/cover", JWTAuthMiddleware, adminOnly, shopCoverParser.singl
 router.delete("/:shopId", JWTAuthMiddleware, adminOnly, shopControllers.deleteMyShop)
 
 // Shop's Menu Routes
-router.post("/:shopId/menu", JWTAuthMiddleware, adminOnly, menuControllers.createItem)
-router.get("/:shopId/menu", JWTAuthMiddleware, adminOnly, menuControllers.getMenuList)
-router.get("/:shopId/menu/:itemId", JWTAuthMiddleware, adminOnly, menuControllers.getMenuItem)
-router.put("/:shopId/menu/:itemId", JWTAuthMiddleware, adminOnly, isShopManager, menuControllers.editItem)
-router.put("/:shopId/menu/:itemId/img", JWTAuthMiddleware, isShopManager, menuItemImageParser.single("image"), menuControllers.editItemImage)
-router.delete("/:shopId/menu/:itemId", JWTAuthMiddleware, adminOnly, isShopManager, menuControllers.deleteItem)
+// router.post("/:shopId/menu", JWTAuthMiddleware, adminOnly, menuControllers.createItem)
+// router.get("/:shopId/menu", JWTAuthMiddleware, adminOnly, menuControllers.getMenuList)
+// router.get("/:shopId/menu/:itemId", JWTAuthMiddleware, adminOnly, menuControllers.getMenuItem)
+// router.put("/:shopId/menu/:itemId", JWTAuthMiddleware, adminOnly, isShopManager, menuControllers.editItem)
+// router.put("/:shopId/menu/:itemId/img", JWTAuthMiddleware, isShopManager, menuItemImageParser.single("image"), menuControllers.editItemImage)
+// router.delete("/:shopId/menu/:itemId", JWTAuthMiddleware, adminOnly, isShopManager, menuControllers.deleteItem)
 
 // Shop's Tables Routes
 router.post("/:shopId/tables", JWTAuthMiddleware, isShopManager, tableControllers.createTable)
