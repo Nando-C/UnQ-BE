@@ -17,18 +17,19 @@ const googleStrategy = new GoogleStrategy.Strategy(
             if (user) {
                 const tokens = await getTokens(user)
                 passportNext(null, {tokens})
+                
             } else {
                 const newUser = {
                     name: profile.name?.givenName,
                     surname: profile.name?.familyName,
                     email: profile.emails![0].value,  // double check typings here
                     avatar: profile.photos![0].value, // double check typings here
-                    gooleId: profile.id,
+                    googleId: profile.id,
                 }
+                
                 const createdUser = new UserModel(newUser)
                 const savedUser = await createdUser.save()
                 const tokens = await getTokens(savedUser)
-                // console.log(savedUser)
 
                 passportNext(null, {user: savedUser, tokens})
             }

@@ -27,7 +27,7 @@ export const getMyShops: TController = async ( req, res, next) => {
     try {
         const user = req.user as IUserDocument
 
-        const myShops = await ShopModel.find({ shopMg: user._id })
+        const myShops = await ShopModel.find({ shopMg: user._id }).populate("menu")
         if (!myShops) return next(createError(404, "Shops Not Found!"))
 
         res.send(myShops)
@@ -42,7 +42,7 @@ export const getMySingleShop: TController = async ( req, res, next ) => {
     try {
         const user = req.user as IUserDocument
 
-        const myShop = await ShopModel.findById(req.params.shopId)
+        const myShop = await ShopModel.findById(req.params.shopId).populate("menu")
 
         if (myShop) {
             if ( myShop.shopMg.includes(user._id)){

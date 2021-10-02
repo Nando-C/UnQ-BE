@@ -1,4 +1,4 @@
-// ===================== Packages ===================================
+// ===================== PACKAGES ===================================
 import express from "express"
 import cors from "cors"
 import passport from "passport"
@@ -8,10 +8,12 @@ import cookieParser from "cookie-parser"
 import { errorsHandler } from "./errorMddlewares"
 import { corsOptions } from "./settings/cors"
 
-// ===================== Routers ====================================
+// ===================== ROUTERS ====================================
 import authRouter from "./services/auth/routes"
 import userRouter from "./services/users/routes"
 import shopRouter from "./services/shops/routes"
+import menuRouter from "./services/menus/routes"
+import cartRouter from "./services/carts/routes"
 
 
 const app = express()
@@ -27,6 +29,8 @@ app.use(passport.initialize())
 app.use("/auth", authRouter)
 app.use("/users", userRouter)
 app.use("/shops", shopRouter)
+app.use("/shops", menuRouter)
+app.use("/carts", cartRouter)
 
 // ===================== ERROR HANDLERS =============================
 app.use(errorsHandler)

@@ -1,5 +1,6 @@
 import mongoose from "mongoose"
 import { IShopDocument } from "src/typings/shop"
+import { MenuSchema } from "../menus/model"
 
 const { Schema, model } = mongoose 
 
@@ -45,37 +46,43 @@ const ShopSchema = new Schema<IShopDocument> (
         ],
         menu: [
             {
-                name: {
-                    type: String,
-                    required: true,
-                },
-                image: {
-                    type: String,
-                    default: `https://nayemdevs.com/wp-content/uploads/2020/03/default-product-image.png`,
-                },
-                short_description: {
-                    type: String,
-                    required: true,
-                },
-                description: {
-                    type: String,
-                    required: false,
-                },
-                price: {
-                    type: Number,
-                    required: true,
-                },
-                available: {
-                    type: Boolean,
-                    default: true,
-                },
-                category: {
-                    type: String,
-                    enum: ["food", "drinks"],
-                    required: true
-                },
+            type: [Schema.Types.ObjectId],
+            ref: "Menu",
+            required: true,
             }
         ],
+        //     {
+        //         name: {
+        //             type: String,
+        //             required: true,
+        //         },
+        //         image: {
+        //             type: String,
+        //             default: `https://nayemdevs.com/wp-content/uploads/2020/03/default-product-image.png`,
+        //         },
+        //         short_description: {
+        //             type: String,
+        //             required: true,
+        //         },
+        //         description: {
+        //             type: String,
+        //             required: false,
+        //         },
+        //         price: {
+        //             type: Number,
+        //             required: true,
+        //         },
+        //         available: {
+        //             type: Boolean,
+        //             default: true,
+        //         },
+        //         category: {
+        //             type: String,
+        //             enum: ["food", "drinks"],
+        //             required: true
+        //         },
+        //     }
+        // ],
     },
     { timestamps: true }
 )

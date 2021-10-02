@@ -5,10 +5,15 @@ const { Schema, model } = mongoose
 
 const CartSchema = new Schema<ICart>(
     {
+        userId: {
+            type: Schema.Types.ObjectId,
+            required: true,
+            ref: "User",
+        },
         shopId: {
             type: Schema.Types.ObjectId,
+            // required: true,
             ref: "Shop",
-            required: true,
         },
         tableId: {
             type: String,
@@ -16,42 +21,42 @@ const CartSchema = new Schema<ICart>(
         },
         status: {
             type: String,
-            enum: ["open", "splited", "closed"],
+            enum: ["open", "splitted", "closed"],
             default: "open",
         },
         items: [
             {
                 menuId: {
                     type: Schema.Types.ObjectId,
-                    ref: "Menu",
                     required: true,
+                    ref: "Menu",
                 },
                 qty: {
                     type: Number,
                     required: true,
                 },
-                // totalPriceItems: Number,
+                // PriceItems: Number,
             }
         ],
         split: [
             {
                 userId: {
                     type: Schema.Types.ObjectId,
-                    // required: true,
+                    required: true,
                 },
                 menuId: {
                     type: Schema.Types.ObjectId,
                     ref: "Menu",
-                    // required: true,
+                    required: true,
                 },
                 qty: {
                     type: Number,
-                    // required: true,
+                    required: true,
                 },
                 splitStatus: {
                     type: String,
                     enum: ["open", "closed"],
-                    default: "closed",
+                    default: "open",
                 },
             }
         ],

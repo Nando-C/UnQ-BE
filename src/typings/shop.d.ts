@@ -1,4 +1,5 @@
 import { Document, Schema } from "mongoose"
+// import { IMenuDocument } from "./menu";
 
 export interface IShop {
     name: string
@@ -9,23 +10,13 @@ export interface IShop {
     web_URL: string
     shopMg: Schema.Types.ObjectId[]
     tables: ITable[]
-    menu: IMenuItem[]
+    menu: Schema.Types.ObjectId[]
 }
 
 export interface ITable {
     _id: Schema.Types.ObjectId
     name: string
     Qr_Url: string
-}
-
-export interface IMenuItem {
-    name: string
-    image: string
-    short_description: string
-    description: string
-    price: number
-    available: boolean
-    category: string
 }
 
 export interface IShopDocument extends Document, IShop {}
