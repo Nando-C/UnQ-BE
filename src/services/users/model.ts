@@ -30,6 +30,7 @@ const UserSchema = new Schema<IUserDocument,IUserModel>(
             default: "customer"
         },
         refreshToken: String,
+        googleId: String,
     },
     { timestamps: true }
 )

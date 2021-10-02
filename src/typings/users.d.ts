@@ -8,7 +8,7 @@ export interface IUser {
     avatar?: string
     role: string
     refreshToken?: string
-    gooleId?: string
+    googleId?: string
 }
 
 export interface IUserDocument extends Document, IUser {}

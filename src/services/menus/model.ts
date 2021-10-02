@@ -37,4 +37,11 @@ export const MenuSchema = new Schema<IMenuDocument>(
     },
     { timestamps: true }
 )
+
+MenuSchema.methods.toJSON = function () {
+    const menu = this.toObject()
+    delete menu.__v
+    return menu
+}
+
 export default model<IMenuDocument>("Menu", MenuSchema)
