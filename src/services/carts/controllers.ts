@@ -91,7 +91,7 @@ export const decreaseItem: TController = async ( req, res, next ) => {
         const isItemThere = await CartModel.findOne({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId})
         
         if (isItemThere) {
-            const decreasedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": -req.body.qty }})
+            const decreasedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": -(req.body.qty) }})
             const removedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: 0 }}})
             const deleteCart = await CartModel.findOneAndDelete({userId: user._id, tableId: tableId, status: "open", items: []})
             if (deleteCart) {
@@ -115,8 +115,6 @@ export const decreaseItem: TController = async ( req, res, next ) => {
 export const addSplitItem: TController = async ( req, res, next ) => {
     try {
         const user = req.user as IUserDocument
-        // const shopId = req.params.shopId as Schema.Types.ObjectId
-        // const tableId = req.params.tableId
         const cartId = req.params.cartId
         
         const splitItem = {
@@ -127,13 +125,41 @@ export const addSplitItem: TController = async ( req, res, next ) => {
         const isItemThere = await CartModel.findOne({ _id: cartId, "split.splitStatus": "open", "split.userId": user._id, "split.menuId": splitItem.menuId })
         
         if (isItemThere) {
-            const updatedSplit = await CartModel.findOneAndUpdate( {_id: cartId, split: { $elemMatch: { menuId: splitItem.menuId , userId: user._id} }}, { $inc: { "split.$.qty": req.body.qty }})
+            const updatedSplit = await CartModel.findOneAndUpdate( {_id: cartId, split: { $elemMatch: { menuId: splitItem.menuId , userId: user._id} } }, { $inc: { "split.$.qty": req.body.qty }})
             res.send(updatedSplit)
         } else {
             const addedItem = await CartModel.findOneAndUpdate({ _id: cartId, status: "open" }, { $push: { split: splitItem }})
             console.log(addedItem)
             
             res.send(addedItem)
+        }
+    } catch (error) {
+        next(createError(500, error as Error))
+    }
+}
+
+export const removeSplitItem: TController = async ( req, res, next ) => {
+    try {
+        const user = req.user as IUserDocument
+        const cartId = req.params.cartId
+
+        const splitItem = {
+            userId: user._id,
+            ...req.body
+        }
+
+        const isItemThere = await CartModel.findOne({ _id: cartId, "split.splitStatus": "open", "split.userId": user._id, "split.menuId": splitItem.menuId })
+        
+        if (isItemThere) {
+            const decreasedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: { menuId: splitItem.menuId , userId: user._id} } }, { $inc: { "split.$.qty": -(req.body.qty) }})
+            const removedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: { menuId: splitItem.menuId , userId: user._id} } }, { $pull: { split: { qty: 0 }}})
+            if (removedItem) {
+                res.send(removedItem)
+            } else {
+                res.send(decreasedItem)
+            }
+        } else {
+            res.status(404).send("Item Not Found!")
         }
     } catch (error) {
         next(createError(500, error as Error))
