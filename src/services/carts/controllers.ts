@@ -12,13 +12,7 @@ export const getMyCarts: TController = async ( req, res, next) => {
         const myCarts = await CartModel.find({ userId: user._id })
             .populate("items.menuId", "name short_description image price")
             .populate("split.menuId", "name short_description image price")
-            // .populate({
-            //     path: "items",
-            //     populate: {
-            //         path: "menuId",
-            //         select: { _id: 0, name: 1 }
-            //     }
-            // })
+            
         if (!myCarts) return next(createError(404, "Carts Not Found!"))
 
         res.send(myCarts)
@@ -29,10 +23,10 @@ export const getMyCarts: TController = async ( req, res, next) => {
 
 export const getSingleCart: TController = async ( req, res, next ) => {
     try {
-        // const user = req.user as IUserDocument
-
         const cart = await CartModel.findById(req.params.cartId)
             .populate("items.menuId", "name short_description image price")
+            .populate("split.menuId", "name short_description image price")
+
         if (!cart) return next(createError(404, `Cart Not Found!`))
         
         res.send(cart)
