@@ -2,7 +2,7 @@ import { Document, Schema } from "mongoose";
 
 export interface ICart {
     userId: Schema.Types.ObjectId
-    shopId: Schema.Types.ObjectId
+    shopId?: Schema.Types.ObjectId
     tableId: string
     status: string
     items: IItem[]
