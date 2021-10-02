@@ -116,20 +116,25 @@ export const addSplitItem: TController = async ( req, res, next ) => {
     try {
         const user = req.user as IUserDocument
         // const shopId = req.params.shopId as Schema.Types.ObjectId
-        const tableId = req.params.tableId
+        // const tableId = req.params.tableId
         const cartId = req.params.cartId
-        const splitItem = {userId: user._id, ...req.body}
+        
+        const splitItem = {
+            userId: user._id,
+            ...req.body
+        }
 
-        const isItemThere = await CartModel.findOne({ _id: cartId, "splitStatus": "open", "split.menuId": splitItem.menuId })
+        const isItemThere = await CartModel.findOne({ _id: cartId, "split.splitStatus": "open", "split.userId": user._id, "split.menuId": splitItem.menuId })
         
         if (isItemThere) {
-            const updatedSplit = await CartModel.findOneAndUpdate({ _id: cartId, "splitStatus": "open", "split.menuId": splitItem.menuId }, { $inc: { "split.$.qty": req.body.qty }})
+            const updatedSplit = await CartModel.findOneAndUpdate( {_id: cartId, split: { $elemMatch: { menuId: splitItem.menuId , userId: user._id} }}, { $inc: { "split.$.qty": req.body.qty }})
             res.send(updatedSplit)
         } else {
-            const addedItem = await CartModel.findOneAndUpdate({ _id: cartId }, { $push: { split: splitItem }})
+            const addedItem = await CartModel.findOneAndUpdate({ _id: cartId, status: "open" }, { $push: { split: splitItem }})
+            console.log(addedItem)
+            
             res.send(addedItem)
         }
-        // res.send(isItemThere)
     } catch (error) {
         next(createError(500, error as Error))
     }

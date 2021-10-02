@@ -7,7 +7,7 @@ const router = Router()
 router.post("/", JWTAuthMiddleware, controllers.createCart)
 router.post("/:shopId/tables/:tableId/addItem", JWTAuthMiddleware, controllers.addItem)
 router.post("/:shopId/tables/:tableId/removeItem", JWTAuthMiddleware, controllers.decreaseItem)
-router.post("/:shopId/tables/:tableId/:cardId", JWTAuthMiddleware, controllers.addSplitItem)
+router.post("/:shopId/tables/:tableId/:cartId", JWTAuthMiddleware, controllers.addSplitItem)
 router.get("/", JWTAuthMiddleware, controllers.getMyCarts)
 router.get("/:cartId", JWTAuthMiddleware, controllers.getSingleCart)
 
