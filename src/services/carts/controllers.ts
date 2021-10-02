@@ -5,31 +5,13 @@ import createError from "http-errors"
 // import { Schema } from "mongoose"
 
 
-export const createCart: TController = async ( req, res, next ) => {
-    try {
-    const user = req.user as IUserDocument
-    // const shopId = req.params.shopId
-    // const tableId = req.params.tableId
-
-    const newCart = { 
-        ...req.body, 
-        userId: [ user._id ],
-        // shopId: shopId,
-        // tableId: tableId,
-    }
-        const cart = await new CartModel(newCart).save()
-        res.send(cart)
-    } catch (error) {
-        next(createError(500, error as Error))
-    }
-}
-
 export const getMyCarts: TController = async ( req, res, next) => {
     try {
         const user = req.user as IUserDocument
 
         const myCarts = await CartModel.find({ userId: user._id })
             .populate("items.menuId", "name short_description image price")
+            .populate("split.menuId", "name short_description image price")
             // .populate({
             //     path: "items",
             //     populate: {
@@ -75,7 +57,6 @@ export const addItem: TController = async ( req, res, next ) => {
             const addedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open"}, { $push: { items: item }}, { upsert: true })
             res.send(addedItem)
         }
-        // res.send(isItemThere)
     } catch (error) {
         next(createError(500, error as Error))
     }
@@ -92,8 +73,11 @@ export const decreaseItem: TController = async ( req, res, next ) => {
         
         if (isItemThere) {
             const decreasedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": -(req.body.qty) }})
+            
             const removedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: 0 }}})
+            
             const deleteCart = await CartModel.findOneAndDelete({userId: user._id, tableId: tableId, status: "open", items: []})
+            
             if (deleteCart) {
                 res.status(204).send()
             } else if (removedItem) {
@@ -102,11 +86,9 @@ export const decreaseItem: TController = async ( req, res, next ) => {
                 res.send(decreasedItem)
             }
 
-        //     if (removedItem) return res.send(removedItem)
         } else {
             res.status(404).send("Item Not Found in Cart!")
         }
-        // res.send(isItemThere)
     } catch (error) {
         next(createError(500, error as Error))
     }
@@ -127,10 +109,9 @@ export const addSplitItem: TController = async ( req, res, next ) => {
         if (isItemThere) {
             const updatedSplit = await CartModel.findOneAndUpdate( {_id: cartId, split: { $elemMatch: { menuId: splitItem.menuId , userId: user._id} } }, { $inc: { "split.$.qty": req.body.qty }})
             res.send(updatedSplit)
+
         } else {
             const addedItem = await CartModel.findOneAndUpdate({ _id: cartId, status: "open" }, { $push: { split: splitItem }})
-            console.log(addedItem)
-            
             res.send(addedItem)
         }
     } catch (error) {
@@ -152,7 +133,9 @@ export const removeSplitItem: TController = async ( req, res, next ) => {
         
         if (isItemThere) {
             const decreasedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: { menuId: splitItem.menuId , userId: user._id} } }, { $inc: { "split.$.qty": -(req.body.qty) }})
+            
             const removedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: { menuId: splitItem.menuId , userId: user._id} } }, { $pull: { split: { qty: 0 }}})
+            
             if (removedItem) {
                 res.send(removedItem)
             } else {
