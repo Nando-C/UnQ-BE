@@ -38,18 +38,12 @@ export const getMyShops: TController = async ( req, res, next) => {
 
 // -------------------------------------------------------------------------
 
-export const getMySingleShop: TController = async ( req, res, next ) => {
+export const getSingleShop: TController = async ( req, res, next ) => {
     try {
-        const user = req.user as IUserDocument
-
         const myShop = await ShopModel.findById(req.params.shopId).populate("menu")
 
         if (myShop) {
-            if ( myShop.shopMg.includes(user._id)){
-                res.send(myShop)
-            } else {
-                next(createError(403, `Shop Manager Only!`))
-            }
+            res.send(myShop)
         } else {
             next(createError(404, `Shop Not Found!`))
         }
@@ -57,6 +51,26 @@ export const getMySingleShop: TController = async ( req, res, next ) => {
         next(createError(500, error as Error))
     }
 }
+
+// export const getMySingleShop: TController = async ( req, res, next ) => {
+//     try {
+//         const user = req.user as IUserDocument
+
+//         const myShop = await ShopModel.findById(req.params.shopId).populate("menu")
+
+//         if (myShop) {
+//             if ( myShop.shopMg.includes(user._id)){
+//                 res.send(myShop)
+//             } else {
+//                 next(createError(403, `Shop Manager Only!`))
+//             }
+//         } else {
+//             next(createError(404, `Shop Not Found!`))
+//         }
+//     } catch (error) {
+//         next(createError(500, error as Error))
+//     }
+// }
 
 // -------------------------------------------------------------------------
 

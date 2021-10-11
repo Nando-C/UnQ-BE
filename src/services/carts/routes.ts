@@ -8,6 +8,7 @@ router.post("/:shopId/tables/:tableId/addItem", JWTAuthMiddleware, controllers.a
 router.post("/:shopId/tables/:tableId/removeItem", JWTAuthMiddleware, controllers.decreaseItem)
 router.post("/:shopId/tables/:tableId/:cartId/addSplitItem", JWTAuthMiddleware, controllers.addSplitItem)
 router.post("/:shopId/tables/:tableId/:cartId/removeSplitItem", JWTAuthMiddleware, controllers.removeSplitItem)
+router.get("/tables/:tableId", JWTAuthMiddleware, controllers.getTableCart)
 router.get("/", JWTAuthMiddleware, controllers.getMyCarts)
 router.get("/:cartId", JWTAuthMiddleware, controllers.getSingleCart)
 

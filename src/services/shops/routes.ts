@@ -10,7 +10,7 @@ const router = Router()
 // My Shop Routes
 router.post("/", JWTAuthMiddleware, adminOnly, shopControllers.createShop)
 router.get("/", JWTAuthMiddleware, adminOnly, shopControllers.getMyShops)
-router.get("/:shopId", JWTAuthMiddleware, adminOnly, shopControllers.getMySingleShop)
+router.get("/:shopId", JWTAuthMiddleware, shopControllers.getSingleShop)
 router.put("/:shopId", JWTAuthMiddleware, adminOnly, shopControllers.editMyShop)
 router.put("/:shopId/cover", JWTAuthMiddleware, adminOnly, shopCoverParser.single("cover"), shopControllers.editMyShopCover)
 router.delete("/:shopId", JWTAuthMiddleware, adminOnly, shopControllers.deleteMyShop)
@@ -25,8 +25,8 @@ router.delete("/:shopId", JWTAuthMiddleware, adminOnly, shopControllers.deleteMy
 
 // Shop's Tables Routes
 router.post("/:shopId/tables", JWTAuthMiddleware, isShopManager, tableControllers.createTable)
-router.get("/:shopId/tables", JWTAuthMiddleware, isShopManager, tableControllers.getTableList)
-router.get("/:shopId/tables/:tableId", JWTAuthMiddleware, isShopManager, tableControllers.getSingleTable)
+router.get("/:shopId/tables", JWTAuthMiddleware, tableControllers.getTableList)
+router.get("/:shopId/tables/:tableId", JWTAuthMiddleware, tableControllers.getSingleTable)
 router.put("/:shopId/tables/:tableId", JWTAuthMiddleware, isShopManager, tableControllers.editTable)
 router.delete("/:shopId/tables/:tableId", JWTAuthMiddleware, isShopManager, tableControllers.deleteTable)
 
