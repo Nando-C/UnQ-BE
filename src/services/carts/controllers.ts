@@ -9,7 +9,7 @@ export const getMyCarts: TController = async ( req, res, next) => {
     try {
         const user = req.user as IUserDocument
 
-        const myCarts = await CartModel.find({ userId: user._id })
+        const myCarts = await CartModel.findOne({ userId: user._id, status: "open" })
             .populate("items.menuId", "name short_description image price")
             .populate("split.menuId", "name short_description image price")
             
@@ -95,6 +95,38 @@ export const decreaseItem: TController = async ( req, res, next ) => {
             } else {
                 res.send(decreasedItem)
             }
+
+        } else {
+            res.status(404).send("Item Not Found in Cart!")
+        }
+    } catch (error) {
+        next(createError(500, error as Error))
+    }
+}
+
+export const deleteItem: TController = async ( req, res, next ) => {
+    try {
+        const user = req.user as IUserDocument
+        // const shopId = req.params.shopId as Schema.Types.ObjectId
+        const tableId = req.params.tableId
+        const item = req.body
+
+        const isItemThere = await CartModel.findOne({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId})
+        
+        if (isItemThere) {
+            const decreasedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $set: { "items.$.qty": 0 }}).populate("items.menuId", "name short_description image price")
+            
+            const removedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: 0 }}}).populate("items.menuId", "name short_description image price")
+            
+            // const deleteCart = await CartModel.findOneAndDelete({userId: user._id, tableId: tableId, status: "open", items: []}).populate("items.menuId", "name short_description image price")
+            
+            // if (deleteCart) {
+                // res.status(204).send()
+            // if (removedItem) {
+            //     res.send(removedItem)
+            // } else {
+                res.send(removedItem)
+            
 
         } else {
             res.status(404).send("Item Not Found in Cart!")

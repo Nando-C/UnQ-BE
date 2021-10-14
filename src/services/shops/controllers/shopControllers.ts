@@ -38,6 +38,21 @@ export const getMyShops: TController = async ( req, res, next) => {
 
 // -------------------------------------------------------------------------
 
+export const getAllShops: TController = async ( req, res, next) => {
+    try {
+        // const user = req.user as IUserDocument
+
+        const shopList = await ShopModel.find().populate("menu")
+        if (!shopList) return next(createError(404, "Shops Not Found!"))
+
+        res.send(shopList)
+    } catch (error) {
+        next(createError(500, error as Error))
+    }
+}
+
+// -------------------------------------------------------------------------
+
 export const getSingleShop: TController = async ( req, res, next ) => {
     try {
         const myShop = await ShopModel.findById(req.params.shopId).populate("menu")
