@@ -25,9 +25,11 @@ export const getTableCart: TController = async ( req, res, next ) => {
     try {
         const tableId = req.params.tableId
 
-        const cart = await CartModel.findOne({ tableId: tableId, status: "open"})
+        const cart = await CartModel.findOne({$and: [{ tableId: tableId}, {status: "open"}]})
             .populate("items.menuId", "name short_description image price")
             .populate("split.menuId", "name short_description image price")
+        console.log(cart)
+        
 
         if (!cart) return next(createError(404, `Cart Not Found!`))
         
