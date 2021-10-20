@@ -12,6 +12,7 @@ export interface ICart {
 export interface IItem {
     menuId: Schema.Types.ObjectId
     qty: number
+    qtyPayed: number
     // totalPriceItems: number
 }
 

@@ -35,6 +35,10 @@ const CartSchema = new Schema<ICart>(
                     type: Number,
                     required: true,
                 },
+                qtyPayed: {
+                    type: Number,
+                    default: 0,
+                },
                 // PriceItems: Number,
             }
         ],
