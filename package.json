@@ -3,11 +3,10 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
-  "type": "module",
   "scripts": {
     "build": "tsc",
     "dev": "ts-node-dev -r dotenv/config --respawn --pretty --transpile-only ./src",
-    "start": "node build/index.js"
+    "start": "node ./build/index.js"
   },
   "repository": {
     "type": "git",
