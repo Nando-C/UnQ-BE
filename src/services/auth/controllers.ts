@@ -2,7 +2,7 @@ import { TController } from "src/typings/controllers"
 import UserModel from "../users/model"
 import { getTokens, refreshTokens } from "./tools"
 import createError from "http-errors"
-import { IGoogleUser } from "src/typings/users"
+import { IGoogleUser, IUserDocument } from "src/typings/users"
 
 // -------------------------------------------------------------------------
 
@@ -16,13 +16,13 @@ export const registerUser: TController = async (req, res, next) => {
 
         res.cookie("accessToken", accessToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+            secure: true,
+            sameSite: "none",
         })
         res.cookie("refreshToken", refreshToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+            secure: true,
+            sameSite: "none",
         })
         res.status(201).send(user)
     } catch (error) {
@@ -43,13 +43,13 @@ export const loginUser: TController = async ( req, res, next ) => {
 
         res.cookie("accessToken", accessToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+            secure: true,
+            sameSite: "none",
         })
         res.cookie("refreshToken", refreshToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+            secure: true,
+            sameSite: "none",
         })
         res.send(user)
     } catch (error) {
@@ -69,13 +69,13 @@ export const tokenRefresh: TController = async (req, res, next) => {
 
         res.cookie("accessToken", tokens.accessToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+            secure: true,
+            sameSite: "none",
         })
         res.cookie("refreshToken", refreshToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+            secure: true,
+            sameSite: "none",
         })
         res.status(200).send()
     } catch (error) {
@@ -92,13 +92,13 @@ export const googleRedirect: TController =  async (req, res, next) => {
 
         res.cookie("accessToken", accessToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+            secure: true,
+            sameSite: "none",
         })
         res.cookie("refreshToken", refreshToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+            secure: true,
+            sameSite: "none",
         })
 
         res.redirect(`${process.env.FRONTEND_DEV_URL}`)
@@ -112,6 +112,9 @@ export const googleRedirect: TController =  async (req, res, next) => {
 
 export const logoutUser: TController = async (req, res, next) => {
     try {
+        const user = req.user as IUserDocument
+        await user.updateOne({ refreshToken: "" })
+        
         res.clearCookie("accessToken")
         res.clearCookie("refreshToken")
         res.status(204).send()
