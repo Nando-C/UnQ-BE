@@ -3,6 +3,7 @@ import MenuModel from "./model"
 import ShopModel from "../shops/model"
 import createError from "http-errors"
 
+// -------------------------------------------------------------------------
 
 export const createItem: TController = async ( req, res, next ) => {
     try {
@@ -18,6 +19,8 @@ export const createItem: TController = async ( req, res, next ) => {
     }
 }
 
+// -------------------------------------------------------------------------
+
 export const getMenuList: TController = async ( req, res, next ) => {
     try {
         const shopId = req.params.shopId
@@ -30,6 +33,8 @@ export const getMenuList: TController = async ( req, res, next ) => {
         next(createError(500, error as Error))
     }
 }
+
+// -------------------------------------------------------------------------
 
 export const getMenuItem: TController = async ( req, res, next ) => {
     try {
@@ -44,6 +49,8 @@ export const getMenuItem: TController = async ( req, res, next ) => {
     }
 }
 
+// -------------------------------------------------------------------------
+
 export const editItem: TController = async ( req, res, next ) => {
     try {
         const itemId = req.params.itemId
@@ -57,6 +64,8 @@ export const editItem: TController = async ( req, res, next ) => {
     }
 }
 
+// -------------------------------------------------------------------------
+
 export const editItemImage: TController = async ( req, res, next ) => {
     try {
         const itemId = req.params.itemId
@@ -69,6 +78,8 @@ export const editItemImage: TController = async ( req, res, next ) => {
         next(createError(500, error as Error))
     }
 }
+
+// -------------------------------------------------------------------------
 
 export const deleteItem: TController = async ( req, res, next ) => {
     try {
@@ -86,3 +97,5 @@ export const deleteItem: TController = async ( req, res, next ) => {
         next(createError(500, error as Error))
     }
 }
+
+// -------------------------------------------------------------------------

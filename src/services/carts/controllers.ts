@@ -4,6 +4,7 @@ import CartModel from "./model"
 import createError from "http-errors"
 // import { Schema } from "mongoose"
 
+// -------------------------------------------------------------------------
 
 export const getMyCarts: TController = async ( req, res, next) => {
     try {
@@ -20,6 +21,8 @@ export const getMyCarts: TController = async ( req, res, next) => {
         next(createError(500, error as Error))
     }
 }
+
+// -------------------------------------------------------------------------
 
 export const getTableCart: TController = async ( req, res, next ) => {
     try {
@@ -39,6 +42,8 @@ export const getTableCart: TController = async ( req, res, next ) => {
     }
 }
 
+// -------------------------------------------------------------------------
+
 export const getSingleCart: TController = async ( req, res, next ) => {
     try {
         const cart = await CartModel.findById(req.params.cartId)
@@ -52,6 +57,8 @@ export const getSingleCart: TController = async ( req, res, next ) => {
         next(createError(500, error as Error))
     }
 }
+
+// -------------------------------------------------------------------------
 
 export const addItem: TController = async ( req, res, next ) => {
     try {
@@ -75,6 +82,8 @@ export const addItem: TController = async ( req, res, next ) => {
         next(createError(500, error as Error))
     }
 }
+
+// -------------------------------------------------------------------------
 
 export const decreaseItem: TController = async ( req, res, next ) => {
     try {
@@ -107,6 +116,8 @@ export const decreaseItem: TController = async ( req, res, next ) => {
         next(createError(500, error as Error))
     }
 }
+
+// -------------------------------------------------------------------------
 
 export const deleteItem: TController = async ( req, res, next ) => {
     try {
@@ -141,6 +152,8 @@ export const deleteItem: TController = async ( req, res, next ) => {
     }
 }
 
+// -------------------------------------------------------------------------
+
 export const addSplitItem: TController = async ( req, res, next ) => {
     try {
         const user = req.user as IUserDocument
@@ -174,6 +187,8 @@ export const addSplitItem: TController = async ( req, res, next ) => {
     }
 }
 
+// -------------------------------------------------------------------------
+
 export const decreaseSplitItem: TController = async ( req, res, next ) => {
     try {
         const user = req.user as IUserDocument
@@ -206,6 +221,8 @@ export const decreaseSplitItem: TController = async ( req, res, next ) => {
     }
 }
 
+// -------------------------------------------------------------------------
+
 export const removeSplitItem: TController = async ( req, res, next ) => {
     try {
         const user = req.user as IUserDocument
@@ -235,6 +252,8 @@ export const removeSplitItem: TController = async ( req, res, next ) => {
     } catch (error) {
         next(createError(500, error as Error))
     }
+
+// -------------------------------------------------------------------------
 }
 export const checkOutSplitItem: TController = async ( req, res, next ) => {
     try {
@@ -279,3 +298,5 @@ export const checkOutSplitItem: TController = async ( req, res, next ) => {
         next(createError(500, error as Error))
     }
 }
+
+// -------------------------------------------------------------------------
