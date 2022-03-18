@@ -207,7 +207,7 @@ Cart Model:
 
 ## API
 
-These are the available endpoints for this application.
+These are the available endpoints created for this application.
 
 ### Authorization
 
@@ -239,36 +239,93 @@ These are the available endpoints for this application.
 
 ### Users
 
-baseURL-api/users/me
-baseURL-api/users/me/avatar
+- [ 'GET', 'PUT', 'DELETE' ]
+
+  baseURL-api/users/me
+
+- [ 'PUT' ]
+
+  baseURL-api/users/me/avatar
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
 ### Shops
 
-baseURL-api/shops
-baseURL-api/shops/:shopId
-baseURL-api/shops/:shopId/cover
-baseURL-api/shops/:shopId/tables
-baseURL-api/shops/:shopId/tables/:tableId
-baseURL-api/shops/:shopId/menu
-baseURL-api/shops/:shopId/menu/:itemId
-baseURL-api/shops/:shopId/menu/:itemId/img
+- [ 'POST', 'GET' ]
+
+  baseURL-api/shops
+
+- [ 'GET', 'PUT', 'DELETE' ]
+
+  baseURL-api/shops/:shopId
+
+- [ 'PUT' ]
+
+  baseURL-api/shops/:shopId/cover
+
+- [ 'POST', 'GET' ]
+
+  baseURL-api/shops/:shopId/tables
+
+- [ 'GET', 'PUT', 'DELETE' ]
+
+  baseURL-api/shops/:shopId/tables/:tableId
+
+- [ 'POST', 'GET' ]
+
+  baseURL-api/shops/:shopId/menu
+
+- [ 'GET', 'PUT', 'DELETE' ]
+
+  baseURL-api/shops/:shopId/menu/:itemId
+
+- [ 'PUT' ]
+
+  baseURL-api/shops/:shopId/menu/:itemId/img
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
 ### Carts
 
-baseURL-api/carts/:shopId/tables/:tableId/addItem'
-baseURL-api/carts/:shopId/tables/:tableId/removeItem'
-baseURL-api/carts/:shopId/tables/:tableId/deleteItem'
-baseURL-api/carts/:shopId/tables/:tableId/:cartId/addSplitItem'
-baseURL-api/carts/:shopId/tables/:tableId/:cartId/decreaseSplitItem'
-baseURL-api/carts/:shopId/tables/:tableId/:cartId/removeSplitItem'
-baseURL-api/carts/tables/:tableId/:cartId/checkOutSplitItem'
-baseURL-api/carts/tables/:tableId'
-baseURL-api/carts'
-baseURL-api/carts/:cartId'
+- [ 'POST' ]
+
+  baseURL-api/carts/:shopId/tables/:tableId/addItem'
+
+- [ 'POST' ]
+
+  baseURL-api/carts/:shopId/tables/:tableId/removeItem'
+
+- [ 'POST' ]
+
+  baseURL-api/carts/:shopId/tables/:tableId/deleteItem'
+
+- [ 'POST' ]
+
+  baseURL-api/carts/:shopId/tables/:tableId/:cartId/addSplitItem'
+
+- [ 'POST' ]
+
+  baseURL-api/carts/:shopId/tables/:tableId/:cartId/decreaseSplitItem'
+
+- [ 'POST' ]
+
+  baseURL-api/carts/:shopId/tables/:tableId/:cartId/removeSplitItem'
+
+- [ 'POST' ]
+
+  baseURL-api/carts/tables/:tableId/:cartId/checkOutSplitItem'
+
+- [ 'GET' ]
+
+  baseURL-api/carts/tables/:tableId'
+
+- [ 'GET' ]
+
+  baseURL-api/carts'
+
+- [ 'GET' ]
+
+  baseURL-api/carts/:cartId'
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
