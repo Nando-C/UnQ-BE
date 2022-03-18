@@ -60,6 +60,80 @@ You can find the Front-End repo of this project in the following link: [UnQ's Fr
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
+<!-- MODELS EXAMPLES -->
+
+## Models
+
+### User
+
+```js
+USER Model:
+    {
+        name: string,
+        surname: string,
+        email: string,
+        password: string,
+        avatar: string,
+        role: string,
+        refreshToken: string,
+        googleId: string,
+    }
+```
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+### Shop
+
+```js
+SHOP Model:
+    {
+        name: string,
+        cover: string,
+        bio: string,
+        open_times: string,
+        phone: number,
+        web_URL: string,
+        shopMg: Schema.Types.ObjectId[],
+        tables: ITable[],
+        menu: Schema.Types.ObjectId[],
+    }
+```
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+### Menu
+
+```js
+MENU Model:
+    {
+        name: string,
+        image: string,
+        short_description: string,
+        description: string,
+        price: number,
+        available: boolean,
+        category: string,
+    }
+```
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+### Cart
+
+```js
+CART Model:
+    {
+        userId: Schema.Types.ObjectId,
+        shopId?: Schema.Types.ObjectId,
+        tableId: string,
+        status: string,
+        items: IItem[],
+        split: ISplitItem[],
+    }
+```
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
 <!-- CONTACT -->
 
 ## Contact
