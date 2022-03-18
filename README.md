@@ -67,14 +67,17 @@ You can find the Front-End repo of this project in the following link: [UnQ's Fr
 ### User
 
 ```js
-USER Model:
+User Model:
     {
         name: string,
         surname: string,
         email: string,
         password: string,
         avatar: string,
-        role: string,
+        role: {
+            type: String,
+            enum: ["customer", "shopMg"],
+        },
         refreshToken: string,
         googleId: string,
     }
@@ -85,7 +88,7 @@ USER Model:
 ### Shop
 
 ```js
-SHOP Model:
+Shop Model:
     {
         name: string,
         cover: string,
@@ -106,7 +109,7 @@ SHOP Model:
         menu: [
             {
                 type: ObjectId,
-                ref: "Item",
+                ref: "MenuItem",
             },
         ],
     }
@@ -117,7 +120,7 @@ SHOP Model:
 ### Menu
 
 ```js
-ITEM Model:
+MenuItem Model:
     {
         name: string,
         image: string,
@@ -125,7 +128,10 @@ ITEM Model:
         description: string,
         price: number,
         available: boolean,
-        category: string,
+        category: {
+            type: String,
+            enum: ["food", "drinks"],
+        },
     }
 ```
 
@@ -134,14 +140,48 @@ ITEM Model:
 ### Cart
 
 ```js
-CART Model:
+Cart Model:
     {
-        userId: Schema.Types.ObjectId,
-        shopId: Schema.Types.ObjectId,
+        userId: {
+            type: ObjectId,
+            ref: "User",
+        },
+        shopId: {
+            type: ObjectId,
+            ref: "Shop",
+        },
         tableId: string,
-        status: string,
-        items: IItem[],
-        split: ISplitItem[],
+        status: {
+            type: String,
+            enum: ["open", "splitted", "closed"],
+        },
+        items: [
+            {
+                menuId: {
+                    type: ObjectId,
+                    ref: "Menu",
+                },
+                qty: number,
+                qtyPayed: number,
+            }
+        ],
+        split: [
+            {
+                userId: {
+                    type: ObjectId,
+                    ref: "User",
+                },
+                menuId: {
+                    type: ObjectId,
+                    ref: "Menu",
+                },
+                qty: number,
+                splitStatus: {
+                    type: String,
+                    enum: ["open", "closed"],
+                },
+            }
+        ],
     }
 ```
 
