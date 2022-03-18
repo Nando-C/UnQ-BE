@@ -93,9 +93,22 @@ SHOP Model:
         open_times: string,
         phone: number,
         web_URL: string,
-        shopMg: Schema.Types.ObjectId[],
-        tables: ITable[],
-        menu: Schema.Types.ObjectId[],
+        shopMg: {
+            type: ObjectId,
+            ref: "User",
+        },
+        tables: [
+            {
+                name: string,
+                Qr_Url: string,
+            },
+        ],
+        menu: [
+            {
+                type: ObjectId,
+                ref: "Item",
+            },
+        ],
     }
 ```
 
@@ -104,7 +117,7 @@ SHOP Model:
 ### Menu
 
 ```js
-MENU Model:
+ITEM Model:
     {
         name: string,
         image: string,
@@ -124,7 +137,7 @@ MENU Model:
 CART Model:
     {
         userId: Schema.Types.ObjectId,
-        shopId?: Schema.Types.ObjectId,
+        shopId: Schema.Types.ObjectId,
         tableId: string,
         status: string,
         items: IItem[],
@@ -138,6 +151,6 @@ CART Model:
 
 ## Contact
 
-[@Nando](https://hernando-crespo.vercel.app/) - I think this is amazing but I might be biased! So get in touch and let me know what do you think of this project! 😉
+[@Nando](https://hernando-crespo.vercel.app/) - Get in touch and let me know what do you think of this project! 😉
 
 <p align="right">(<a href="#top">back to top</a>)</p>
