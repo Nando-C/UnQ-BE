@@ -212,21 +212,27 @@ These are the available endpoints for this application.
 ### Authorization
 
 - POST
+
   baseURL-api/auth/refreshToken
 
 - POST
+
   baseURL-api/auth/register
 
 - POST
+
   baseURL-api/auth/login
 
 - GET
+
   baseURL-api/auth/logout
 
 - GET
+
   baseURL-api/auth/googleLogin
 
 - GET
+
   baseURL-api/auth/googleRedirect
 
 <p align="right">(<a href="#top">back to top</a>)</p>
