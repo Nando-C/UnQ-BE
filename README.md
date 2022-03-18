@@ -13,7 +13,7 @@
     A Food & Drinks Ordering Application, solo capstone project developed for Strive School's Full Stack program!
     <br />
     <br />
-    <a href="#try-customer-interface">View Demo</a>
+    <a href="https://github.com/Nando-C/UnQ-FE#try-customer-interface">View Demo</a>
     <!-- ·
     <a href="https://github.com/Nando-C/UnQ-BE/issues">Report Bug</a> -->
   </p>
