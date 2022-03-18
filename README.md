@@ -211,27 +211,27 @@ These are the available endpoints for this application.
 
 ### Authorization
 
-- POST
+- [ 'POST' ]
 
   baseURL-api/auth/refreshToken
 
-- POST
+- [ 'POST' ]
 
   baseURL-api/auth/register
 
-- POST
+- [ 'POST' ]
 
   baseURL-api/auth/login
 
-- GET
+- [ 'GET' ]
 
   baseURL-api/auth/logout
 
-- GET
+- [ 'GET' ]
 
   baseURL-api/auth/googleLogin
 
-- GET
+- [ 'GET' ]
 
   baseURL-api/auth/googleRedirect
 
