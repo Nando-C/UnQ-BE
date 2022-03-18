@@ -29,6 +29,22 @@
         <li><a href="#built-with">Built With</a></li>
       </ul>
     </li>
+    <li><a href="#models">Models</a>
+     <ul>
+        <li><a href="#user">User</a></li>
+        <li><a href="#shop">Shop</a></li>
+        <li><a href="#menu">Menu</a></li>
+        <li><a href="#cart">Cart</a></li>
+      </ul>
+    </li>
+    <li><a href="#api">API</a>
+     <ul>
+        <li><a href="#authorization">Authorization</a></li>
+        <li><a href="#users">Users</a></li>
+        <li><a href="#shops">Shops</a></li>
+        <li><a href="#carts">Carts</a></li>
+      </ul>
+    </li>
     <li><a href="#contact">Contact</a></li>
   </ol>
 </details>
@@ -45,7 +61,7 @@ Developed completly from (not having idea of what to conceive) concept to deploy
 
 In reality this is a MVP (Minimal Viable Product) that I am planning to improve in the near future, but still makes me really proud! 😁
 
-You can find the Front-End repo of this project in the following link: [UnQ's Front-End](https://github.com/Nando-C/UnQ-FE)
+You can find the Front-End repo of this project in the following link, where more information about the use of this app is shared: [UnQ's Front-End](https://github.com/Nando-C/UnQ-FE)
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -63,6 +79,8 @@ You can find the Front-End repo of this project in the following link: [UnQ's Fr
 <!-- MODELS EXAMPLES -->
 
 ## Models
+
+I have used MongoDB with Mongoose to model the data for this application, creating four main models as shown below.
 
 ### User
 
@@ -184,6 +202,67 @@ Cart Model:
         ],
     }
 ```
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+## API
+
+These are the available endpoints for this application.
+
+### Authorization
+
+- POST
+  baseURL-api/auth/refreshToken
+
+- POST
+  baseURL-api/auth/register
+
+- POST
+  baseURL-api/auth/login
+
+- GET
+  baseURL-api/auth/logout
+
+- GET
+  baseURL-api/auth/googleLogin
+
+- GET
+  baseURL-api/auth/googleRedirect
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+### Users
+
+baseURL-api/users/me
+baseURL-api/users/me/avatar
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+### Shops
+
+baseURL-api/shops
+baseURL-api/shops/:shopId
+baseURL-api/shops/:shopId/cover
+baseURL-api/shops/:shopId/tables
+baseURL-api/shops/:shopId/tables/:tableId
+baseURL-api/shops/:shopId/menu
+baseURL-api/shops/:shopId/menu/:itemId
+baseURL-api/shops/:shopId/menu/:itemId/img
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+### Carts
+
+baseURL-api/carts/:shopId/tables/:tableId/addItem'
+baseURL-api/carts/:shopId/tables/:tableId/removeItem'
+baseURL-api/carts/:shopId/tables/:tableId/deleteItem'
+baseURL-api/carts/:shopId/tables/:tableId/:cartId/addSplitItem'
+baseURL-api/carts/:shopId/tables/:tableId/:cartId/decreaseSplitItem'
+baseURL-api/carts/:shopId/tables/:tableId/:cartId/removeSplitItem'
+baseURL-api/carts/tables/:tableId/:cartId/checkOutSplitItem'
+baseURL-api/carts/tables/:tableId'
+baseURL-api/carts'
+baseURL-api/carts/:cartId'
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
