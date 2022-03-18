@@ -37,7 +37,7 @@
         <li><a href="#cart">Cart</a></li>
       </ul>
     </li>
-    <li><a href="#api">API</a>
+    <li><a href="#rest-api">REST API</a>
      <ul>
         <li><a href="#authorization">Authorization</a></li>
         <li><a href="#users">Users</a></li>
@@ -205,7 +205,7 @@ Cart Model:
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
-## API
+## REST API
 
 These are the available endpoints created for this application.
 
