@@ -23,7 +23,7 @@ export const createTable: TController = async ( req, res, next ) => {
             { runValidators: true }
         )
 
-        res.send(modifiedShopWithQr.tables[modifiedShopWithQr.tables.length-1])
+        res.send(modifiedShopWithQr?.tables[modifiedShopWithQr?.tables.length-1])
     } catch (error) {
         next(createError(500, error as Error))
     }
