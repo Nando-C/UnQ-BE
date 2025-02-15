@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "build": "tsc",
-    "dev": "ts-node-dev -r dotenv/config --respawn --pretty --transpile-only ./src",
+    "dev": "ts-node-dev --trace-deprecation -r dotenv/config --respawn --pretty --transpile-only ./src",
     "start": "node ./build/index.js"
   },
   "repository": {
@@ -45,7 +45,7 @@
     "express-list-endpoints": "^6.0.0",
     "http-errors": "^1.8.0",
     "jsonwebtoken": "^8.5.1",
-    "mongoose": "^6.0.7",
+    "mongoose": "^7.8.6",
     "multer": "^1.4.3",
     "multer-storage-cloudinary": "^4.0.0",
     "passport": "^0.5.0",

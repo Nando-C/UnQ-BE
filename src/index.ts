@@ -7,6 +7,7 @@ const PORT = process.env.PORT || 3001
 console.table(listEndpoints(app))
 
 mongoose.set('returnOriginal', false)
+mongoose.set('strictQuery', true)
 
 mongoose.connect(process.env.MONGO_CONNECTION!)
     .then(() => app.listen(PORT, () => {

@@ -3,7 +3,7 @@ import { ICart, ICartDocument } from "src/typings/cart"
 
 const { Schema, model } = mongoose
 
-const CartSchema = new Schema<ICart>(
+const CartSchema = new Schema<ICartDocument>(
     {
         userId: {
             type: Schema.Types.ObjectId,
