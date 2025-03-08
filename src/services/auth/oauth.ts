@@ -2,6 +2,8 @@ import passport from "passport"
 import GoogleStrategy from "passport-google-oauth20"
 import UserModel from "../users/model"
 import { getTokens } from "./tools"
+import dotenv from 'dotenv'
+dotenv.config()
 
 const googleStrategy = new GoogleStrategy.Strategy(
     {

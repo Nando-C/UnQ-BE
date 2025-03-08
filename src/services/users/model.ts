@@ -1,10 +1,10 @@
 import mongoose from "mongoose"
 import { IUserDocument, IUserModel } from "src/typings/users"
-import bcrypt from "bcrypt"
+import * as bcrypt from 'bcrypt';
 
 const { Schema, model } = mongoose
 
-const UserSchema = new Schema<IUserDocument,IUserModel>(
+const UserSchema = new Schema<IUserDocument, IUserModel>(
     {
         name: {
             type: String,

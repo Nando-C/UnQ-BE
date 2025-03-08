@@ -32,8 +32,8 @@ const ShopSchema = new Schema<IShopDocument> (
         },
         shopMg: {
             type: [Schema.Types.ObjectId],
-            ref: "User",
             required: true,
+            ref: "User",
         },
         tables: [
             {
@@ -44,13 +44,13 @@ const ShopSchema = new Schema<IShopDocument> (
                 Qr_Url: String,
             },
         ],
-        menu: [
+        menu:
             {
-            type: [Schema.Types.ObjectId],
-            ref: "Menu",
-            required: true,
-            }
-        ],
+                type: [Schema.Types.ObjectId],
+                required: true,
+                ref: "Menu",
+            },
+        // ],
         //     {
         //         name: {
         //             type: String,

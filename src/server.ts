@@ -4,6 +4,7 @@ import cors from "cors"
 import passport from "passport"
 import googleStrategy from "./services/auth/oauth"
 import cookieParser from "cookie-parser"
+import session from "express-session"
 
 import { errorsHandler } from "./errorMddlewares"
 import { corsOptions } from "./settings/cors"
@@ -21,6 +22,8 @@ passport.use("google", googleStrategy)
 
 // ===================== MIDDLEWARES ================================
 app.use(express.json())
+app.set('trust proxy', 1)
+app.use(session({ secret: 'bat smash cat', resave: true, saveUninitialized: true }))
 app.use(cors(corsOptions))
 app.use(cookieParser())
 app.use(passport.initialize())

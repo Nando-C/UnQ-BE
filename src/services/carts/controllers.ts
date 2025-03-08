@@ -277,10 +277,10 @@ export const checkOutSplitItem: TController = async ( req, res, next ) => {
             const updatedCart = await CartModel.findOneAndUpdate({_id: cartId, items: { $elemMatch: {menuId: splitItem.menuId} }}, { $inc: { "items.$.qtyPayed": req.body.qty }}).populate("items.menuId", "name short_description image price").populate("split.menuId", "name short_description image price")
             // console.log("updatedCart: ", updatedCart)
             
-            const payedItems = updatedCart.items.filter(item => item.qty <= item.qtyPayed).length
+            const payedItems = updatedCart && updatedCart.items.filter(item => item.qty <= item.qtyPayed).length
             // console.log("payedItems: ", payedItems)
 
-            if ( payedItems === updatedCart.items.length ) {
+            if ( updatedCart && payedItems === updatedCart.items.length ) {
 
                 const checkOutCart = await CartModel.findByIdAndUpdate(cartId, {status: "closed"}).populate("items.menuId", "name short_description image price").populate("split.menuId", "name short_description image price")
                 console.log("checkOutCart: ", checkOutCart)
