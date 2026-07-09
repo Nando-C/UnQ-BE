@@ -70,7 +70,7 @@ export const editTable: TController = async ( req, res, next ) => {
 
         const modifiedShop = await ShopModel.findOneAndUpdate(
             { _id: shopId, tables: { $elemMatch: {_id: tableId} } },
-            { $set: { "tables.$": modification } },
+            { $set: { "tables.$.name": modification.name } },
             { runValidators: true }
         )
         if (!modifiedShop) return next(createError(404, "Table Not Found!"))

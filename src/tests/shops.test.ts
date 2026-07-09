@@ -67,6 +67,33 @@ describe("shops", () => {
         expect(res.status).toBe(403)
     })
 
+    it("renaming a table preserves its _id and Qr_Url", async () => {
+        const owner = await authFor("shopMg")
+        const shopRes = await request(app)
+            .post("/shops")
+            .set("Cookie", owner.cookies)
+            .send({ name: "Table Cafe" })
+        const shopId = shopRes.body._id
+
+        const createRes = await request(app)
+            .post(`/shops/${shopId}/tables`)
+            .set("Cookie", owner.cookies)
+            .send({ name: "Table 1" })
+        const { _id: tableId, Qr_Url } = createRes.body
+
+        const editRes = await request(app)
+            .put(`/shops/${shopId}/tables/${tableId}`)
+            .set("Cookie", owner.cookies)
+            .send({ name: "Renamed" })
+
+        expect(editRes.status).toBe(200)
+        const renamedTable = editRes.body.find((t: { _id: string }) => String(t._id) === String(tableId))
+        expect(renamedTable.name).toBe("Renamed")
+        expect(String(renamedTable._id)).toBe(String(tableId))
+        expect(renamedTable.Qr_Url).toBe(Qr_Url)
+        expect(renamedTable.Qr_Url).toContain(String(tableId))
+    })
+
     describe("menu CRUD through /shops/:shopId/menu", () => {
         it("supports create, list, read, update, and delete", async () => {
             const owner = await authFor("shopMg")
