@@ -102,7 +102,7 @@ export const googleRedirect: TController =  async (req, res, next) => {
             sameSite: "none",
         })
 
-        res.redirect(`${process.env.FRONTEND_DEV_URL}`)
+        res.redirect(`${process.env.FRONTEND_URL || process.env.FRONTEND_DEV_URL}`)
     } catch (error) {
         console.log(error)
         next(createError(500, error as Error))

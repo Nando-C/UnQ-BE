@@ -19,7 +19,7 @@ export const createTable: TController = async ( req, res, next ) => {
 
         const modifiedShopWithQr = await ShopModel.findOneAndUpdate(
             { _id: shopId, "tables.name": newTable.name },
-            { $set: {"tables.$.Qr_Url": `${process.env.FRONTEND_DEV_URL}/shops/${shopId}/tables/${tableId}`}},
+            { $set: {"tables.$.Qr_Url": `${process.env.FRONTEND_URL || process.env.FRONTEND_DEV_URL}/shops/${shopId}/tables/${tableId}`}},
             { runValidators: true }
         )
 
