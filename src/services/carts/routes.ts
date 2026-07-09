@@ -1,16 +1,18 @@
 import { Router } from "express"
 import { JWTAuthMiddleware } from "../auth/middlewares"
 import * as controllers from "./controllers"
+import { validate } from "../../middlewares/validate"
+import { cartItemSchema, cartItemWithQtySchema } from "./schemas"
 
 const router = Router()
 
-router.post("/:shopId/tables/:tableId/addItem", JWTAuthMiddleware, controllers.addItem)
-router.post("/:shopId/tables/:tableId/removeItem", JWTAuthMiddleware, controllers.decreaseItem)
-router.post("/:shopId/tables/:tableId/deleteItem", JWTAuthMiddleware, controllers.deleteItem)
-router.post("/:shopId/tables/:tableId/:cartId/addSplitItem", JWTAuthMiddleware, controllers.addSplitItem)
-router.post("/:shopId/tables/:tableId/:cartId/decreaseSplitItem", JWTAuthMiddleware, controllers.decreaseSplitItem)
-router.post("/:shopId/tables/:tableId/:cartId/removeSplitItem", JWTAuthMiddleware, controllers.removeSplitItem)
-router.post("/tables/:tableId/:cartId/checkOutSplitItem", JWTAuthMiddleware, controllers.checkOutSplitItem)
+router.post("/:shopId/tables/:tableId/addItem", JWTAuthMiddleware, validate(cartItemWithQtySchema), controllers.addItem)
+router.post("/:shopId/tables/:tableId/removeItem", JWTAuthMiddleware, validate(cartItemWithQtySchema), controllers.decreaseItem)
+router.post("/:shopId/tables/:tableId/deleteItem", JWTAuthMiddleware, validate(cartItemSchema), controllers.deleteItem)
+router.post("/:shopId/tables/:tableId/:cartId/addSplitItem", JWTAuthMiddleware, validate(cartItemWithQtySchema), controllers.addSplitItem)
+router.post("/:shopId/tables/:tableId/:cartId/decreaseSplitItem", JWTAuthMiddleware, validate(cartItemSchema), controllers.decreaseSplitItem)
+router.post("/:shopId/tables/:tableId/:cartId/removeSplitItem", JWTAuthMiddleware, validate(cartItemSchema), controllers.removeSplitItem)
+router.post("/tables/:tableId/:cartId/checkOutSplitItem", JWTAuthMiddleware, validate(cartItemWithQtySchema), controllers.checkOutSplitItem)
 router.get("/tables/:tableId", controllers.getTableCart)
 router.get("/", JWTAuthMiddleware, controllers.getMyCarts)
 router.get("/:cartId", JWTAuthMiddleware, controllers.getSingleCart)
