@@ -6,7 +6,7 @@ import multer from "multer"
 
 const avatarStorage = new CloudinaryStorage({
     cloudinary,
-    params: async (req, file) => {
+    params: async () => {
         return {
             folder: "UnQ-App/Users",
         }
@@ -19,7 +19,7 @@ export const userAvatarParser = multer({ storage: avatarStorage})
 
 const coverStorage = new CloudinaryStorage({
     cloudinary,
-    params: async (req, file) => {
+    params: async () => {
         return {
             folder: "UnQ-App/Shops",
         }
@@ -32,7 +32,7 @@ export const shopCoverParser = multer({ storage: coverStorage})
 
 const menuItemImageStorage = new CloudinaryStorage({
     cloudinary,
-    params: async (req, file) => {
+    params: async () => {
         return {
             folder: "UnQ-App/MenuItems",
         }

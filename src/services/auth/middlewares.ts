@@ -18,7 +18,7 @@ export const JWTAuthMiddleware: TController = async (req, res, next) => {
         if (!user) return next(createError(404, "User not found!"))
         req.user = user
         next()
-    } catch (error) {
+    } catch {
         next(createError(401, "Invalid token"))
     }
 }

@@ -132,8 +132,8 @@ export const deleteItem: TController = async ( req, res, next ) => {
         const isItemThere = await CartModel.findOne({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId})
         
         if (isItemThere) {
-            const decreasedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $set: { "items.$.qty": 0 }}).populate("items.menuId", "name short_description image price")
-            
+            await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $set: { "items.$.qty": 0 }}).populate("items.menuId", "name short_description image price")
+
             const removedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: 0 }}}).populate("items.menuId", "name short_description image price")
             
             // const deleteCart = await CartModel.findOneAndDelete({userId: user._id, tableId: tableId, status: "open", items: []}).populate("items.menuId", "name short_description image price")
@@ -259,13 +259,11 @@ export const checkOutSplitItem: TController = async ( req, res, next ) => {
             ...req.body
         }
 
-        const item = req.body.item
-
         const isItemThere = await CartModel.findOne({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } })
 
         if (isItemThere) {
             // const decreasedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: { menuId: splitItem.menuId , userId: user._id} } }, { $inc: { "split.$.qty": -(1) }})
-            const checkOutItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $set: { "split.$.splitStatus": "closed" }}).populate("split.menuId", "name short_description image price").populate("items.menuId", "name short_description image price")
+            await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $set: { "split.$.splitStatus": "closed" }}).populate("split.menuId", "name short_description image price").populate("items.menuId", "name short_description image price")
             // console.log("checkOutItem: ", checkOutItem)
             
             const updatedCart = await CartModel.findOneAndUpdate({_id: cartId, items: { $elemMatch: {menuId: splitItem.menuId} }}, { $inc: { "items.$.qtyPayed": req.body.qty }}).populate("items.menuId", "name short_description image price").populate("split.menuId", "name short_description image price")

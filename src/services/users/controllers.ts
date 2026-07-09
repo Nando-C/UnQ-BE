@@ -4,7 +4,7 @@ import createError from "http-errors"
 
 // -------------------------------------------------------------------------
 
-export const getMe: TController = async ( req, res, next) => {
+export const getMe: TController = async ( req, res) => {
     res.json(req.user)
 }
 
@@ -21,7 +21,7 @@ export const editMe: TController = async ( req, res, next) => {
 
         await me.save()
         res.send(me)
-    } catch (error) {
+    } catch {
         next(createError(500, "An Error ocurred while updating the user"))
     }
 }
@@ -34,7 +34,7 @@ export const editMyAvatar: TController = async ( req, res, next) => {
         me.avatar = req.file?.path
         await me.save()
         res.send(me)
-    } catch (error) {
+    } catch {
         next(createError(500, "An Error ocurred while updating the user's avatar"))
     }
 }
@@ -46,7 +46,7 @@ export const deleteMe: TController = async ( req, res, next ) => {
     try {
         await me.deleteOne()
         res.status(204).send()
-    } catch (error) {
+    } catch {
         next(createError(500, "An Error ocurred while deleting the user"))
     }
 }

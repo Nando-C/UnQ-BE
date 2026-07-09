@@ -1,5 +1,5 @@
 import mongoose from "mongoose"
-import { ICart, ICartDocument } from "src/typings/cart"
+import { ICartDocument } from "src/typings/cart"
 
 const { Schema, model } = mongoose
 

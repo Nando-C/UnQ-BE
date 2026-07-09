@@ -1,5 +1,6 @@
 import { TErrorHandler } from "./typings/middlewares"
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- Express only recognizes error middleware when the handler declares all 4 params
 export const errorsHandler: TErrorHandler = (err, req, res, next) => {
     if (err.status >= 400 && err.status < 500) {
       const body: { message: string; details?: unknown } = { message: err.message }

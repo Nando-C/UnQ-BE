@@ -1,3 +1,5 @@
+import fs from "fs"
+
 // Runs via jest `setupFiles`, before any test module (and therefore before the
 // app under test) is imported, so the token helpers see real secrets at call time.
 process.env.JWT_SECRET = process.env.JWT_SECRET || "test-access-secret"
@@ -15,7 +17,6 @@ process.env.BACKEND_URL = process.env.BACKEND_URL || "http://localhost:3001"
 // exists — pointing memory-server at a missing path would make it fail rather than
 // fall back to downloading. Override via MONGOMS_SYSTEM_BINARY in the environment.
 if (!process.env.MONGOMS_SYSTEM_BINARY) {
-    const fs = require("fs") as typeof import("fs")
     const candidates = ["/usr/local/bin/mongod", "/opt/homebrew/bin/mongod", "/usr/bin/mongod"]
     const found = candidates.find((p) => fs.existsSync(p))
     if (found) process.env.MONGOMS_SYSTEM_BINARY = found

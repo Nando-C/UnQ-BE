@@ -1,6 +1,5 @@
 import mongoose from "mongoose"
 import { IShopDocument } from "src/typings/shop"
-import { MenuSchema } from "../menus/model"
 
 const { Schema, model } = mongoose 
 

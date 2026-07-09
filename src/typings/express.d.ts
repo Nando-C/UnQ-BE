@@ -1,4 +1,4 @@
-import * as express from "express"
+import "express"
 import { IUserDocument } from "./users"
 
 declare global {

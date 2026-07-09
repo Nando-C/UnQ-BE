@@ -70,7 +70,7 @@ export const refreshTokens = async ( currentRefreshToken: string) => {
             const { accessToken, refreshToken } = await getTokens(user)
             return { accessToken, refreshToken }
         } else return null
-    } catch (error) {
+    } catch {
         throw new Error("Token not valid!")
     }
 }
