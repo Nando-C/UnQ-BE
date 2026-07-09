@@ -7,15 +7,23 @@
     <img src="" alt="Logo" height="100">
   </a> -->
 
-<h3 align="center">UnQ -> [Back-End]</h3>
+<h3 align="center">UnQ — Back-End</h3>
 
   <p align="center">
-    A Food & Drinks Ordering Application, solo capstone project developed for Strive School's Full Stack program!
+    QR-code-based table ordering for bars & restaurants — scan, order, split the bill.
     <br />
     <br />
+    <a href="https://github.com/Nando-C/UnQ-FE">Front-End Repo</a>
+    ·
     <a href="https://github.com/Nando-C/UnQ-FE#try-customer-interface">View Demo</a>
-    <!-- ·
-    <a href="https://github.com/Nando-C/UnQ-BE/issues">Report Bug</a> -->
+  </p>
+
+  <p align="center">
+    <img src="https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=node.js&logoColor=white" alt="Node >=20">
+    <img src="https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white" alt="TypeScript 5.9">
+    <img src="https://img.shields.io/badge/Express-4-000000?logo=express&logoColor=white" alt="Express 4">
+    <img src="https://img.shields.io/badge/MongoDB-Mongoose%208-47A248?logo=mongodb&logoColor=white" alt="MongoDB / Mongoose 8">
+    <img src="https://img.shields.io/badge/tested%20with-Jest-C21325?logo=jest&logoColor=white" alt="Tested with Jest">
   </p>
 </div>
 
@@ -27,9 +35,12 @@
       <a href="#about-the-project">About The Project</a>
       <ul>
         <li><a href="#built-with">Built With</a></li>
-        <li><a href="#setup">Setup</a></li>
       </ul>
     </li>
+    <li><a href="#features">Features</a></li>
+    <li><a href="#architecture">Architecture</a></li>
+    <li><a href="#setup">Setup</a></li>
+    <li><a href="#testing">Testing</a></li>
     <li><a href="#models">Models</a>
      <ul>
         <li><a href="#user">User</a></li>
@@ -54,13 +65,11 @@
 
 ## About The Project
 
-<!-- [![Product Name Screen Shot][product-screenshot]](https://example.com) -->
+UnQ lets customers scan a QR code on their table, browse a shop's menu, place an order, and split the bill per item with the rest of the table — no app install, no waiting for a waiter to take the order. On the other side, shop managers run their shop's profile, tables, and menu from the same API.
 
-This is the Back-End of my Solo Capstone project for the Full Stack Master Camp at Strive School.
+This is the Back-End of my solo capstone project for Strive School's Full-Stack program, built concept-to-deployment in 5 weeks — designing the data model, the REST API, and the authentication/authorization layer, and implementing both the Front-End and Back-End from scratch in that time.
 
-Developed completly from (not having idea of what to conceive) concept to deployment in 5 weeks, implementing both the Front-End & Back-End from scratch within this time frame.
-
-In reality this is a MVP (Minimal Viable Product) that I am planning to improve in the near future, but still makes me really proud! 😁
+**Recently modernized (2026):** the codebase went through a staged security and quality pass — mass-assignment whitelisting, working refresh-token rotation, short-lived (15m) access tokens, sanitized error responses, `zod` request validation on every mutating endpoint, an integration test suite (Jest + Supertest + an in-memory MongoDB), ESLint, and a dependency refresh that brought `npm audit` to 0 findings.
 
 You can find the Front-End repo of this project in the following link, where more information about the use of this app is shared: [UnQ's Front-End](https://github.com/Nando-C/UnQ-FE)
 
@@ -71,9 +80,92 @@ You can find the Front-End repo of this project in the following link, where mor
 - [TypeScript](https://typescriptlang.org/)
 - [Node.js](https://nodejs.org/)
 - [Express.js](https://expressjs.com/)
-- [MongoDB](https://www.mongodb.com/)
+- [MongoDB](https://www.mongodb.com/) + [Mongoose](https://mongoosejs.com/)
+- [Zod](https://zod.dev/)
+- [Passport.js](https://www.passportjs.org/) (Google OAuth 2.0)
 - [Cloudinary](https://cloudinary.com)
-- Love ❤️ and lots of coffee ☕️
+- [Jest](https://jestjs.io/) + [Supertest](https://github.com/ladjs/supertest) + [mongodb-memory-server](https://github.com/typegoose/mongodb-memory-server)
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+## Features
+
+- JWT authentication in `httpOnly` cookies, with refresh-token rotation and short-lived (15m) access tokens
+- Google OAuth login (Passport), issuing the same cookie pair as email/password login
+- Role-based access control (`customer` vs. `shopMg`), enforced per-route
+- Shop, table, and menu management for shop managers
+- Per-table QR code URLs, generated on table creation
+- Shared table carts with per-item bill splitting between multiple customers at the same table
+- Cloudinary image uploads for user avatars, shop covers, and menu item photos
+- Request validation (`zod`) on every mutating endpoint, with a consistent `{ message, details }` error shape
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph clients["Clients"]
+        direction TB
+        QR["📱 Table QR scan"]
+        FE["💻 UnQ-FE&nbsp;(React)"]
+        QR --> FE
+    end
+
+    subgraph api["⚙️ Express API"]
+        direction LR
+        MW["🛡️ Middleware chain<br/><small>CORS · cookies · JWT auth<br/>role guards · zod validation</small>"]
+        subgraph services["Domain services"]
+            direction TB
+            AUTH["🔐 auth"]
+            USERS["👤 users"]
+            SHOPS["🏪 shops"]
+            MENUS["🍔 menus"]
+            CARTS["🛒 carts"]
+        end
+        ERR["🚨 Central error handler<br/><small>4xx → message + details · 5xx → generic</small>"]
+        MW --> services
+        services -.-> ERR
+    end
+
+    DB[("🗄️ MongoDB<br/><small>Mongoose 8</small>")]
+    GOOGLE["🌐 Google OAuth 2.0"]
+    CDN["☁️ Cloudinary"]
+
+    FE ==>|"HTTPS + httpOnly<br/>JWT cookies"| MW
+    AUTH <--> GOOGLE
+    USERS & SHOPS & MENUS -->|"image uploads<br/><small>multer StorageEngine</small>"| CDN
+    services ==> DB
+```
+
+The API is organized service-per-domain: each domain under `src/services/<name>/` owns its `routes.ts`, `model.ts`, `controllers.ts`, and `schemas.ts` (zod). Shared concerns live outside the services:
+
+- `src/services/auth/middlewares.ts` — `JWTAuthMiddleware` (verifies the access-token cookie), `adminOnly` / `isShopManager` (role guards)
+- `src/middlewares/validate.ts` — generic `validate(schema)` middleware, runs after auth/role checks and before the controller
+- `src/errorMiddlewares.ts` — single error-handling exit point: 4xx errors return `{ message, details? }`, everything else is logged and returns a generic 500
+- `src/settings/` — CORS whitelist and a custom Cloudinary multer `StorageEngine`
+
+```
+src/
+├── index.ts              # env load, mongoose connect, listen
+├── server.ts              # express app (exported, not listening — used directly by tests)
+├── errorMiddlewares.ts
+├── middlewares/
+│   └── validate.ts
+├── settings/
+│   ├── cors.ts
+│   └── cloudinary.ts
+├── services/
+│   ├── auth/               # register, login, refresh, logout, Google OAuth
+│   ├── users/               # profile + avatar
+│   ├── shops/               # shop CRUD + tables
+│   ├── menus/                # menu items
+│   └── carts/                # cart, split-bill flows
+├── typings/                # shared TS types/interfaces
+└── tests/                  # Jest integration suite
+```
+
+**Auth flow:** login/register/Google OAuth all issue the same pair of `httpOnly` cookies — a 15-minute access token and a 4-week refresh token. `POST /auth/refreshToken` verifies the refresh token against the one stored on the user document and rotates both cookies; a stale or already-used refresh token is rejected. Google OAuth runs through Passport with `session: false` — no server-side session, just the same JWT cookie pair on redirect.
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -91,13 +183,44 @@ You can find the Front-End repo of this project in the following link, where mor
    npm install
    ```
 
+### Environment Variables
+
+| Variable | Description |
+|---|---|
+| `PORT` | Port the server listens on |
+| `BACKEND_URL` | Public URL of this API (used by Google OAuth's redirect config) |
+| `FRONTEND_URL` | Front-end URL used for redirects and generated table QR URLs (production) |
+| `FRONTEND_DEV_URL` | Front-end URL used as a local-dev fallback when `FRONTEND_URL` isn't set |
+| `FRONTEND_PROD_URL` | Front-end production URL, added to the CORS whitelist |
+| `MONGO_CONNECTION` | MongoDB connection string |
+| `JWT_SECRET` | Signing secret for access tokens |
+| `JWT_REFRESH_SECRET` | Signing secret for refresh tokens |
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID |
+| `GOOGLE_SECRET` | Google OAuth client secret |
+| `CLOUDINARY_URL` | Cloudinary account URL (auto-configures the SDK) |
+| `PAYPAL_CLIENT_ID` | PayPal client ID |
+| `PAYPAL_SECRET` | PayPal client secret |
+| `PAYPAL_BEARER_TOKEN` | PayPal bearer token |
+
 ### Available Scripts
 
-- `npm run dev` — Dev server with hot reload
-- `npm run build` — Compile TypeScript to `./build`
-- `npm start` — Run the compiled build
-- `npm test` — Run the Jest test suite
-- `npm run lint` — Run ESLint on the `src/` directory
+| Script | Description |
+|---|---|
+| `npm run dev` | Dev server with hot reload |
+| `npm run build` | Compile TypeScript to `./build` |
+| `npm start` | Run the compiled build |
+| `npm test` | Run the Jest integration suite |
+| `npm run lint` | Run ESLint on the `src/` directory |
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+## Testing
+
+The API is covered by a Jest + Supertest integration suite running against an in-memory MongoDB (`mongodb-memory-server`) — no external database or network calls required. It covers the full auth flow including refresh-token rotation and role-escalation attempts, authorization boundaries between users/shops/carts (e.g. a customer can't manage a shop, a user can't read another user's cart), the cart and split-bill flows, table QR-code integrity across renames, and mocked upload wiring for the Cloudinary routes. Run it with:
+
+```bash
+npm test
+```
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -232,7 +355,7 @@ Cart Model:
 
 ## REST API
 
-These are the available endpoints created for this application.
+These are the available endpoints created for this application. Every mutating request is validated (`zod`) and responds `400 { message: "Validation failed", details: [...] }` on bad input.
 
 ### Authorization
 
@@ -280,6 +403,10 @@ These are the available endpoints created for this application.
 
   baseURL-api/shops
 
+- [ 'GET' ]
+
+  baseURL-api/shops/me
+
 - [ 'GET', 'PUT', 'DELETE' ]
 
   baseURL-api/shops/:shopId
@@ -314,43 +441,43 @@ These are the available endpoints created for this application.
 
 - [ 'POST' ]
 
-  baseURL-api/carts/:shopId/tables/:tableId/addItem'
+  baseURL-api/carts/:shopId/tables/:tableId/addItem
 
 - [ 'POST' ]
 
-  baseURL-api/carts/:shopId/tables/:tableId/removeItem'
+  baseURL-api/carts/:shopId/tables/:tableId/removeItem
 
 - [ 'POST' ]
 
-  baseURL-api/carts/:shopId/tables/:tableId/deleteItem'
+  baseURL-api/carts/:shopId/tables/:tableId/deleteItem
 
 - [ 'POST' ]
 
-  baseURL-api/carts/:shopId/tables/:tableId/:cartId/addSplitItem'
+  baseURL-api/carts/:shopId/tables/:tableId/:cartId/addSplitItem
 
 - [ 'POST' ]
 
-  baseURL-api/carts/:shopId/tables/:tableId/:cartId/decreaseSplitItem'
+  baseURL-api/carts/:shopId/tables/:tableId/:cartId/decreaseSplitItem
 
 - [ 'POST' ]
 
-  baseURL-api/carts/:shopId/tables/:tableId/:cartId/removeSplitItem'
+  baseURL-api/carts/:shopId/tables/:tableId/:cartId/removeSplitItem
 
 - [ 'POST' ]
 
-  baseURL-api/carts/tables/:tableId/:cartId/checkOutSplitItem'
+  baseURL-api/carts/tables/:tableId/:cartId/checkOutSplitItem
 
 - [ 'GET' ]
 
-  baseURL-api/carts/tables/:tableId'
+  baseURL-api/carts/tables/:tableId
 
 - [ 'GET' ]
 
-  baseURL-api/carts'
+  baseURL-api/carts
 
 - [ 'GET' ]
 
-  baseURL-api/carts/:cartId'
+  baseURL-api/carts/:cartId
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
