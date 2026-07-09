@@ -44,7 +44,12 @@ export const getTableCart: TController = async ( req, res, next ) => {
 
 export const getSingleCart: TController = async ( req, res, next ) => {
     try {
-        const cart = await CartModel.findById(req.params.cartId)
+        const user = req.user as IUserDocument
+
+        const cart = await CartModel.findOne({
+            _id: req.params.cartId,
+            $or: [{ userId: user._id }, { "split.userId": user._id }],
+        })
             .populate("items.menuId", "name short_description image price")
             .populate("split.menuId", "name short_description image price")
 
