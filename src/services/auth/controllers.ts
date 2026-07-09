@@ -72,7 +72,7 @@ export const tokenRefresh: TController = async (req, res, next) => {
             secure: true,
             sameSite: "none",
         })
-        res.cookie("refreshToken", refreshToken, {
+        res.cookie("refreshToken", tokens.refreshToken, {
             httpOnly: true,
             secure: true,
             sameSite: "none",

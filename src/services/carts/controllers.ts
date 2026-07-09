@@ -31,8 +31,6 @@ export const getTableCart: TController = async ( req, res, next ) => {
         const cart = await CartModel.findOne({$and: [{ tableId: tableId}, {status: "open"}]})
             .populate("items.menuId", "name short_description image price")
             .populate("split.menuId", "name short_description image price")
-        console.log(cart)
-        
 
         if (!cart) return next(createError(404, `Cart Not Found!`))
         
@@ -96,8 +94,8 @@ export const decreaseItem: TController = async ( req, res, next ) => {
         
         if (isItemThere) {
             const decreasedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": -(req.body.qty) }}).populate("items.menuId", "name short_description image price")
-            
-            const removedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: 0 }}}).populate("items.menuId", "name short_description image price")
+
+            const removedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: { $lte: 0 } }}}).populate("items.menuId", "name short_description image price")
             
             const deleteCart = await CartModel.findOneAndDelete({userId: user._id, tableId: tableId, status: "open", items: []}).populate("items.menuId", "name short_description image price")
             
@@ -134,15 +132,11 @@ export const deleteItem: TController = async ( req, res, next ) => {
             const removedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: 0 }}}).populate("items.menuId", "name short_description image price")
             
             // const deleteCart = await CartModel.findOneAndDelete({userId: user._id, tableId: tableId, status: "open", items: []}).populate("items.menuId", "name short_description image price")
-            
+
             // if (deleteCart) {
                 // res.status(204).send()
-            // } else 
-            if (removedItem) {
-                res.send(removedItem)
-            } else {
-                res.send(removedItem)
-            }
+            // } else
+            res.send(removedItem)
 
         } else {
             res.status(404).send("Item Not Found in Cart!")
@@ -158,19 +152,14 @@ export const addSplitItem: TController = async ( req, res, next ) => {
     try {
         const user = req.user as IUserDocument
         const cartId = req.params.cartId
-        console.log(cartId);
-        
-        
+
         const splitItem = {
             userId: user._id,
             ...req.body
         }
-        console.log("splitItem: " ,splitItem)
-        
 
         // const isItemThere = await CartModel.findOne({ _id: cartId, "split.splitStatus": "open", "split.userId": user._id, "split.menuId": splitItem.menuId })
         const isItemThere = await CartModel.findOne({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } })
-        console.log(isItemThere)
         
         if (isItemThere) {
             // const selectedCart = await CartModel.findById(cartId)
@@ -205,8 +194,8 @@ export const decreaseSplitItem: TController = async ( req, res, next ) => {
         if (isItemThere) {
             // const decreasedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: { menuId: splitItem.menuId , userId: user._id} } }, { $inc: { "split.$.qty": -(1) }})
             const decreasedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $inc: { "split.$.qty": -(1) }}).populate("split.menuId", "name short_description image price").populate("items.menuId", "name short_description image price")
-            
-            const removedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $pull: { split: { qty: 0 }}}).populate("split.menuId", "name short_description image price").populate("items.menuId", "name short_description image price")
+
+            const removedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $pull: { split: { qty: { $lte: 0 } }}}).populate("split.menuId", "name short_description image price").populate("items.menuId", "name short_description image price")
             
             if (removedItem) {
                 res.send(removedItem)
@@ -238,9 +227,9 @@ export const removeSplitItem: TController = async ( req, res, next ) => {
         if (isItemThere) {
             // const decreasedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: { menuId: splitItem.menuId , userId: user._id} } }, { $inc: { "split.$.qty": -(1) }})
             const decreasedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $set: { "split.$.qty": 0 }}).populate("split.menuId", "name short_description image price").populate("items.menuId", "name short_description image price")
-            
-            const removedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $pull: { split: { qty: 0 }}}).populate("split.menuId", "name short_description image price").populate("items.menuId", "name short_description image price")
-            
+
+            const removedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $pull: { split: { qty: { $lte: 0 } }}}).populate("split.menuId", "name short_description image price").populate("items.menuId", "name short_description image price")
+
             if (removedItem) {
                 res.send(removedItem)
             } else {
@@ -283,7 +272,6 @@ export const checkOutSplitItem: TController = async ( req, res, next ) => {
             if ( updatedCart && payedItems === updatedCart.items.length ) {
 
                 const checkOutCart = await CartModel.findByIdAndUpdate(cartId, {status: "closed"}).populate("items.menuId", "name short_description image price").populate("split.menuId", "name short_description image price")
-                console.log("checkOutCart: ", checkOutCart)
                 res.send(checkOutCart)
             }
             else if (updatedCart) {

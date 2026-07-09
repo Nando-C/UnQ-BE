@@ -42,9 +42,10 @@ UserSchema.pre("save", async function (next) {
 
 UserSchema.statics.checkCredentials = async function (email, password) {
     const user = await this.findOne({email})
-    if (!user) return
-    const isMatch = await bcrypt.compare(password, user.password!)
+    if (!user || !user.password) return null
+    const isMatch = await bcrypt.compare(password, user.password)
     if (isMatch) return user
+    return null
 }
 
 UserSchema.methods.toJSON = function () {
