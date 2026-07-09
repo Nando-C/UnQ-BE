@@ -7,7 +7,8 @@ import { IGoogleUser, IUserDocument } from "src/typings/users"
 // -------------------------------------------------------------------------
 
 export const registerUser: TController = async (req, res, next) => {
-    const newUser = { ...req.body }
+    const { name, surname, email, password } = req.body
+    const newUser = { name, surname, email, password } as Record<string, unknown>
 
     try {
         newUser.avatar = `https://ui-avatars.com/api/?name=${req.body.name}+${req.body.surname}`

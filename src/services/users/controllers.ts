@@ -13,8 +13,14 @@ export const getMe: TController = async ( req, res, next) => {
 export const editMe: TController = async ( req, res, next) => {
     const me = req.user as IUserDocument
     try {
-        const modifiedUser = await me.updateOne(req.body)
-        res.send(modifiedUser)
+        const { name, surname, email, password } = req.body
+        if (name !== undefined) me.name = name
+        if (surname !== undefined) me.surname = surname
+        if (email !== undefined) me.email = email
+        if (password !== undefined) me.password = password
+
+        await me.save()
+        res.send(me)
     } catch (error) {
         next(createError(500, "An Error ocurred while updating the user"))
     }
