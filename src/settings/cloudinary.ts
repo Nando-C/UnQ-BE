@@ -1,44 +1,40 @@
-import {v2 as cloudinary } from "cloudinary"
-import { CloudinaryStorage } from "multer-storage-cloudinary"
-import multer from "multer"
+import { v2 as cloudinary } from "cloudinary"
+import multer, { StorageEngine } from "multer"
+
+// cloudinary v2 auto-configures from the CLOUDINARY_URL env var, exactly like v1.
 
 // -------------------------------------------------------------------------
 
-const avatarStorage = new CloudinaryStorage({
-    cloudinary,
-    params: async () => {
-        return {
-            folder: "UnQ-App/Users",
-        }
+// A small multer StorageEngine that streams the uploaded file straight to
+// Cloudinary. It replaces `multer-storage-cloudinary` (which pinned cloudinary
+// v1). Controllers only ever read `req.file?.path`, and the previous library set
+// `path` to the secure URL — so we do the same here to keep behavior identical.
+const cloudinaryStorage = (folder: string): StorageEngine => ({
+    _handleFile(req, file, cb) {
+        const upload = cloudinary.uploader.upload_stream({ folder }, (err, result) => {
+            if (err || !result) return cb(err ?? new Error("Cloudinary upload failed"))
+            cb(null, {
+                path: result.secure_url,
+                filename: result.public_id,
+                size: result.bytes,
+            })
+        })
+        file.stream.pipe(upload)
+    },
+    _removeFile(req, file, cb) {
+        cloudinary.uploader.destroy(file.filename).then(
+            () => cb(null),
+            (err) => cb(err),
+        )
     },
 })
-
-export const userAvatarParser = multer({ storage: avatarStorage})
 
 // -------------------------------------------------------------------------
 
-const coverStorage = new CloudinaryStorage({
-    cloudinary,
-    params: async () => {
-        return {
-            folder: "UnQ-App/Shops",
-        }
-    },
-})
+export const userAvatarParser = multer({ storage: cloudinaryStorage("UnQ-App/Users") })
 
-export const shopCoverParser = multer({ storage: coverStorage})
+export const shopCoverParser = multer({ storage: cloudinaryStorage("UnQ-App/Shops") })
 
-// -------------------------------------------------------------------------
-
-const menuItemImageStorage = new CloudinaryStorage({
-    cloudinary,
-    params: async () => {
-        return {
-            folder: "UnQ-App/MenuItems",
-        }
-    },
-})
-
-export const menuItemImageParser = multer({ storage: menuItemImageStorage})
+export const menuItemImageParser = multer({ storage: cloudinaryStorage("UnQ-App/MenuItems") })
 
 // -------------------------------------------------------------------------
