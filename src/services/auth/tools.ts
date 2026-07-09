@@ -5,17 +5,20 @@ import UserModel from "../users/model"
 
 // -------------------------------------------------------------------------
 
-const generateJWT = (payload: IJWTPayload) => 
-    new Promise((resolve, reject)=> 
-        jwt.sign(payload, process.env.JWT_SECRET!, { expiresIn: "2w"}, (err, token) => {
+const ACCESS_TOKEN_TTL = "15m"
+const REFRESH_TOKEN_TTL = "4w"
+
+const generateJWT = (payload: IJWTPayload) =>
+    new Promise((resolve, reject)=>
+        jwt.sign(payload, process.env.JWT_SECRET!, { expiresIn: ACCESS_TOKEN_TTL}, (err, token) => {
             if (err) reject(err)
             resolve(token)
         })
     )
 
-const generateRefreshJWT = (payload: IJWTPayload) => 
-    new Promise((resolve, reject)=> 
-        jwt.sign(payload, process.env.JWT_REFRESH_SECRET!, { expiresIn: "4w"}, (err, token) => {
+const generateRefreshJWT = (payload: IJWTPayload) =>
+    new Promise((resolve, reject)=>
+        jwt.sign(payload, process.env.JWT_REFRESH_SECRET!, { expiresIn: REFRESH_TOKEN_TTL}, (err, token) => {
             if (err) reject(err)
             resolve(token)
         })

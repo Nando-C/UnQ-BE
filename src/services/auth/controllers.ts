@@ -27,7 +27,11 @@ export const registerUser: TController = async (req, res, next) => {
         })
         res.status(201).send(user)
     } catch (error) {
-        next(createError(400, error as Error))
+        const mongoError = error as { code?: number; cause?: { code?: number } }
+        if (mongoError.code === 11000 || mongoError.cause?.code === 11000) {
+            return next(createError(409, "Email already registered"))
+        }
+        next(createError(400, (error as Error).message))
     }
 }
 

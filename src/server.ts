@@ -5,7 +5,7 @@ import passport from "passport"
 import googleStrategy from "./services/auth/oauth"
 import cookieParser from "cookie-parser"
 
-import { errorsHandler } from "./errorMddlewares"
+import { errorsHandler } from "./errorMiddlewares"
 import { corsOptions } from "./settings/cors"
 
 // ===================== ROUTERS ====================================
