@@ -13,7 +13,6 @@ export interface IItem {
     menuId: Schema.Types.ObjectId
     qty: number
     qtyPayed: number
-    // totalPriceItems: number
 }
 
 export interface ISplitItem {
@@ -21,7 +20,6 @@ export interface ISplitItem {
     menuId: Schema.Types.ObjectId
     qty: number
     splitStatus: string
-    // total_price_items: number
 }
 
 export interface ICartDocument extends Document, ICart {}

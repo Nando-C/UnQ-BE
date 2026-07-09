@@ -27,6 +27,7 @@
       <a href="#about-the-project">About The Project</a>
       <ul>
         <li><a href="#built-with">Built With</a></li>
+        <li><a href="#setup">Setup</a></li>
       </ul>
     </li>
     <li><a href="#models">Models</a>
@@ -57,7 +58,7 @@
 
 This is the Back-End of my Solo Capstone project for the Full Stack Master Camp at Strive School.
 
-Developed completly from (not having idea of what to conceive) concept to deployment in 5 weeks, implementing both the Font-End & Back-End from scratch within this time frame.
+Developed completly from (not having idea of what to conceive) concept to deployment in 5 weeks, implementing both the Front-End & Back-End from scratch within this time frame.
 
 In reality this is a MVP (Minimal Viable Product) that I am planning to improve in the near future, but still makes me really proud! 😁
 
@@ -73,6 +74,30 @@ You can find the Front-End repo of this project in the following link, where mor
 - [MongoDB](https://www.mongodb.com/)
 - [Cloudinary](https://cloudinary.com)
 - Love ❤️ and lots of coffee ☕️
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+## Setup
+
+### Getting Started
+
+1. Copy `.env.example` to `.env` and fill in the required environment variables:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+### Available Scripts
+
+- `npm run dev` — Dev server with hot reload
+- `npm run build` — Compile TypeScript to `./build`
+- `npm start` — Run the compiled build
+- `npm test` — Run the Jest test suite
+- `npm run lint` — Run ESLint on the `src/` directory
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 

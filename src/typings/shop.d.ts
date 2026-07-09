@@ -1,5 +1,4 @@
 import { Document, Schema } from "mongoose"
-// import { IMenuDocument } from "./menu";
 
 export interface IShop {
     name: string
