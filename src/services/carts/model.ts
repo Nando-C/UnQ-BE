@@ -42,6 +42,11 @@ const CartSchema = new Schema<ICartDocument>(
                 // PriceItems: Number,
             }
         ],
+        // Records the PayPal order that settled this cart's split checkout. Kept
+        // unique so an order id can never be replayed to mark items paid twice.
+        paypalOrderId: {
+            type: String,
+        },
         split: [
             {
                 userId: {

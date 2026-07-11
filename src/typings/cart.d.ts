@@ -7,6 +7,7 @@ export interface ICart {
     status: string
     items: IItem[]
     split: ISplitItem[]
+    paypalOrderId?: string
 }
 
 export interface IItem {

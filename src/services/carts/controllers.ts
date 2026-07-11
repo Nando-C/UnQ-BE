@@ -2,6 +2,8 @@ import { TController } from "src/typings/controllers"
 import { IUserDocument } from "src/typings/users"
 import CartModel from "./model"
 import createError from "http-errors"
+import mongoose from "mongoose"
+import { getOrder, PayPalOrder } from "../../lib/paypal"
 
 // -------------------------------------------------------------------------
 
@@ -265,6 +267,83 @@ export const checkOutSplitItem: TController = async ( req, res, next ) => {
         } else {
             res.status(404).send("Item Not Found!")
         }
+    } catch (error) {
+        next(createError(500, error as Error))
+    }
+}
+
+// -------------------------------------------------------------------------
+
+// Verified split checkout: settles the requesting user's open split items only
+// after confirming, server-side, that the referenced PayPal order was actually
+// paid for the exact amount due (computed from DB prices, never from the client).
+// A `paypalOrderId` can only ever settle one checkout (replay protection).
+type PopulatedMenuRef = { _id: mongoose.Types.ObjectId; price: number }
+
+export const checkOutSplit: TController = async ( req, res, next ) => {
+    try {
+        const user = req.user as IUserDocument
+        const cartId = req.params.cartId
+        const { paypalOrderId } = req.body as { paypalOrderId: string }
+
+        // Replay protection: reject an order id already recorded on any cart,
+        // before touching anything.
+        const alreadyUsed = await CartModel.findOne({ paypalOrderId })
+        if (alreadyUsed) return next(createError(402, "This PayPal order has already been used"))
+
+        const cart = await CartModel.findOne({ _id: cartId, status: "open" })
+            .populate("split.menuId", "name short_description image price")
+            .populate("items.menuId", "name short_description image price")
+
+        if (!cart) return next(createError(404, "Cart Not Found!"))
+
+        // Only the caller's still-open split entries can be paid by this checkout.
+        const openSplits = cart.split.filter(
+            (s) => s.userId.toString() === user._id.toString() && s.splitStatus === "open"
+        )
+        if (openSplits.length === 0) return next(createError(404, "No open split items to pay!"))
+
+        // Expected total from DB prices only — never from anything the client sent.
+        const expectedTotal = openSplits.reduce((sum, s) => {
+            const menu = s.menuId as unknown as PopulatedMenuRef
+            return sum + menu.price * s.qty
+        }, 0)
+
+        // Verify the payment against PayPal's record of the order.
+        let order: PayPalOrder
+        try {
+            order = await getOrder(paypalOrderId)
+        } catch {
+            return next(createError(402, "Could not verify PayPal payment"))
+        }
+
+        const capture = order.purchase_units?.[0]?.payments?.captures?.[0]
+        if (
+            order.status !== "COMPLETED" ||
+            capture?.amount?.currency_code !== "GBP" ||
+            capture?.amount?.value !== expectedTotal.toFixed(2)
+        ) {
+            return next(createError(402, "PayPal payment does not match the amount due"))
+        }
+
+        // Payment verified — apply exactly what N checkOutSplitItem calls do today,
+        // persisted in a single save() so a failure leaves the cart untouched.
+        for (const split of openSplits) {
+            split.splitStatus = "closed"
+            const splitMenuId = (split.menuId as unknown as PopulatedMenuRef)._id
+            const item = cart.items.find(
+                (i) => (i.menuId as unknown as PopulatedMenuRef)._id.toString() === splitMenuId.toString()
+            )
+            if (item) item.qtyPayed += split.qty
+        }
+
+        cart.paypalOrderId = paypalOrderId
+
+        if (cart.items.every((i) => i.qty <= i.qtyPayed)) cart.status = "closed"
+
+        await cart.save()
+
+        res.send(cart)
     } catch (error) {
         next(createError(500, error as Error))
     }

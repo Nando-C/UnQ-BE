@@ -7,3 +7,5 @@ const qty = z.number().int().positive()
 export const cartItemSchema = z.object({ menuId })
 
 export const cartItemWithQtySchema = z.object({ menuId, qty })
+
+export const checkOutSplitSchema = z.object({ paypalOrderId: z.string().min(1) })

@@ -467,6 +467,12 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/carts/tables/:tableId/:cartId/checkOutSplitItem
 
+- [ 'POST' ]
+
+  baseURL-api/carts/tables/:tableId/:cartId/checkOutSplit
+
+  Verified split checkout. Body: `{ paypalOrderId }`. The server fetches the order from PayPal, requires it to be `COMPLETED` and paid in `GBP` for the exact amount due (computed from database prices), then closes the caller's open split items and records the order id — rejecting any order id already used (replay protection) with `402`. This is the payment-verified path; `checkOutSplitItem` above trusts the client and is slated for removal once the front-end migrates.
+
 - [ 'GET' ]
 
   baseURL-api/carts/tables/:tableId
