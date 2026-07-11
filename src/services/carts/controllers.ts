@@ -29,7 +29,10 @@ export const getTableCart: TController = async ( req, res, next ) => {
     try {
         const tableId = req.params.tableId
 
+        // Newest first: legacy data may hold more than one open cart per table
+        // (addItem used to key carts per-user), so resolve to the latest one.
         const cart = await CartModel.findOne({$and: [{ tableId: tableId}, {status: "open"}]})
+            .sort({ createdAt: -1 })
             .populate("items.menuId", "name short_description image price")
             .populate("split.menuId", "name short_description image price")
 
@@ -69,15 +72,18 @@ export const addItem: TController = async ( req, res, next ) => {
         const user = req.user as IUserDocument
         const tableId = req.params.tableId
         const item = req.body
-        
 
-        const isItemThere = await CartModel.findOne({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId})
-        
+        // A table has ONE shared open cart: whoever orders first creates it,
+        // everyone else at the table adds to it (the split array tracks who
+        // pays for what). Keying by userId here used to spawn a duplicate cart
+        // per user, which getTableCart could not disambiguate.
+        const isItemThere = await CartModel.findOne({tableId: tableId, status: "open", "items.menuId": item.menuId})
+
         if (isItemThere) {
-            const updatedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": req.body.qty }}).populate("items.menuId", "name short_description image price")
+            const updatedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": req.body.qty }}, { sort: { createdAt: -1 } }).populate("items.menuId", "name short_description image price")
             res.send(updatedItem)
         } else {
-            const addedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open"}, { $push: { items: item }}, { upsert: true }).populate("items.menuId", "name short_description image price")
+            const addedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open"}, { $push: { items: item }, $setOnInsert: { userId: user._id, shopId: req.params.shopId }}, { upsert: true, sort: { createdAt: -1 } }).populate("items.menuId", "name short_description image price")
             res.send(addedItem)
         }
     } catch (error) {
@@ -89,18 +95,17 @@ export const addItem: TController = async ( req, res, next ) => {
 
 export const decreaseItem: TController = async ( req, res, next ) => {
     try {
-        const user = req.user as IUserDocument
         const tableId = req.params.tableId
         const item = req.body
 
-        const isItemThere = await CartModel.findOne({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId})
-        
-        if (isItemThere) {
-            const decreasedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": -(req.body.qty) }}).populate("items.menuId", "name short_description image price")
+        const isItemThere = await CartModel.findOne({tableId: tableId, status: "open", "items.menuId": item.menuId})
 
-            const removedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: { $lte: 0 } }}}).populate("items.menuId", "name short_description image price")
-            
-            const deleteCart = await CartModel.findOneAndDelete({userId: user._id, tableId: tableId, status: "open", items: []}).populate("items.menuId", "name short_description image price")
+        if (isItemThere) {
+            const decreasedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": -(req.body.qty) }}, { sort: { createdAt: -1 } }).populate("items.menuId", "name short_description image price")
+
+            const removedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: { $lte: 0 } }}}, { sort: { createdAt: -1 } }).populate("items.menuId", "name short_description image price")
+
+            const deleteCart = await CartModel.findOneAndDelete({tableId: tableId, status: "open", items: []}, { sort: { createdAt: -1 } }).populate("items.menuId", "name short_description image price")
             
             if (deleteCart) {
                 res.status(204).send()
@@ -122,16 +127,15 @@ export const decreaseItem: TController = async ( req, res, next ) => {
 
 export const deleteItem: TController = async ( req, res, next ) => {
     try {
-        const user = req.user as IUserDocument
         const tableId = req.params.tableId
         const item = req.body
 
-        const isItemThere = await CartModel.findOne({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId})
+        const isItemThere = await CartModel.findOne({tableId: tableId, status: "open", "items.menuId": item.menuId})
 
         if (isItemThere) {
-            await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $set: { "items.$.qty": 0 }}).populate("items.menuId", "name short_description image price")
+            await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $set: { "items.$.qty": 0 }}, { sort: { createdAt: -1 } }).populate("items.menuId", "name short_description image price")
 
-            const removedItem = await CartModel.findOneAndUpdate({userId: user._id, tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: 0 }}}).populate("items.menuId", "name short_description image price")
+            const removedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: 0 }}}, { sort: { createdAt: -1 } }).populate("items.menuId", "name short_description image price")
 
             res.send(removedItem)
 

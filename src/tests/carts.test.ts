@@ -79,6 +79,32 @@ describe("carts", () => {
         expect(gone.status).toBe(404)
     })
 
+    it("shares one open cart per table: a second user joins it, not a duplicate", async () => {
+        const { shopId, tableId, menuId, customer } = await scaffold()
+        const url = `/carts/${shopId}/tables/${tableId}/addItem`
+
+        const first = await request(app)
+            .post(url)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 1 })
+        expect(first.status).toBe(200)
+
+        const other = await authFor("customer")
+        const second = await request(app)
+            .post(url)
+            .set("Cookie", other.cookies)
+            .send({ menuId, qty: 2 })
+        expect(second.status).toBe(200)
+        expect(second.body._id).toBe(first.body._id)
+        expect(second.body.items).toHaveLength(1)
+        expect(second.body.items[0].qty).toBe(3)
+
+        // getTableCart resolves to that same shared cart.
+        const read = await request(app).get(`/carts/tables/${tableId}`)
+        expect(read.status).toBe(200)
+        expect(read.body._id).toBe(first.body._id)
+    })
+
     it("forbids reading another user's cart (S5 authorization)", async () => {
         const { shopId, tableId, menuId, customer } = await scaffold()
 
