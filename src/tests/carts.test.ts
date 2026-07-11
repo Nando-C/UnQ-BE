@@ -162,4 +162,34 @@ describe("carts", () => {
         expect(checkout.status).toBe(200)
         expect(checkout.body.status).toBe("closed")
     })
+
+    it("rejects an addSplitItem that would claim more units than the item has (409)", async () => {
+        const { shopId, tableId, menuId, customer } = await scaffold()
+
+        const created = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/addItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 1 }) // only one unit exists
+        const cartId = created.body._id
+
+        const over = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/${cartId}/addSplitItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 2 })
+        expect(over.status).toBe(409)
+        expect(over.body.message).toBe("Not enough units left to split")
+
+        // A second diner can't grab the one unit already claimed either.
+        await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/${cartId}/addSplitItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 1 }) // caller legitimately claims the single unit
+
+        const other = await authFor("customer")
+        const contested = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/${cartId}/addSplitItem`)
+            .set("Cookie", other.cookies)
+            .send({ menuId, qty: 1 })
+        expect(contested.status).toBe(409)
+    })
 })

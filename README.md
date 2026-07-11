@@ -458,6 +458,8 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/carts/:shopId/tables/:tableId/:cartId/addSplitItem
 
+  Claims units of an item for the caller to pay. Rejects with `409` (`"Not enough units left to split"`) when the request would push the units claimed by all diners' open splits, plus already-paid units, beyond the item quantity — so two customers can't both hold a split on the same unit.
+
 - [ 'POST' ]
 
   baseURL-api/carts/:shopId/tables/:tableId/:cartId/decreaseSplitItem
@@ -474,7 +476,7 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/carts/tables/:tableId/:cartId/checkOutSplit
 
-  Verified split checkout. Body: `{ paypalOrderId }`. The server fetches the order from PayPal, requires it to be `COMPLETED` and paid in `GBP` for the exact amount due (computed from database prices), then closes the caller's open split items and records the order id — rejecting any order id already used (replay protection) with `402`. This is the payment-verified path; `checkOutSplitItem` above trusts the client and is slated for removal once the front-end migrates.
+  Verified split checkout. Body: `{ paypalOrderId }`. The server fetches the order from PayPal, requires it to be `COMPLETED` and paid in `GBP` for the exact amount due (computed from database prices), then closes the caller's open split items and appends the order id to the cart's `paypalOrderIds` — every payer's settlement is recorded there (a cart is shared by many diners). Rejects any order id already recorded on any cart (replay protection) with `402`. Because several customers can pay one cart, the endpoint is concurrency-safe: it verifies availability before accepting payment — `409` if the caller's splits would over-settle units another payer already holds — and uses optimistic-concurrency retries so simultaneous payments can't lose an update or a recorded order id (`409` if a conflict can't be resolved). This is the payment-verified path; `checkOutSplitItem` above trusts the client and is slated for removal once the front-end migrates.
 
 - [ 'GET' ]
 

@@ -89,7 +89,7 @@ describe("verified split checkout (POST /carts/tables/:tableId/:cartId/checkOutS
         expect(mockedGetOrder).toHaveBeenCalledWith("ORDER-1")
 
         const cart = await CartModel.findById(cartId)
-        expect(cart?.paypalOrderId).toBe("ORDER-1")
+        expect(cart?.paypalOrderIds).toContain("ORDER-1")
         expect(cart?.split[0].splitStatus).toBe("closed")
         expect(cart?.items[0].qtyPayed).toBe(2)
         expect(cart?.status).toBe("closed") // qty 2 fully paid
@@ -108,7 +108,7 @@ describe("verified split checkout (POST /carts/tables/:tableId/:cartId/checkOutS
         expect(res.status).toBe(402)
 
         const cart = await CartModel.findById(cartId)
-        expect(cart?.paypalOrderId).toBeUndefined()
+        expect(cart?.paypalOrderIds).toBeUndefined()
         expect(cart?.split[0].splitStatus).toBe("open")
         expect(cart?.items[0].qtyPayed).toBe(0)
         expect(cart?.status).toBe("open")
@@ -148,8 +148,8 @@ describe("verified split checkout (POST /carts/tables/:tableId/:cartId/checkOutS
         expect(replay.status).toBe(402)
     })
 
-    it("declares paypalOrderId as a unique, sparse index", () => {
-        const options = CartModel.schema.path("paypalOrderId").options
+    it("declares paypalOrderIds as a unique, sparse index", () => {
+        const options = CartModel.schema.path("paypalOrderIds").options
         expect(options.unique).toBe(true)
         expect(options.sparse).toBe(true)
     })
@@ -160,13 +160,13 @@ describe("verified split checkout (POST /carts/tables/:tableId/:cartId/checkOutS
 
         const cartA = await CartModel.findById(cartId)
         if (!cartA) throw new Error("cart not found")
-        cartA.paypalOrderId = "ORDER-DUP"
+        cartA.paypalOrderIds = ["ORDER-DUP"]
         await cartA.save()
 
         const { cartId: cartId2 } = await scaffold()
         const cartB = await CartModel.findById(cartId2)
         if (!cartB) throw new Error("cart not found")
-        cartB.paypalOrderId = "ORDER-DUP"
+        cartB.paypalOrderIds = ["ORDER-DUP"]
 
         await expect(cartB.save()).rejects.toMatchObject({ code: 11000 })
     })
@@ -219,5 +219,145 @@ describe("verified split checkout (POST /carts/tables/:tableId/:cartId/checkOutS
         expect(theirs?.splitStatus).toBe("open")
         expect(cart?.items[0].qtyPayed).toBe(1) // only the caller's unit paid
         expect(cart?.status).toBe("open") // item qty 2, one still unpaid
+    })
+
+    it("records BOTH payers' order ids when two diners settle the same cart sequentially", async () => {
+        const { tableId, cartId, customer, addSplit } = await scaffold() // item qty 2
+        const other = await authFor("customer")
+
+        await addSplit(customer.cookies, 1) // A owes £3.00
+        await addSplit(other.cookies, 1) // B owes £3.00 (the other unit)
+
+        mockedGetOrder.mockResolvedValue(paypalOrder("3.00"))
+
+        const resA = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/checkOutSplit`)
+            .set("Cookie", customer.cookies)
+            .send({ paypalOrderId: "ORDER-A" })
+        expect(resA.status).toBe(200)
+
+        const resB = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/checkOutSplit`)
+            .set("Cookie", other.cookies)
+            .send({ paypalOrderId: "ORDER-B" })
+        expect(resB.status).toBe(200)
+
+        const cart = await CartModel.findById(cartId)
+        expect(cart?.paypalOrderIds).toEqual(expect.arrayContaining(["ORDER-A", "ORDER-B"]))
+        expect(cart?.items[0].qtyPayed).toBe(2)
+        expect(cart?.status).toBe("closed")
+    })
+
+    it("serialises two concurrent payers via optimistic concurrency, recording both ids", async () => {
+        await CartModel.syncIndexes()
+        const { tableId, cartId, customer, addSplit } = await scaffold() // item qty 2
+        const other = await authFor("customer")
+
+        await addSplit(customer.cookies, 1) // A owes £3.00
+        await addSplit(other.cookies, 1) // B owes £3.00
+
+        mockedGetOrder.mockResolvedValue(paypalOrder("3.00"))
+
+        // Fired together: one save wins, the other hits VersionError, reloads, and
+        // retries against the already-fetched order — both must end up settled.
+        const [resA, resB] = await Promise.all([
+            request(app)
+                .post(`/carts/tables/${tableId}/${cartId}/checkOutSplit`)
+                .set("Cookie", customer.cookies)
+                .send({ paypalOrderId: "ORDER-A" }),
+            request(app)
+                .post(`/carts/tables/${tableId}/${cartId}/checkOutSplit`)
+                .set("Cookie", other.cookies)
+                .send({ paypalOrderId: "ORDER-B" }),
+        ])
+
+        expect(resA.status).toBe(200)
+        expect(resB.status).toBe(200)
+
+        const cart = await CartModel.findById(cartId)
+        expect(cart?.items[0].qtyPayed).toBe(2) // no lost update
+        expect(cart?.paypalOrderIds).toEqual(expect.arrayContaining(["ORDER-A", "ORDER-B"]))
+        expect(cart?.status).toBe("closed")
+    })
+
+    it("rejects a second payer over-settling a single unit at checkout with 409, mutating nothing", async () => {
+        const owner = await authFor("shopMg")
+        const shopRes = await request(app).post("/shops").set("Cookie", owner.cookies).send({ name: "Split Cafe" })
+        const shopId = shopRes.body._id
+        const tableRes = await request(app)
+            .post(`/shops/${shopId}/tables`)
+            .set("Cookie", owner.cookies)
+            .send({ name: "Table 1" })
+        const tableId = tableRes.body._id
+
+        const makeItem = (name: string) =>
+            request(app)
+                .post(`/shops/${shopId}/menu`)
+                .set("Cookie", owner.cookies)
+                .send({ name, short_description: "x", price: 3, category: "drinks" })
+        const menuIdX = (await makeItem("Latte")).body._id
+        const menuIdY = (await makeItem("Tea")).body._id
+
+        const alice = await authFor("customer")
+        const created = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/addItem`)
+            .set("Cookie", alice.cookies)
+            .send({ menuId: menuIdX, qty: 1 })
+        const cartId = created.body._id
+        // A second, unpaid item keeps the cart open once X is settled.
+        await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/addItem`)
+            .set("Cookie", alice.cookies)
+            .send({ menuId: menuIdY, qty: 1 })
+
+        // Alice legitimately splits the single X unit.
+        await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/${cartId}/addSplitItem`)
+            .set("Cookie", alice.cookies)
+            .send({ menuId: menuIdX, qty: 1 })
+
+        // Bob ends up with an open split on the SAME unit — only reachable by
+        // racing past the addSplitItem pre-check, injected here to reproduce it.
+        const bob = await authFor("customer")
+        await CartModel.findByIdAndUpdate(cartId, {
+            $push: { split: { userId: bob.user._id, menuId: menuIdX, qty: 1, splitStatus: "open" } },
+        })
+
+        mockedGetOrder.mockResolvedValue(paypalOrder("3.00"))
+
+        const aliceRes = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/checkOutSplit`)
+            .set("Cookie", alice.cookies)
+            .send({ paypalOrderId: "ORDER-ALICE" })
+        expect(aliceRes.status).toBe(200)
+
+        const bobRes = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/checkOutSplit`)
+            .set("Cookie", bob.cookies)
+            .send({ paypalOrderId: "ORDER-BOB" })
+        expect(bobRes.status).toBe(409)
+
+        const cart = await CartModel.findById(cartId)
+        const xItem = cart?.items.find((i) => String(i.menuId) === String(menuIdX))
+        expect(xItem?.qtyPayed).toBe(1) // only Alice's unit, never Bob's
+        const bobSplit = cart?.split.find((s) => String(s.userId) === String(bob.user._id))
+        expect(bobSplit?.splitStatus).toBe("open") // untouched
+        expect(cart?.paypalOrderIds).not.toContain("ORDER-BOB")
+    })
+
+    it("still 402s on replay when the order id lives in the legacy scalar field", async () => {
+        const { tableId, cartId, customer, addSplit } = await scaffold()
+        await addSplit(customer.cookies, 1)
+
+        // Simulate a cart settled before multi-payer support: id in the scalar.
+        await CartModel.findByIdAndUpdate(cartId, { $set: { paypalOrderId: "LEGACY-1" } })
+
+        mockedGetOrder.mockResolvedValue(paypalOrder("3.00"))
+
+        const res = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/checkOutSplit`)
+            .set("Cookie", customer.cookies)
+            .send({ paypalOrderId: "LEGACY-1" })
+        expect(res.status).toBe(402)
     })
 })

@@ -7,7 +7,8 @@ export interface ICart {
     status: string
     items: IItem[]
     split: ISplitItem[]
-    paypalOrderId?: string
+    paypalOrderId?: string // legacy scalar, read-only for pre-multi-payer carts
+    paypalOrderIds?: string[] // one recorded PayPal order per payer
 }
 
 export interface IItem {
