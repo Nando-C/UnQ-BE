@@ -320,6 +320,7 @@ export const checkOutSplit: TController = async ( req, res, next ) => {
         const capture = order.purchase_units?.[0]?.payments?.captures?.[0]
         if (
             order.status !== "COMPLETED" ||
+            capture?.status !== "COMPLETED" ||
             capture?.amount?.currency_code !== "GBP" ||
             capture?.amount?.value !== expectedTotal.toFixed(2)
         ) {
@@ -341,7 +342,15 @@ export const checkOutSplit: TController = async ( req, res, next ) => {
 
         if (cart.items.every((i) => i.qty <= i.qtyPayed)) cart.status = "closed"
 
-        await cart.save()
+        try {
+            await cart.save()
+        } catch (error) {
+            const err = error as { code?: number; cause?: { code?: number } }
+            if (err.code === 11000 || err.cause?.code === 11000) {
+                return next(createError(402, "This PayPal order has already been used"))
+            }
+            throw error
+        }
 
         res.send(cart)
     } catch (error) {

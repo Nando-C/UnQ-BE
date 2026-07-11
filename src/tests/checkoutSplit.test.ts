@@ -148,6 +148,55 @@ describe("verified split checkout (POST /carts/tables/:tableId/:cartId/checkOutS
         expect(replay.status).toBe(402)
     })
 
+    it("declares paypalOrderId as a unique, sparse index", () => {
+        const options = CartModel.schema.path("paypalOrderId").options
+        expect(options.unique).toBe(true)
+        expect(options.sparse).toBe(true)
+    })
+
+    it("rejects a duplicate paypalOrderId at the DB level (11000)", async () => {
+        const { cartId } = await scaffold()
+        await CartModel.syncIndexes()
+
+        const cartA = await CartModel.findById(cartId)
+        if (!cartA) throw new Error("cart not found")
+        cartA.paypalOrderId = "ORDER-DUP"
+        await cartA.save()
+
+        const { cartId: cartId2 } = await scaffold()
+        const cartB = await CartModel.findById(cartId2)
+        if (!cartB) throw new Error("cart not found")
+        cartB.paypalOrderId = "ORDER-DUP"
+
+        await expect(cartB.save()).rejects.toMatchObject({ code: 11000 })
+    })
+
+    it("returns 402 via the DB-level guard when two checkouts race past the pre-check", async () => {
+        await CartModel.syncIndexes()
+
+        const first = await scaffold()
+        await first.addSplit(first.customer.cookies, 2) // £6.00 due
+
+        const second = await scaffold()
+        await second.addSplit(second.customer.cookies, 2) // £6.00 due
+
+        mockedGetOrder.mockResolvedValue(paypalOrder("6.00"))
+
+        const [resA, resB] = await Promise.all([
+            request(app)
+                .post(`/carts/tables/${first.tableId}/${first.cartId}/checkOutSplit`)
+                .set("Cookie", first.customer.cookies)
+                .send({ paypalOrderId: "ORDER-RACE" }),
+            request(app)
+                .post(`/carts/tables/${second.tableId}/${second.cartId}/checkOutSplit`)
+                .set("Cookie", second.customer.cookies)
+                .send({ paypalOrderId: "ORDER-RACE" }),
+        ])
+
+        const statuses = [resA.status, resB.status].sort()
+        expect(statuses).toEqual([200, 402])
+    })
+
     it("settles only the caller's splits, leaving another user's untouched", async () => {
         const { tableId, cartId, customer, addSplit } = await scaffold()
         const other = await authFor("customer")

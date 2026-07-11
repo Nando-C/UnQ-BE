@@ -204,8 +204,6 @@ src/
 | `PAYPAL_CLIENT_ID` | PayPal client ID (used for server-side order verification) |
 | `PAYPAL_CLIENT_SECRET` | PayPal client secret (used for server-side order verification) |
 | `PAYPAL_API_BASE` | PayPal API base URL — defaults to the sandbox (`https://api-m.sandbox.paypal.com`) when unset |
-| `PAYPAL_SECRET` | PayPal client secret (legacy, unused — slated for removal) |
-| `PAYPAL_BEARER_TOKEN` | PayPal bearer token (legacy, unused — slated for removal) |
 
 ### Available Scripts
 

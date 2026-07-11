@@ -46,6 +46,8 @@ const CartSchema = new Schema<ICartDocument>(
         // unique so an order id can never be replayed to mark items paid twice.
         paypalOrderId: {
             type: String,
+            unique: true,
+            sparse: true,
         },
         split: [
             {
