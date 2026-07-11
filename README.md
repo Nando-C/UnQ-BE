@@ -98,6 +98,7 @@ You can find the Front-End repo of this project in the following link, where mor
 - Shared table carts with per-item bill splitting between multiple customers at the same table
 - Cloudinary image uploads for user avatars, shop covers, and menu item photos
 - Request validation (`zod`) on every mutating endpoint, with a consistent `{ message, details }` error shape
+- Server-verified PayPal checkout: the split-checkout endpoint verifies the order against PayPal's Orders v2 API (status, currency, exact amount from database prices) with order-id replay protection — the API never takes the client's word that a payment happened
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -131,10 +132,12 @@ flowchart LR
     DB[("🗄️ MongoDB<br/><small>Mongoose 8</small>")]
     GOOGLE["🌐 Google OAuth 2.0"]
     CDN["☁️ Cloudinary"]
+    PAYPAL["💳 PayPal Orders v2"]
 
     FE ==>|"HTTPS + httpOnly<br/>JWT cookies"| MW
     AUTH <--> GOOGLE
     USERS & SHOPS & MENUS -->|"image uploads<br/><small>multer StorageEngine</small>"| CDN
+    CARTS <-->|"payment verification<br/><small>src/lib/paypal.ts</small>"| PAYPAL
     services ==> DB
 ```
 
@@ -198,9 +201,11 @@ src/
 | `GOOGLE_CLIENT_ID` | Google OAuth client ID |
 | `GOOGLE_SECRET` | Google OAuth client secret |
 | `CLOUDINARY_URL` | Cloudinary account URL (auto-configures the SDK) |
-| `PAYPAL_CLIENT_ID` | PayPal client ID |
-| `PAYPAL_SECRET` | PayPal client secret |
-| `PAYPAL_BEARER_TOKEN` | PayPal bearer token |
+| `PAYPAL_CLIENT_ID` | PayPal client ID (used for server-side order verification) |
+| `PAYPAL_CLIENT_SECRET` | PayPal client secret (used for server-side order verification) |
+| `PAYPAL_API_BASE` | PayPal API base URL — defaults to the sandbox (`https://api-m.sandbox.paypal.com`) when unset |
+| `PAYPAL_SECRET` | PayPal client secret (legacy, unused — slated for removal) |
+| `PAYPAL_BEARER_TOKEN` | PayPal bearer token (legacy, unused — slated for removal) |
 
 ### Available Scripts
 
