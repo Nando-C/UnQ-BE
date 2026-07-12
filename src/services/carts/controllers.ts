@@ -425,6 +425,14 @@ export const checkOutSplit: TController = async ( req, res, next ) => {
                 // Reload and re-derive from the fresh doc before the next attempt.
                 const reloaded = await loadOpenCart(cartId)
                 if (!reloaded) return next(createError(404, "Cart Not Found!"))
+                // Re-check replay too: the payer we just conflicted with may have
+                // recorded THIS very order id — on this same cart, where the
+                // unique index can't help (duplicates within one document's
+                // array don't violate a multikey unique index).
+                const replayed = await CartModel.findOne({
+                    $or: [{ paypalOrderIds: paypalOrderId }, { paypalOrderId }],
+                })
+                if (replayed) return next(createError(402, "This PayPal order has already been used"))
                 cart = reloaded
                 openSplits = callerOpenSplits(cart, user._id)
                 if (openSplits.length === 0) return next(createError(404, "No open split items to pay!"))

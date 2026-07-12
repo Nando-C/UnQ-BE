@@ -280,6 +280,40 @@ describe("verified split checkout (POST /carts/tables/:tableId/:cartId/checkOutS
         expect(cart?.status).toBe("closed")
     })
 
+    it("never settles two payers on the SAME cart with one shared order id (replay re-checked after a version conflict)", async () => {
+        await CartModel.syncIndexes()
+        const { tableId, cartId, customer, addSplit } = await scaffold() // item qty 2
+        const other = await authFor("customer")
+
+        await addSplit(customer.cookies, 1) // A owes £3.00
+        await addSplit(other.cookies, 1) // B owes £3.00 — identical totals on purpose
+
+        mockedGetOrder.mockResolvedValue(paypalOrder("3.00"))
+
+        // One real payment, submitted by both payers at once. The unique index
+        // cannot catch this (duplicates WITHIN one document's array don't violate
+        // a multikey unique index), and the loser's VersionError retry re-derives
+        // amounts that still match — only a replay re-check after reload stops it.
+        const [resA, resB] = await Promise.all([
+            request(app)
+                .post(`/carts/tables/${tableId}/${cartId}/checkOutSplit`)
+                .set("Cookie", customer.cookies)
+                .send({ paypalOrderId: "ORDER-SHARED" }),
+            request(app)
+                .post(`/carts/tables/${tableId}/${cartId}/checkOutSplit`)
+                .set("Cookie", other.cookies)
+                .send({ paypalOrderId: "ORDER-SHARED" }),
+        ])
+
+        expect([resA.status, resB.status].sort()).toEqual([200, 402])
+
+        const cart = await CartModel.findById(cartId)
+        expect(cart?.paypalOrderIds).toEqual(["ORDER-SHARED"]) // exactly once
+        expect(cart?.items[0].qtyPayed).toBe(1) // one unit settled, not two
+        const closed = cart?.split.filter((s) => s.splitStatus === "closed")
+        expect(closed).toHaveLength(1) // only the winner's split
+    })
+
     it("rejects a second payer over-settling a single unit at checkout with 409, mutating nothing", async () => {
         const owner = await authFor("shopMg")
         const shopRes = await request(app).post("/shops").set("Cookie", owner.cookies).send({ name: "Split Cafe" })
