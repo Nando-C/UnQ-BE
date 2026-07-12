@@ -470,10 +470,6 @@ These are the available endpoints created for this application. Every mutating r
 
 - [ 'POST' ]
 
-  baseURL-api/carts/tables/:tableId/:cartId/checkOutSplitItem
-
-- [ 'POST' ]
-
   baseURL-api/carts/tables/:tableId/:cartId/createCheckoutOrder
 
   Server-side checkout, step 1 of 2. No body. Computes the caller's amount due from database prices, checks availability, and creates a PayPal order for that exact amount bound to this cart + payer via `custom_id` (`<cartId>:<userId>`), returning `{ paypalOrderId }` for the buyer to approve in the PayPal popup. Nothing is charged or persisted — a doomed checkout (`409` when the caller's splits would over-settle units another payer holds; `404` when the caller has no open splits) never mints an order.
@@ -482,13 +478,7 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/carts/tables/:tableId/:cartId/captureCheckout
 
-  Server-side checkout, step 2 of 2 — the money-moving endpoint. Body: `{ paypalOrderId }`. Confirms the buyer-approved order was minted for THIS cart + payer (`custom_id` match — `402` otherwise) and still matches the amount due (`409` if the caller changed their selection), re-checks availability (`409`), and only THEN captures the payment. If a concurrent payer takes the units in the tiny window after capture, the buyer is refunded automatically and the request returns `409` — so a rejection never leaves anyone charged for nothing. Order-id replay is rejected with `402` before any charge. Settlements are recorded per payer in the cart's `paypalOrderIds`. Together with `createCheckoutOrder` this is **the** checkout flow (charge only after reserving); `checkOutSplit` and `checkOutSplitItem` below/above are deprecated and slated for removal once the front-end migrates (S18).
-
-- [ 'POST' ]
-
-  baseURL-api/carts/tables/:tableId/:cartId/checkOutSplit
-
-  **Deprecated** (superseded by `createCheckoutOrder` + `captureCheckout`; removal in S18). Verified split checkout where the client captures the payment first and the server only verifies it. Body: `{ paypalOrderId }`. The server fetches the order from PayPal, requires it to be `COMPLETED` and paid in `GBP` for the exact amount due (computed from database prices), then closes the caller's open split items and appends the order id to the cart's `paypalOrderIds` — every payer's settlement is recorded there (a cart is shared by many diners). Rejects any order id already recorded on any cart (replay protection) with `402`. Because several customers can pay one cart, the endpoint is concurrency-safe: it verifies availability before accepting payment — `409` if the caller's splits would over-settle units another payer already holds — and uses optimistic-concurrency retries so simultaneous payments can't lose an update or a recorded order id (`409` if a conflict can't be resolved). Because the client captures before the server is consulted, a rejection here can't undo the charge — the reason the two-endpoint server-side flow above replaces it.
+  Server-side checkout, step 2 of 2 — the money-moving endpoint. Body: `{ paypalOrderId }`. Confirms the buyer-approved order was minted for THIS cart + payer (`custom_id` match — `402` otherwise) and still matches the amount due (`409` if the caller changed their selection), re-checks availability (`409`), and only THEN captures the payment. If a concurrent payer takes the units in the tiny window after capture, the buyer is refunded automatically and the request returns `409` — so a rejection never leaves anyone charged for nothing. Order-id replay is rejected with `402` before any charge. Settlements are recorded per payer in the cart's `paypalOrderIds`. Together with `createCheckoutOrder` this is **the** checkout flow (charge only after reserving).
 
 - [ 'GET' ]
 

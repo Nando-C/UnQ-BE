@@ -128,7 +128,7 @@ describe("carts", () => {
         expect(otherRead.status).toBe(404)
     })
 
-    it("runs the split flow: add, decrease, then checkout closes the cart", async () => {
+    it("runs the split flow: add, then decrease", async () => {
         const { shopId, tableId, menuId, customer } = await scaffold()
 
         const created = await request(app)
@@ -154,13 +154,8 @@ describe("carts", () => {
         expect(decreased.status).toBe(200)
         expect(decreased.body.split[0].qty).toBe(1)
 
-        // checkout pays for both units of the item -> cart closes
-        const checkout = await request(app)
-            .post(`/carts/tables/${tableId}/${cartId}/checkOutSplitItem`)
-            .set("Cookie", customer.cookies)
-            .send({ menuId, qty: 2 })
-        expect(checkout.status).toBe(200)
-        expect(checkout.body.status).toBe("closed")
+        // Checkout itself (paying and closing the cart) is covered by
+        // serverCheckout.test.ts's createCheckoutOrder/captureCheckout suites.
     })
 
     it("rejects an addSplitItem that would claim more units than the item has (409)", async () => {

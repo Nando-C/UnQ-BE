@@ -160,7 +160,7 @@ export const addSplitItem: TController = async ( req, res, next ) => {
         // The units already claimed by ALL diners' open splits for this item, plus
         // this request's qty and the already-paid units, can never exceed the item
         // quantity — otherwise two customers could hold splits on the same unit and
-        // both pay for it. A pre-check is enough here; checkOutSplit re-verifies
+        // both pay for it. A pre-check is enough here; captureCheckout re-verifies
         // authoritatively at settlement time (closing the residual TOCTOU window).
         const cart = await CartModel.findOne({ _id: cartId, status: "open" })
         if (!cart) return next(createError(404, "Cart Not Found!"))
@@ -258,44 +258,6 @@ export const removeSplitItem: TController = async ( req, res, next ) => {
     } catch (error) {
         next(createError(500, error as Error))
     }
-
-// -------------------------------------------------------------------------
-}
-export const checkOutSplitItem: TController = async ( req, res, next ) => {
-    try {
-        const user = req.user as IUserDocument
-        const cartId = req.params.cartId
-
-        const splitItem = {
-            userId: user._id,
-            ...req.body
-        }
-
-        const isItemThere = await CartModel.findOne({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } })
-
-        if (isItemThere) {
-            await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $set: { "split.$.splitStatus": "closed" }}).populate("split.menuId", "name short_description image price").populate("items.menuId", "name short_description image price")
-
-            const updatedCart = await CartModel.findOneAndUpdate({_id: cartId, items: { $elemMatch: {menuId: splitItem.menuId} }}, { $inc: { "items.$.qtyPayed": req.body.qty }}).populate("items.menuId", "name short_description image price").populate("split.menuId", "name short_description image price")
-
-            const payedItems = updatedCart && updatedCart.items.filter(item => item.qty <= item.qtyPayed).length
-
-            if ( updatedCart && payedItems === updatedCart.items.length ) {
-
-                const checkOutCart = await CartModel.findByIdAndUpdate(cartId, {status: "closed"}).populate("items.menuId", "name short_description image price").populate("split.menuId", "name short_description image price")
-                res.send(checkOutCart)
-            }
-            else if (updatedCart) {
-                res.send(updatedCart)
-            } else {
-                res.status(404).send("Item Not Found!")
-            }
-        } else {
-            res.status(404).send("Item Not Found!")
-        }
-    } catch (error) {
-        next(createError(500, error as Error))
-    }
 }
 
 // -------------------------------------------------------------------------
@@ -352,8 +314,8 @@ const orderVerificationError = (order: PayPalOrder, expectedTotal: number): stri
     return null
 }
 
-// Apply exactly what N checkOutSplitItem calls do today, in memory on the loaded
-// doc, for a single version-checked save().
+// Apply what a settlement does, in memory on the loaded doc, for a single
+// version-checked save(): close the caller's open splits and credit qtyPayed.
 const applyCheckout = (cart: ICartDocument, openSplits: ISplitItem[], paypalOrderId: string) => {
     for (const split of openSplits) {
         split.splitStatus = "closed"
@@ -365,9 +327,8 @@ const applyCheckout = (cart: ICartDocument, openSplits: ISplitItem[], paypalOrde
     if (cart.items.every((i) => i.qty <= i.qtyPayed)) cart.status = "closed"
 }
 
-// Outcome of a settlement attempt. Returned (not sent) so the caller can react
-// to a terminal failure — client-captured checkout simply surfaces the error,
-// while server-captured checkout must refund the buyer first.
+// Outcome of a settlement attempt. Returned (not sent) so captureCheckout can
+// refund the buyer before reporting a failure that happened after money moved.
 type SettleOutcome =
     | { ok: true; cart: ICartDocument }
     | { ok: false; status: number; message: string }
@@ -376,8 +337,7 @@ type SettleOutcome =
 // payer's save bumps __v and makes ours throw VersionError; on that, reload,
 // re-derive everything from the fresh doc, re-check replay/availability, re-verify
 // against the already-known (immutable) `order`, and retry a bounded number of
-// times. `order` is a COMPLETED order body (the client's captured order for
-// checkOutSplit, or our own capture result for captureCheckout).
+// times. `order` is captureCheckout's own COMPLETED capture result.
 const settleCheckout = async (
     cartId: string,
     initialCart: ICartDocument,
@@ -429,52 +389,6 @@ const settleCheckout = async (
     // Unreachable: every loop iteration returns or throws. Kept as a safety net.
     return { ok: false, status: 409, message: "Checkout could not be completed" }
 }
-
-export const checkOutSplit: TController = async ( req, res, next ) => {
-    try {
-        const user = req.user as IUserDocument
-        const cartId = req.params.cartId
-        const { paypalOrderId } = req.body as { paypalOrderId: string }
-
-        // Replay protection: reject an order id already recorded on any cart —
-        // in the per-payer array or the legacy scalar — before touching anything.
-        const alreadyUsed = await CartModel.findOne({
-            $or: [{ paypalOrderIds: paypalOrderId }, { paypalOrderId }],
-        })
-        if (alreadyUsed) return next(createError(402, "This PayPal order has already been used"))
-
-        const cart = await loadOpenCart(cartId)
-        if (!cart) return next(createError(404, "Cart Not Found!"))
-
-        const openSplits = callerOpenSplits(cart, user._id)
-        if (openSplits.length === 0) return next(createError(404, "No open split items to pay!"))
-
-        // Availability guard BEFORE paying: never settle more units than remain.
-        const availError = availabilityError(cart, openSplits)
-        if (availError) return next(createError(409, availError))
-
-        // Verify the payment against PayPal's record of the order — ONCE. The order
-        // is immutable, so a version-conflict retry re-checks this same fetched
-        // result (recomputed against the reloaded doc) rather than re-calling PayPal.
-        let order: PayPalOrder
-        try {
-            order = await getOrder(paypalOrderId)
-        } catch {
-            return next(createError(402, "Could not verify PayPal payment"))
-        }
-
-        const verifyError = orderVerificationError(order, expectedTotalFor(openSplits))
-        if (verifyError) return next(createError(402, verifyError))
-
-        const outcome = await settleCheckout(cartId, cart, openSplits, user._id, paypalOrderId, order)
-        if (outcome.ok) return res.send(outcome.cart)
-        return next(createError(outcome.status, outcome.message))
-    } catch (error) {
-        next(createError(500, error as Error))
-    }
-}
-
-// -------------------------------------------------------------------------
 
 // Server-side checkout, step 1 of 2: create the PayPal order for the exact
 // amount the caller owes (DB prices only) and bind it to this cart + payer via

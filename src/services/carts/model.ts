@@ -90,8 +90,8 @@ const CartSchema = new Schema<ICartDocument>(
     },
     // Optimistic concurrency: every save() is version-checked on ANY modified
     // path (Mongoose's default versioning only guards array-structure changes,
-    // not the subpath $sets checkOutSplit performs). The sole save() call site on
-    // carts is checkOutSplit, so this closes the multi-payer lost-update hole
+    // not the subpath $sets a settlement performs). The sole save() call site on
+    // carts is captureCheckout, so this closes the multi-payer lost-update hole
     // there without affecting the findOneAndUpdate-based item/split endpoints.
     { timestamps: true, optimisticConcurrency: true }
 )

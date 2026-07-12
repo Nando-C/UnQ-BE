@@ -320,3 +320,134 @@ describe("captureCheckout (POST /carts/tables/:tableId/:cartId/captureCheckout)"
         expect(mockedRefundCapture).toHaveBeenCalledTimes(1)
     })
 })
+
+// --------------------------------------------------------------------------
+// Multi-payer settlement — ported from the retired checkOutSplit's S16 suite,
+// re-targeted at captureCheckout (the surviving money-moving endpoint).
+
+describe("multi-payer settlement (via captureCheckout)", () => {
+    it("declares paypalOrderIds as a unique, sparse index", () => {
+        const options = CartModel.schema.path("paypalOrderIds").options
+        expect(options.unique).toBe(true)
+        expect(options.sparse).toBe(true)
+    })
+
+    it("rejects a duplicate paypalOrderId at the DB level (11000)", async () => {
+        const { cartId } = await scaffold()
+        await CartModel.syncIndexes()
+
+        const cartA = await CartModel.findById(cartId)
+        if (!cartA) throw new Error("cart not found")
+        cartA.paypalOrderIds = ["ORDER-DUP"]
+        await cartA.save()
+
+        const { cartId: cartId2 } = await scaffold()
+        const cartB = await CartModel.findById(cartId2)
+        if (!cartB) throw new Error("cart not found")
+        cartB.paypalOrderIds = ["ORDER-DUP"]
+
+        await expect(cartB.save()).rejects.toMatchObject({ code: 11000 })
+    })
+
+    it("settles only the caller's splits, leaving another user's untouched", async () => {
+        const { tableId, cartId, customer, addSplit } = await scaffold() // item qty 2
+        const other = await authFor("customer")
+
+        await addSplit(customer.cookies, 1) // caller owes £3.00
+        await addSplit(other.cookies, 1) // another diner also has an open split
+
+        mockedGetOrder.mockResolvedValue(approvedOrder("3.00", `${cartId}:${customer.user._id}`))
+        mockedCaptureOrder.mockResolvedValue(capturedOrder("3.00"))
+
+        const res = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/captureCheckout`)
+            .set("Cookie", customer.cookies)
+            .send({ paypalOrderId: "ORDER-1" })
+        expect(res.status).toBe(200)
+
+        const cart = await CartModel.findById(cartId)
+        const mine = cart?.split.find((s) => String(s.userId) === String(customer.user._id))
+        const theirs = cart?.split.find((s) => String(s.userId) === String(other.user._id))
+        expect(mine?.splitStatus).toBe("closed")
+        expect(theirs?.splitStatus).toBe("open")
+        expect(cart?.items[0].qtyPayed).toBe(1) // only the caller's unit paid
+        expect(cart?.status).toBe("open") // item qty 2, one still unpaid
+    })
+
+    it("records BOTH payers' order ids when two diners settle the same cart sequentially", async () => {
+        const { tableId, cartId, customer, addSplit } = await scaffold() // item qty 2
+        const other = await authFor("customer")
+
+        await addSplit(customer.cookies, 1) // A owes £3.00
+        await addSplit(other.cookies, 1) // B owes £3.00 (the other unit)
+
+        mockedGetOrder.mockImplementation(async (orderId: string) =>
+            orderId === "ORDER-A"
+                ? approvedOrder("3.00", `${cartId}:${customer.user._id}`, { id: "ORDER-A" })
+                : approvedOrder("3.00", `${cartId}:${other.user._id}`, { id: "ORDER-B" })
+        )
+        mockedCaptureOrder.mockImplementation(async (orderId: string) =>
+            orderId === "ORDER-A"
+                ? capturedOrder("3.00", { id: "ORDER-A", captureId: "CAPTURE-A" })
+                : capturedOrder("3.00", { id: "ORDER-B", captureId: "CAPTURE-B" })
+        )
+
+        const resA = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/captureCheckout`)
+            .set("Cookie", customer.cookies)
+            .send({ paypalOrderId: "ORDER-A" })
+        expect(resA.status).toBe(200)
+
+        const resB = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/captureCheckout`)
+            .set("Cookie", other.cookies)
+            .send({ paypalOrderId: "ORDER-B" })
+        expect(resB.status).toBe(200)
+
+        const cart = await CartModel.findById(cartId)
+        expect(cart?.paypalOrderIds).toEqual(expect.arrayContaining(["ORDER-A", "ORDER-B"]))
+        expect(cart?.items[0].qtyPayed).toBe(2)
+        expect(cart?.status).toBe("closed")
+    })
+
+    it("serialises two concurrent payers via optimistic concurrency, recording both ids", async () => {
+        await CartModel.syncIndexes()
+        const { tableId, cartId, customer, addSplit } = await scaffold() // item qty 2
+        const other = await authFor("customer")
+
+        await addSplit(customer.cookies, 1) // A owes £3.00
+        await addSplit(other.cookies, 1) // B owes £3.00
+
+        mockedGetOrder.mockImplementation(async (orderId: string) =>
+            orderId === "ORDER-A"
+                ? approvedOrder("3.00", `${cartId}:${customer.user._id}`, { id: "ORDER-A" })
+                : approvedOrder("3.00", `${cartId}:${other.user._id}`, { id: "ORDER-B" })
+        )
+        mockedCaptureOrder.mockImplementation(async (orderId: string) =>
+            orderId === "ORDER-A"
+                ? capturedOrder("3.00", { id: "ORDER-A", captureId: "CAPTURE-A" })
+                : capturedOrder("3.00", { id: "ORDER-B", captureId: "CAPTURE-B" })
+        )
+
+        // Fired together: one save wins, the other hits VersionError, reloads, and
+        // retries against its own already-fetched capture — both must settle.
+        const [resA, resB] = await Promise.all([
+            request(app)
+                .post(`/carts/tables/${tableId}/${cartId}/captureCheckout`)
+                .set("Cookie", customer.cookies)
+                .send({ paypalOrderId: "ORDER-A" }),
+            request(app)
+                .post(`/carts/tables/${tableId}/${cartId}/captureCheckout`)
+                .set("Cookie", other.cookies)
+                .send({ paypalOrderId: "ORDER-B" }),
+        ])
+
+        expect(resA.status).toBe(200)
+        expect(resB.status).toBe(200)
+
+        const cart = await CartModel.findById(cartId)
+        expect(cart?.items[0].qtyPayed).toBe(2) // no lost update
+        expect(cart?.paypalOrderIds).toEqual(expect.arrayContaining(["ORDER-A", "ORDER-B"]))
+        expect(cart?.status).toBe("closed")
+    })
+})

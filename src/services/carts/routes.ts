@@ -12,8 +12,6 @@ router.post("/:shopId/tables/:tableId/deleteItem", JWTAuthMiddleware, validate(c
 router.post("/:shopId/tables/:tableId/:cartId/addSplitItem", JWTAuthMiddleware, validate(cartItemWithQtySchema), controllers.addSplitItem)
 router.post("/:shopId/tables/:tableId/:cartId/decreaseSplitItem", JWTAuthMiddleware, validate(cartItemSchema), controllers.decreaseSplitItem)
 router.post("/:shopId/tables/:tableId/:cartId/removeSplitItem", JWTAuthMiddleware, validate(cartItemSchema), controllers.removeSplitItem)
-router.post("/tables/:tableId/:cartId/checkOutSplitItem", JWTAuthMiddleware, validate(cartItemWithQtySchema), controllers.checkOutSplitItem)
-router.post("/tables/:tableId/:cartId/checkOutSplit", JWTAuthMiddleware, validate(checkOutSplitSchema), controllers.checkOutSplit)
 router.post("/tables/:tableId/:cartId/createCheckoutOrder", JWTAuthMiddleware, controllers.createCheckoutOrder)
 router.post("/tables/:tableId/:cartId/captureCheckout", JWTAuthMiddleware, validate(checkOutSplitSchema), controllers.captureCheckout)
 router.get("/tables/:tableId", controllers.getTableCart)
