@@ -14,8 +14,11 @@ export interface PayPalOrder {
     status: string
     purchase_units?: Array<{
         amount?: PayPalAmount
+        // Binds a server-created order to a specific cart + payer ("<cartId>:<userId>").
+        custom_id?: string
         payments?: {
             captures?: Array<{
+                id?: string
                 status?: string
                 amount?: PayPalAmount
             }>
@@ -69,4 +72,78 @@ export const getOrder = async (orderId: string): Promise<PayPalOrder> => {
     }
 
     return (await res.json()) as PayPalOrder
+}
+
+// Create an order server-side for the exact amount due. `customId` binds the
+// order to the cart + payer it was created for ("<cartId>:<userId>"), so a
+// captured order can only ever settle the checkout it was minted for. Returns
+// the new order id, which the buyer approves in the PayPal popup.
+export const createOrder = async (amount: string, customId: string): Promise<string> => {
+    const token = await getAccessToken()
+
+    const res = await fetch(`${apiBase()}/v2/checkout/orders`, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            intent: "CAPTURE",
+            purchase_units: [
+                {
+                    amount: { currency_code: "GBP", value: amount },
+                    custom_id: customId,
+                },
+            ],
+        }),
+    })
+
+    if (!res.ok) {
+        throw new Error(`PayPal order creation failed (${res.status})`)
+    }
+
+    const data = (await res.json()) as { id?: string }
+    if (!data.id) {
+        throw new Error("PayPal order creation response contained no id")
+    }
+
+    return data.id
+}
+
+// Capture (charge) a buyer-approved order. Returns the full order body so the
+// caller can read the capture's id (needed for a possible refund) and status.
+export const captureOrder = async (orderId: string): Promise<PayPalOrder> => {
+    const token = await getAccessToken()
+
+    const res = await fetch(`${apiBase()}/v2/checkout/orders/${orderId}/capture`, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+        },
+    })
+
+    if (!res.ok) {
+        throw new Error(`PayPal order capture failed (${res.status})`)
+    }
+
+    return (await res.json()) as PayPalOrder
+}
+
+// Refund a capture in full (empty body = full refund). Used to make the buyer
+// whole if a conflict is discovered in the tiny window after capture.
+export const refundCapture = async (captureId: string): Promise<void> => {
+    const token = await getAccessToken()
+
+    const res = await fetch(`${apiBase()}/v2/payments/captures/${captureId}/refund`, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+        },
+    })
+
+    if (!res.ok) {
+        throw new Error(`PayPal refund failed (${res.status})`)
+    }
 }
