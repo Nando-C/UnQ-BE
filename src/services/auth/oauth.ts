@@ -6,7 +6,11 @@ const googleStrategy = new GoogleStrategy.Strategy(
     {
         clientID: process.env.GOOGLE_CLIENT_ID!,
         clientSecret: process.env.GOOGLE_SECRET!,
-        callbackURL: `${process.env.BACKEND_URL}/auth/googleRedirect`
+        // Where a BROWSER reaches this API, which is not necessarily this server's own
+        // origin: Google redirects the user here, so when the front-end proxies the API
+        // through its own origin this must be that proxied prefix (e.g. https://…/api),
+        // or the auth cookies get set on a domain the front-end can never read.
+        callbackURL: `${process.env.PUBLIC_API_URL}/auth/googleRedirect`
     },
 
     async(accessToken, refreshToken, profile, passportNext) => {

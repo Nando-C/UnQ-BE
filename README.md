@@ -191,7 +191,7 @@ src/
 | Variable | Description |
 |---|---|
 | `PORT` | Port the server listens on |
-| `BACKEND_URL` | Public URL of this API (used by Google OAuth's redirect config) |
+| `PUBLIC_API_URL` | Where a **browser** reaches this API — the front-end's proxied prefix (e.g. `https://un-q.vercel.app/api`) when the front-end proxies the API through its own origin, not this server's host. Google's OAuth callback is built from it |
 | `FRONTEND_URL` | Front-end URL used for redirects and generated table QR URLs (production) |
 | `FRONTEND_DEV_URL` | Front-end URL used as a local-dev fallback when `FRONTEND_URL` isn't set |
 | `FRONTEND_PROD_URL` | Front-end production URL, added to the CORS whitelist |

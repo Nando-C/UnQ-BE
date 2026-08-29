@@ -10,7 +10,7 @@ process.env.FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000"
 // clientID, so give it placeholders. The OAuth routes are never exercised in tests.
 process.env.GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "test-google-client-id"
 process.env.GOOGLE_SECRET = process.env.GOOGLE_SECRET || "test-google-secret"
-process.env.BACKEND_URL = process.env.BACKEND_URL || "http://localhost:3001"
+process.env.PUBLIC_API_URL = process.env.PUBLIC_API_URL || "http://localhost:3001"
 
 // If a mongod binary is already installed locally, point mongodb-memory-server at it
 // so the suite never tries to download one. Only set the var when the binary actually
