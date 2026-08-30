@@ -186,7 +186,11 @@ src/
    npm install
    ```
 
+Configuration is centralised in `src/settings/env.ts` — a single zod schema parsed once at import time, exported as a typed frozen object. No other file reads `process.env`.
+
 ### Environment Variables
+
+Copy `.env.example` to `.env` and fill it in. Configuration is validated at boot by `src/settings/env.ts`: if anything required is missing or empty, the server prints **every** problem at once (variable names only, never values) and exits non-zero rather than starting in a half-working state.
 
 | Variable | Description |
 |---|---|

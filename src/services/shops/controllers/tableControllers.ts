@@ -2,6 +2,7 @@ import mongoose from "mongoose"
 import { TController } from "../../../typings/controllers"
 import ShopModel from "../model"
 import createError from "http-errors"
+import env from "../../../settings/env"
 
 // -------------------------------------------------------------------------
 
@@ -14,7 +15,7 @@ export const createTable: TController = async ( req, res, next ) => {
          if (existingTableName) return next(createError(400, `Table name: '${newTable.name}' already exist!`))
 
         const _id = new mongoose.Types.ObjectId()
-        const Qr_Url = `${process.env.FRONTEND_URL || process.env.FRONTEND_DEV_URL}/shops/${shopId}/tables/${_id}`
+        const Qr_Url = `${env.FRONTEND_ORIGIN}/shops/${shopId}/tables/${_id}`
 
         const modifiedShop = await ShopModel.findByIdAndUpdate(
             shopId,

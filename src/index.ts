@@ -1,19 +1,25 @@
 import 'dotenv/config'
+// Must load before ./server: config is validated at import time, and server.ts
+// pulls in oauth.ts, which builds its Google strategy as it is imported.
+import env from "./settings/env"
 import mongoose from "mongoose"
 import listEndpoints from "express-list-endpoints"
 import app from "./server"
 
-const PORT = process.env.PORT || 3001
+const PORT = env.PORT
 
 console.table(listEndpoints(app))
 
 mongoose.set('returnOriginal', false)
 mongoose.set('strictQuery', true)
 
-mongoose.connect(process.env.MONGO_CONNECTION!)
+mongoose.connect(env.MONGO_CONNECTION)
     .then(() => app.listen(PORT, () => {
         console.log("Connected to MongoDB 🌱 ")
         console.log(" ✅  Server is running on port: " + PORT)
+        // Surfaces a typo'd PAYPAL_API_BASE, which would otherwise silently
+        // leave a "live" deployment talking to the sandbox.
+        console.log(` 💳  PayPal: ${env.PAYPAL_MODE} (${env.PAYPAL_API_BASE})`)
     }))
     .catch((err) => {
         console.log(" 🚫 Database error: ", err);

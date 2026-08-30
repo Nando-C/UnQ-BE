@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken"
 import { IJWTPayload } from "src/typings/jwt"
 import { IUserDocument } from "src/typings/users"
 import UserModel from "../users/model"
+import env from "../../settings/env"
 
 // -------------------------------------------------------------------------
 
@@ -10,7 +11,7 @@ const REFRESH_TOKEN_TTL = "4w"
 
 const generateJWT = (payload: IJWTPayload) =>
     new Promise((resolve, reject)=>
-        jwt.sign(payload, process.env.JWT_SECRET!, { expiresIn: ACCESS_TOKEN_TTL}, (err, token) => {
+        jwt.sign(payload, env.JWT_SECRET, { expiresIn: ACCESS_TOKEN_TTL}, (err, token) => {
             if (err) reject(err)
             resolve(token)
         })
@@ -18,7 +19,7 @@ const generateJWT = (payload: IJWTPayload) =>
 
 const generateRefreshJWT = (payload: IJWTPayload) =>
     new Promise((resolve, reject)=>
-        jwt.sign(payload, process.env.JWT_REFRESH_SECRET!, { expiresIn: REFRESH_TOKEN_TTL}, (err, token) => {
+        jwt.sign(payload, env.JWT_REFRESH_SECRET, { expiresIn: REFRESH_TOKEN_TTL}, (err, token) => {
             if (err) reject(err)
             resolve(token)
         })
@@ -41,7 +42,7 @@ export const getTokens = async (user: IUserDocument) => {
 
 export const verifyJWT = (token: string) => 
     new Promise((resolve, reject) => 
-        jwt.verify(token, process.env.JWT_SECRET!, (err, decodedToken) => {
+        jwt.verify(token, env.JWT_SECRET, (err, decodedToken) => {
             if (err) reject(err)
             resolve(decodedToken)
         })
@@ -51,7 +52,7 @@ export const verifyJWT = (token: string) =>
 
 export const verifyRefreshJWT = (token: string) => 
     new Promise((resolve, reject) => 
-        jwt.verify(token, process.env.JWT_REFRESH_SECRET!, (err, decodedToken) => {
+        jwt.verify(token, env.JWT_REFRESH_SECRET, (err, decodedToken) => {
             if (err) reject (err)
             resolve(decodedToken)
         })

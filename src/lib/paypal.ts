@@ -2,7 +2,9 @@
 // checkout was actually paid. Uses the native `fetch` (Node >= 20). Credentials
 // come from the environment and are never logged.
 
-const apiBase = () => process.env.PAYPAL_API_BASE || "https://api-m.sandbox.paypal.com"
+import env from "../settings/env"
+
+const apiBase = () => env.PAYPAL_API_BASE
 
 export interface PayPalAmount {
     currency_code?: string
@@ -28,12 +30,7 @@ export interface PayPalOrder {
 
 // Client-credentials OAuth token — required to call the Orders API.
 const getAccessToken = async (): Promise<string> => {
-    const clientId = process.env.PAYPAL_CLIENT_ID
-    const clientSecret = process.env.PAYPAL_CLIENT_SECRET
-
-    if (!clientId || !clientSecret) {
-        throw new Error("PayPal credentials are not configured")
-    }
+    const { PAYPAL_CLIENT_ID: clientId, PAYPAL_CLIENT_SECRET: clientSecret } = env
 
     const auth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64")
 

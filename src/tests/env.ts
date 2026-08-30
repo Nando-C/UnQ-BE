@@ -5,12 +5,24 @@ import fs from "fs"
 process.env.JWT_SECRET = process.env.JWT_SECRET || "test-access-secret"
 process.env.JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "test-refresh-secret"
 process.env.FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000"
+// Also needed by the schema's second refinement: the CORS whitelist is built from
+// FRONTEND_DEV_URL/FRONTEND_PROD_URL, so FRONTEND_URL alone does not satisfy it.
+process.env.FRONTEND_DEV_URL = process.env.FRONTEND_DEV_URL || "http://localhost:3000"
 
 // The Google OAuth strategy is constructed at import time and throws without a
 // clientID, so give it placeholders. The OAuth routes are never exercised in tests.
 process.env.GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "test-google-client-id"
 process.env.GOOGLE_SECRET = process.env.GOOGLE_SECRET || "test-google-secret"
 process.env.PUBLIC_API_URL = process.env.PUBLIC_API_URL || "http://localhost:3001"
+
+// Since S20 the app validates its whole configuration at import time (settings/env.ts),
+// so every required variable must exist here or importing the app aborts the run.
+// These are never dialled: setup.ts connects its own mongodb-memory-server, and the
+// Cloudinary and PayPal clients are mocked at the module boundary in their suites.
+process.env.MONGO_CONNECTION = process.env.MONGO_CONNECTION || "mongodb://127.0.0.1:27017/unq-test"
+process.env.CLOUDINARY_URL = process.env.CLOUDINARY_URL || "cloudinary://test-key:test-secret@test-cloud"
+process.env.PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "test-paypal-client-id"
+process.env.PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || "test-paypal-client-secret"
 
 // If a mongod binary is already installed locally, point mongodb-memory-server at it
 // so the suite never tries to download one. Only set the var when the binary actually

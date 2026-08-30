@@ -3,6 +3,7 @@ import UserModel from "../users/model"
 import { getTokens, refreshTokens } from "./tools"
 import createError from "http-errors"
 import { IGoogleUser, IUserDocument } from "src/typings/users"
+import env from "../../settings/env"
 
 // -------------------------------------------------------------------------
 
@@ -106,7 +107,7 @@ export const googleRedirect: TController =  async (req, res, next) => {
             sameSite: "none",
         })
 
-        res.redirect(`${process.env.FRONTEND_URL || process.env.FRONTEND_DEV_URL}`)
+        res.redirect(env.FRONTEND_ORIGIN)
     } catch (error) {
         console.log(error)
         next(createError(500, error as Error))

@@ -1,6 +1,7 @@
 import cors from "cors"
+import env from "./env"
 
-const whiteList = [process.env.FRONTEND_DEV_URL, process.env.FRONTEND_PROD_URL]
+const whiteList = env.CORS_WHITELIST
 
 export const corsOptions: cors.CorsOptions = {
     origin: (origin, callback) => {
