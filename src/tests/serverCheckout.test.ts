@@ -140,6 +140,20 @@ describe("createCheckoutOrder (POST /carts/tables/:tableId/:cartId/createCheckou
         expect(mockedCreateOrder).not.toHaveBeenCalled()
     })
 
+    it("rejects with 409 and never calls PayPal when a selected item is sold out", async () => {
+        const { owner, shopId, tableId, menuId, cartId, customer, addSplit } = await scaffold()
+        await addSplit(customer.cookies, 1)
+        await request(app).put(`/shops/${shopId}/menu/${menuId}`).set("Cookie", owner.cookies).send({ available: false })
+
+        const res = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/createCheckoutOrder`)
+            .set("Cookie", customer.cookies)
+
+        expect(res.status).toBe(409)
+        expect(res.body.message).toMatch(/^Some items you selected are sold out/)
+        expect(mockedCreateOrder).not.toHaveBeenCalled()
+    })
+
     it("returns 404 when the caller has no open splits", async () => {
         const { tableId, cartId, customer } = await scaffold()
 
@@ -223,6 +237,23 @@ describe("captureCheckout (POST /carts/tables/:tableId/:cartId/captureCheckout)"
 
         expect(res.status).toBe(409)
         expect(mockedCaptureOrder).not.toHaveBeenCalled()
+    })
+
+    it("rejects with 409 without capturing when the item sold out after the order was approved", async () => {
+        const { owner, shopId, tableId, menuId, cartId, customer, addSplit } = await scaffold()
+        await addSplit(customer.cookies, 1) // £3.00 due
+        mockedGetOrder.mockResolvedValue(approvedOrder("3.00", `${cartId}:${customer.user._id}`))
+        await request(app).put(`/shops/${shopId}/menu/${menuId}`).set("Cookie", owner.cookies).send({ available: false })
+
+        const res = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/captureCheckout`)
+            .set("Cookie", customer.cookies)
+            .send({ paypalOrderId: "ORDER-1" })
+
+        expect(res.status).toBe(409)
+        expect(res.body.message).toMatch(/^Some items you selected are sold out/)
+        expect(mockedCaptureOrder).not.toHaveBeenCalled()
+        expect(mockedRefundCapture).not.toHaveBeenCalled()
     })
 
     it("rejects a replayed order id with 402 before verifying or capturing", async () => {

@@ -446,23 +446,31 @@ These are the available endpoints created for this application. Every mutating r
 
 ### Carts
 
+**Sold-out items.** A menu item with `available: false` can't be added to a cart, newly claimed in a split, or paid for (the kitchen only acts on paid orders). Items that sell out while already in a cart stay there — cart responses carry `menuId.available` so the front-end can flag them — until a diner removes them; nothing is removed automatically and paid units are never touched.
+
 - [ 'POST' ]
 
   baseURL-api/carts/:shopId/tables/:tableId/addItem
+
+  `404` if the item isn't on this shop's menu; `409` (`"This item is sold out"`) if it is unavailable.
 
 - [ 'POST' ]
 
   baseURL-api/carts/:shopId/tables/:tableId/removeItem
 
+  Rejects with `409` a decrease that would eat into units already paid for or held in an open split.
+
 - [ 'POST' ]
 
   baseURL-api/carts/:shopId/tables/:tableId/deleteItem
+
+  Removes only the item's **unpaid** units: a partly-paid line is kept with `qty === qtyPayed` as the payment record, and every diner's open split on it is cleared. If nothing unpaid remains, the cart is closed.
 
 - [ 'POST' ]
 
   baseURL-api/carts/:shopId/tables/:tableId/:cartId/addSplitItem
 
-  Claims units of an item for the caller to pay. Rejects with `409` (`"Not enough units left to split"`) when the request would push the units claimed by all diners' open splits, plus already-paid units, beyond the item quantity — so two customers can't both hold a split on the same unit.
+  Claims units of an item for the caller to pay. Rejects with `409` (`"This item is sold out"`) for an unavailable item, and with `409` (`"Not enough units left to split"`) when the request would push the units claimed by all diners' open splits, plus already-paid units, beyond the item quantity — so two customers can't both hold a split on the same unit.
 
 - [ 'POST' ]
 
@@ -476,13 +484,13 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/carts/tables/:tableId/:cartId/createCheckoutOrder
 
-  Server-side checkout, step 1 of 2. No body. Computes the caller's amount due from database prices, checks availability, and creates a PayPal order for that exact amount bound to this cart + payer via `custom_id` (`<cartId>:<userId>`), returning `{ paypalOrderId }` for the buyer to approve in the PayPal popup. Nothing is charged or persisted — a doomed checkout (`409` when the caller's splits would over-settle units another payer holds; `404` when the caller has no open splits) never mints an order.
+  Server-side checkout, step 1 of 2. No body. Computes the caller's amount due from database prices, checks availability, and creates a PayPal order for that exact amount bound to this cart + payer via `custom_id` (`<cartId>:<userId>`), returning `{ paypalOrderId }` for the buyer to approve in the PayPal popup. Nothing is charged or persisted — a doomed checkout (`409` when the caller's splits would over-settle units another payer holds; `404` when the caller has no open splits) never mints an order. Also `409` (`"Some items you selected are sold out…"`) when any of the caller's selected items is unavailable.
 
 - [ 'POST' ]
 
   baseURL-api/carts/tables/:tableId/:cartId/captureCheckout
 
-  Server-side checkout, step 2 of 2 — the money-moving endpoint. Body: `{ paypalOrderId }`. Confirms the buyer-approved order was minted for THIS cart + payer (`custom_id` match — `402` otherwise) and still matches the amount due (`409` if the caller changed their selection), re-checks availability (`409`), and only THEN captures the payment. If a concurrent payer takes the units in the tiny window after capture, the buyer is refunded automatically and the request returns `409` — so a rejection never leaves anyone charged for nothing. Order-id replay is rejected with `402` before any charge. Settlements are recorded per payer in the cart's `paypalOrderIds`. Together with `createCheckoutOrder` this is **the** checkout flow (charge only after reserving).
+  Server-side checkout, step 2 of 2 — the money-moving endpoint. Body: `{ paypalOrderId }`. Confirms the buyer-approved order was minted for THIS cart + payer (`custom_id` match — `402` otherwise) and still matches the amount due (`409` if the caller changed their selection), re-checks availability (`409`), rejects sold-out items (`409`, same message as `createCheckoutOrder`), and only THEN captures the payment. If a concurrent payer takes the units in the tiny window after capture, the buyer is refunded automatically and the request returns `409` — so a rejection never leaves anyone charged for nothing. Order-id replay is rejected with `402` before any charge. Settlements are recorded per payer in the cart's `paypalOrderIds`. Together with `createCheckoutOrder` this is **the** checkout flow (charge only after reserving).
 
 - [ 'GET' ]
 

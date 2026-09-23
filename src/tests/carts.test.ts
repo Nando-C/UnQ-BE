@@ -3,6 +3,7 @@ import request from "supertest"
 import "./setup"
 import app from "../server"
 import { authFor } from "./helpers"
+import CartModel from "../services/carts/model"
 
 // Build a shop + table + menu item owned by a shopMg, plus a customer to order.
 const scaffold = async () => {
@@ -33,7 +34,14 @@ const scaffold = async () => {
 
     const customer = await authFor("customer")
 
-    return { shopId, tableId, menuId, customer }
+    // Mark an item sold out the way a manager does (the card's toggle).
+    const markSoldOut = (id: string = menuId) =>
+        request(app)
+            .put(`/shops/${shopId}/menu/${id}`)
+            .set("Cookie", owner.cookies)
+            .send({ available: false })
+
+    return { owner, shopId, tableId, menuId, customer, markSoldOut }
 }
 
 describe("carts", () => {
@@ -186,5 +194,157 @@ describe("carts", () => {
             .set("Cookie", other.cookies)
             .send({ menuId, qty: 1 })
         expect(contested.status).toBe(409)
+    })
+
+    // ---------------------------------------------------------------------
+    // S21: sold-out items
+
+    it("rejects adding a sold-out item with 409 and leaves no cart behind", async () => {
+        const { shopId, tableId, menuId, customer, markSoldOut } = await scaffold()
+        expect((await markSoldOut()).status).toBe(200)
+
+        const res = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/addItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 1 })
+        expect(res.status).toBe(409)
+        expect(res.body.message).toBe("This item is sold out")
+
+        const read = await request(app).get(`/carts/tables/${tableId}`)
+        expect(read.status).toBe(404)
+    })
+
+    it("rejects adding another shop's menu item with 404", async () => {
+        const { shopId, tableId, customer } = await scaffold()
+        const otherShop = await scaffold()
+
+        // A real, available item — but on a different shop's menu.
+        const res = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/addItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId: otherShop.menuId, qty: 1 })
+        expect(res.status).toBe(404)
+        expect(res.body.message).toBe("Menu Item Not Found!")
+    })
+
+    it("includes menuId.available in cart responses", async () => {
+        const { shopId, tableId, menuId, customer, markSoldOut } = await scaffold()
+        await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/addItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 1 })
+
+        const before = await request(app).get(`/carts/tables/${tableId}`)
+        expect(before.body.items[0].menuId.available).toBe(true)
+
+        await markSoldOut()
+        const after = await request(app).get(`/carts/tables/${tableId}`)
+        expect(after.body.items[0].menuId.available).toBe(false)
+    })
+
+    it("blocks new split claims on a sold-out item but still lets a diner drop theirs", async () => {
+        const { shopId, tableId, menuId, customer, markSoldOut } = await scaffold()
+        const cartId = (
+            await request(app)
+                .post(`/carts/${shopId}/tables/${tableId}/addItem`)
+                .set("Cookie", customer.cookies)
+                .send({ menuId, qty: 2 })
+        ).body._id
+        const splitUrl = `/carts/${shopId}/tables/${tableId}/${cartId}`
+
+        await request(app).post(`${splitUrl}/addSplitItem`).set("Cookie", customer.cookies).send({ menuId, qty: 1 })
+        await markSoldOut()
+
+        const more = await request(app).post(`${splitUrl}/addSplitItem`).set("Cookie", customer.cookies).send({ menuId, qty: 1 })
+        expect(more.status).toBe(409)
+        expect(more.body.message).toBe("This item is sold out")
+
+        const dropped = await request(app).post(`${splitUrl}/removeSplitItem`).set("Cookie", customer.cookies).send({ menuId })
+        expect(dropped.status).toBe(200)
+        expect(dropped.body.split).toHaveLength(0)
+    })
+
+    it("deleteItem keeps the paid units of a partly-paid line, clears open splits, and closes a finished cart", async () => {
+        const { shopId, tableId, menuId, customer, markSoldOut } = await scaffold()
+        const cartId = (
+            await request(app)
+                .post(`/carts/${shopId}/tables/${tableId}/addItem`)
+                .set("Cookie", customer.cookies)
+                .send({ menuId, qty: 3 })
+        ).body._id
+        // Another diner holds the unpaid unit in an open split.
+        const other = await authFor("customer")
+        await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/${cartId}/addSplitItem`)
+            .set("Cookie", other.cookies)
+            .send({ menuId, qty: 1 })
+        // Two of the three were already paid.
+        await CartModel.updateOne({ _id: cartId, "items.menuId": menuId }, { $set: { "items.$.qtyPayed": 2 } })
+        await markSoldOut()
+
+        const res = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/deleteItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId })
+        expect(res.status).toBe(200)
+        expect(res.body.items).toHaveLength(1)
+        expect(res.body.items[0].qty).toBe(2)
+        expect(res.body.items[0].qtyPayed).toBe(2)
+        expect(res.body.split).toHaveLength(0)
+        // Nothing unpaid is left, so the table is finished.
+        expect(res.body.status).toBe("closed")
+    })
+
+    it("deleteItem drops an unpaid line entirely and leaves the rest of the cart open", async () => {
+        const { owner, shopId, tableId, menuId, customer } = await scaffold()
+        const second = (
+            await request(app)
+                .post(`/shops/${shopId}/menu`)
+                .set("Cookie", owner.cookies)
+                .send({ name: "Tea", short_description: "Hot", price: 2, category: "drinks" })
+        ).body._id
+        const add = (id: string) =>
+            request(app).post(`/carts/${shopId}/tables/${tableId}/addItem`).set("Cookie", customer.cookies).send({ menuId: id, qty: 1 })
+        await add(menuId)
+        await add(second)
+
+        const res = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/deleteItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId })
+        expect(res.status).toBe(200)
+        expect(res.body.items).toHaveLength(1)
+        expect(res.body.items[0].menuId._id).toBe(second)
+        expect(res.body.status).toBe("open")
+    })
+
+    it("decreaseItem refuses to go below the paid + claimed units (409)", async () => {
+        const { shopId, tableId, menuId, customer } = await scaffold()
+        const cartId = (
+            await request(app)
+                .post(`/carts/${shopId}/tables/${tableId}/addItem`)
+                .set("Cookie", customer.cookies)
+                .send({ menuId, qty: 3 })
+        ).body._id
+        await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/${cartId}/addSplitItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 1 })
+        await CartModel.updateOne({ _id: cartId, "items.menuId": menuId }, { $set: { "items.$.qtyPayed": 1 } })
+
+        // 3 units, 1 paid + 1 claimed: dropping 2 would eat into them.
+        const tooFar = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/removeItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 2 })
+        expect(tooFar.status).toBe(409)
+
+        // Dropping the one free unit is fine.
+        const ok = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/removeItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 1 })
+        expect(ok.status).toBe(200)
+        expect(ok.body.items[0].qty).toBe(2)
     })
 })

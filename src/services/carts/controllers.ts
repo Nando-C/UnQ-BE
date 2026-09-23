@@ -5,6 +5,19 @@ import CartModel from "./model"
 import createError from "http-errors"
 import mongoose from "mongoose"
 import { getOrder, createOrder, captureOrder, refundCapture, PayPalOrder } from "../../lib/paypal"
+import MenuModel from "../menus/model"
+import ShopModel from "../shops/model"
+
+// Menu fields every cart response populates. `available` is included so the FE
+// can flag items that sold out after being added, and the checkout guards read
+// it from the populated splits.
+const MENU_FIELDS = "name short_description image price available"
+
+// Sold-out rule (S21, user decision 2026-09-22): the kitchen only acts on PAID
+// orders, so an unavailable item can't be added, newly split, or paid for.
+// Nothing is removed from carts automatically, and paid units are never touched.
+const SOLD_OUT = "This item is sold out"
+const SOLD_OUT_CHECKOUT = "Some items you selected are sold out — remove them to pay for the rest"
 
 // -------------------------------------------------------------------------
 
@@ -13,8 +26,8 @@ export const getMyCarts: TController = async ( req, res, next) => {
         const user = req.user as IUserDocument
 
         const myCarts = await CartModel.findOne({ userId: user._id, status: "open" })
-            .populate("items.menuId", "name short_description image price")
-            .populate("split.menuId", "name short_description image price")
+            .populate("items.menuId", MENU_FIELDS)
+            .populate("split.menuId", MENU_FIELDS)
             
         if (!myCarts) return next(createError(404, "Carts Not Found!"))
 
@@ -34,8 +47,8 @@ export const getTableCart: TController = async ( req, res, next ) => {
         // (addItem used to key carts per-user), so resolve to the latest one.
         const cart = await CartModel.findOne({$and: [{ tableId: tableId}, {status: "open"}]})
             .sort({ createdAt: -1 })
-            .populate("items.menuId", "name short_description image price")
-            .populate("split.menuId", "name short_description image price")
+            .populate("items.menuId", MENU_FIELDS)
+            .populate("split.menuId", MENU_FIELDS)
 
         if (!cart) return next(createError(404, `Cart Not Found!`))
         
@@ -55,8 +68,8 @@ export const getSingleCart: TController = async ( req, res, next ) => {
             _id: req.params.cartId,
             $or: [{ userId: user._id }, { "split.userId": user._id }],
         })
-            .populate("items.menuId", "name short_description image price")
-            .populate("split.menuId", "name short_description image price")
+            .populate("items.menuId", MENU_FIELDS)
+            .populate("split.menuId", MENU_FIELDS)
 
         if (!cart) return next(createError(404, `Cart Not Found!`))
         
@@ -74,6 +87,18 @@ export const addItem: TController = async ( req, res, next ) => {
         const tableId = req.params.tableId
         const item = req.body
 
+        // The item must exist, be on THIS shop's menu (same 404 either way, so
+        // another shop's items aren't revealed), and not be sold out. The window
+        // between this check and the write is accepted: checkout re-checks
+        // availability before any money moves.
+        const shopId = req.params.shopId
+        const menuItem = mongoose.isValidObjectId(shopId)
+            ? await MenuModel.findById(item.menuId).select("available")
+            : null
+        const onShopMenu = menuItem && await ShopModel.exists({ _id: shopId, menu: item.menuId })
+        if (!menuItem || !onShopMenu) return next(createError(404, "Menu Item Not Found!"))
+        if (!menuItem.available) return next(createError(409, SOLD_OUT))
+
         // A table has ONE shared open cart: whoever orders first creates it,
         // everyone else at the table adds to it (the split array tracks who
         // pays for what). Keying by userId here used to spawn a duplicate cart
@@ -81,10 +106,10 @@ export const addItem: TController = async ( req, res, next ) => {
         const isItemThere = await CartModel.findOne({tableId: tableId, status: "open", "items.menuId": item.menuId})
 
         if (isItemThere) {
-            const updatedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": req.body.qty }}, { sort: { createdAt: -1 } }).populate("items.menuId", "name short_description image price")
+            const updatedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": req.body.qty }}, { sort: { createdAt: -1 } }).populate("items.menuId", MENU_FIELDS)
             res.send(updatedItem)
         } else {
-            const addedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open"}, { $push: { items: item }, $setOnInsert: { userId: user._id, shopId: req.params.shopId }}, { upsert: true, sort: { createdAt: -1 } }).populate("items.menuId", "name short_description image price")
+            const addedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open"}, { $push: { items: item }, $setOnInsert: { userId: user._id, shopId: req.params.shopId }}, { upsert: true, sort: { createdAt: -1 } }).populate("items.menuId", MENU_FIELDS)
             res.send(addedItem)
         }
     } catch (error) {
@@ -99,14 +124,25 @@ export const decreaseItem: TController = async ( req, res, next ) => {
         const tableId = req.params.tableId
         const item = req.body
 
-        const isItemThere = await CartModel.findOne({tableId: tableId, status: "open", "items.menuId": item.menuId})
+        const isItemThere = await CartModel.findOne({tableId: tableId, status: "open", "items.menuId": item.menuId}).sort({ createdAt: -1 })
 
         if (isItemThere) {
-            const decreasedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": -(req.body.qty) }}, { sort: { createdAt: -1 } }).populate("items.menuId", "name short_description image price")
+            // Never decrease into units that are paid for (erasing the payment
+            // record) or held in someone's open split (stranding their checkout).
+            // Only enforced when such units exist, so an unpaid, unclaimed line
+            // can still be decreased away entirely as before. A pre-check: the
+            // window before the $inc is accepted, like addItem's.
+            const floor = lockedUnits(isItemThere, item.menuId)
+            const line = isItemThere.items.find((i) => i.menuId.toString() === item.menuId.toString())
+            if (line && floor > 0 && line.qty - req.body.qty < floor) {
+                return next(createError(409, "Those units are already paid for or selected for payment"))
+            }
 
-            const removedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: { $lte: 0 } }}}, { sort: { createdAt: -1 } }).populate("items.menuId", "name short_description image price")
+            const decreasedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": -(req.body.qty) }}, { sort: { createdAt: -1 } }).populate("items.menuId", MENU_FIELDS)
 
-            const deleteCart = await CartModel.findOneAndDelete({tableId: tableId, status: "open", items: []}, { sort: { createdAt: -1 } }).populate("items.menuId", "name short_description image price")
+            const removedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: { $lte: 0 } }}}, { sort: { createdAt: -1 } }).populate("items.menuId", MENU_FIELDS)
+
+            const deleteCart = await CartModel.findOneAndDelete({tableId: tableId, status: "open", items: []}, { sort: { createdAt: -1 } }).populate("items.menuId", MENU_FIELDS)
             
             if (deleteCart) {
                 res.status(204).send()
@@ -126,23 +162,59 @@ export const decreaseItem: TController = async ( req, res, next ) => {
 
 // -------------------------------------------------------------------------
 
+// Units of an item that must survive any decrease: those already paid, plus
+// those held in any diner's open split.
+const lockedUnits = (cart: ICartDocument, menuId: string): number => {
+    const line = cart.items.find((i) => i.menuId.toString() === menuId.toString())
+    const claimed = cart.split
+        .filter((s) => s.splitStatus === "open" && s.menuId.toString() === menuId.toString())
+        .reduce((sum, s) => sum + s.qty, 0)
+    return (line?.qtyPayed ?? 0) + claimed
+}
+
+// Removes only the UNPAID units of an item. A partly-paid line is kept with
+// qty === qtyPayed as the record of what was paid; an unpaid line is dropped.
+// Every diner's open split on it goes too — those units no longer exist. This is
+// how a sold-out item leaves a cart (nothing removes it automatically).
+// Version-checked save() (optimisticConcurrency on the schema), so a payment
+// settling at the same moment conflicts loudly instead of being overwritten;
+// settleCheckout's own retry then re-reads the cart and sees the removal.
 export const deleteItem: TController = async ( req, res, next ) => {
     try {
         const tableId = req.params.tableId
-        const item = req.body
+        const menuId = (req.body as { menuId: string }).menuId
 
-        const isItemThere = await CartModel.findOne({tableId: tableId, status: "open", "items.menuId": item.menuId})
-
-        if (isItemThere) {
-            await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $set: { "items.$.qty": 0 }}, { sort: { createdAt: -1 } }).populate("items.menuId", "name short_description image price")
-
-            const removedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: 0 }}}, { sort: { createdAt: -1 } }).populate("items.menuId", "name short_description image price")
-
-            res.send(removedItem)
-
-        } else {
+        const cart = await CartModel.findOne({tableId: tableId, status: "open", "items.menuId": menuId}).sort({ createdAt: -1 })
+        if (!cart) {
             res.status(404).send("Item Not Found in Cart!")
+            return
         }
+
+        const sameItem = (id: unknown) => String(id) === String(menuId)
+        const line = cart.items.find((i) => sameItem(i.menuId))
+        if (line && line.qtyPayed > 0) {
+            line.qty = line.qtyPayed
+        } else {
+            cart.items = cart.items.filter((i) => !sameItem(i.menuId))
+        }
+        cart.split = cart.split.filter((s) => !(s.splitStatus === "open" && sameItem(s.menuId)))
+        // Same rule settleCheckout applies after a payment: nothing left to pay
+        // means the table is finished.
+        if (cart.items.length > 0 && cart.items.every((i) => i.qty <= i.qtyPayed)) cart.status = "closed"
+
+        try {
+            await cart.save()
+        } catch (error) {
+            if ((error as { name?: string }).name === "VersionError") {
+                return next(createError(409, "The cart changed, please retry"))
+            }
+            throw error
+        }
+
+        res.send(await cart.populate([
+            { path: "items.menuId", select: MENU_FIELDS },
+            { path: "split.menuId", select: MENU_FIELDS },
+        ]))
     } catch (error) {
         next(createError(500, error as Error))
     }
@@ -168,6 +240,12 @@ export const addSplitItem: TController = async ( req, res, next ) => {
         const item = cart.items.find((i) => i.menuId.toString() === menuId.toString())
         if (!item) return next(createError(404, "Item Not Found in Cart!"))
 
+        // No new claims on a sold-out item (a deleted menu item counts as sold
+        // out). Shrinking or dropping one's own split stays allowed — that's how
+        // a diner un-selects it.
+        const menuItem = await MenuModel.findById(menuId).select("available")
+        if (!menuItem?.available) return next(createError(409, SOLD_OUT))
+
         const claimed = cart.split
             .filter((s) => s.menuId.toString() === menuId.toString() && s.splitStatus === "open")
             .reduce((sum, s) => sum + s.qty, 0)
@@ -184,11 +262,11 @@ export const addSplitItem: TController = async ( req, res, next ) => {
         const isItemThere = await CartModel.findOne({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } })
 
         if (isItemThere) {
-            const updatedSplit = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $inc: { "split.$.qty": req.body.qty }}).populate("split.menuId", "name short_description image price").populate("items.menuId", "name short_description image price")
+            const updatedSplit = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $inc: { "split.$.qty": req.body.qty }}).populate("split.menuId", MENU_FIELDS).populate("items.menuId", MENU_FIELDS)
             res.send(updatedSplit)
 
         } else {
-            const addedItem = await CartModel.findOneAndUpdate({ _id: cartId, status: "open" }, { $push: { split: splitItem }}).populate("split.menuId", "name short_description image price").populate("items.menuId", "name short_description image price")
+            const addedItem = await CartModel.findOneAndUpdate({ _id: cartId, status: "open" }, { $push: { split: splitItem }}).populate("split.menuId", MENU_FIELDS).populate("items.menuId", MENU_FIELDS)
             res.send(addedItem)
         }
     } catch (error) {
@@ -211,9 +289,9 @@ export const decreaseSplitItem: TController = async ( req, res, next ) => {
         const isItemThere = await CartModel.findOne({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } })
 
         if (isItemThere) {
-            const decreasedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $inc: { "split.$.qty": -(1) }}).populate("split.menuId", "name short_description image price").populate("items.menuId", "name short_description image price")
+            const decreasedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $inc: { "split.$.qty": -(1) }}).populate("split.menuId", MENU_FIELDS).populate("items.menuId", MENU_FIELDS)
 
-            const removedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $pull: { split: { qty: { $lte: 0 } }}}).populate("split.menuId", "name short_description image price").populate("items.menuId", "name short_description image price")
+            const removedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $pull: { split: { qty: { $lte: 0 } }}}).populate("split.menuId", MENU_FIELDS).populate("items.menuId", MENU_FIELDS)
             
             if (removedItem) {
                 res.send(removedItem)
@@ -243,9 +321,9 @@ export const removeSplitItem: TController = async ( req, res, next ) => {
         const isItemThere = await CartModel.findOne({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } })
 
         if (isItemThere) {
-            const decreasedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $set: { "split.$.qty": 0 }}).populate("split.menuId", "name short_description image price").populate("items.menuId", "name short_description image price")
+            const decreasedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $set: { "split.$.qty": 0 }}).populate("split.menuId", MENU_FIELDS).populate("items.menuId", MENU_FIELDS)
 
-            const removedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $pull: { split: { qty: { $lte: 0 } }}}).populate("split.menuId", "name short_description image price").populate("items.menuId", "name short_description image price")
+            const removedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $pull: { split: { qty: { $lte: 0 } }}}).populate("split.menuId", MENU_FIELDS).populate("items.menuId", MENU_FIELDS)
 
             if (removedItem) {
                 res.send(removedItem)
@@ -269,7 +347,7 @@ export const removeSplitItem: TController = async ( req, res, next ) => {
 // `paypalOrderIds`; a given order id can only ever settle one checkout across all
 // carts (replay protection), and optimistic concurrency serialises simultaneous
 // payers so no unit is double-settled and no recorded order id is lost.
-type PopulatedMenuRef = { _id: mongoose.Types.ObjectId; price: number }
+type PopulatedMenuRef = { _id: mongoose.Types.ObjectId; price: number; available?: boolean }
 
 const menuIdOf = (ref: ISplitItem["menuId"]): string => {
     const populated = ref as unknown as PopulatedMenuRef
@@ -278,8 +356,8 @@ const menuIdOf = (ref: ISplitItem["menuId"]): string => {
 
 const loadOpenCart = (cartId: string) =>
     CartModel.findOne({ _id: cartId, status: "open" })
-        .populate("split.menuId", "name short_description image price")
-        .populate("items.menuId", "name short_description image price")
+        .populate("split.menuId", MENU_FIELDS)
+        .populate("items.menuId", MENU_FIELDS)
 
 const callerOpenSplits = (cart: ICartDocument, userId: mongoose.Types.ObjectId): ISplitItem[] =>
     cart.split.filter((s) => s.userId.toString() === userId.toString() && s.splitStatus === "open")
@@ -298,6 +376,17 @@ const availabilityError = (cart: ICartDocument, openSplits: ISplitItem[]): strin
     }
     return null
 }
+
+// Sold-out items are not payable. Reads the populated menu (MENU_FIELDS carries
+// `available`); a menu item deleted since it was split populates as null and
+// counts as sold out.
+const soldOutError = (openSplits: ISplitItem[]): string | null =>
+    openSplits.some((s) => {
+        const menu = s.menuId as unknown as PopulatedMenuRef | null
+        return !menu || menu.available === false
+    })
+        ? SOLD_OUT_CHECKOUT
+        : null
 
 // The PayPal order must be COMPLETED, its capture COMPLETED, in GBP, for exactly
 // the amount due. Returns a message on any mismatch, or null when it verifies.
@@ -409,6 +498,9 @@ export const createCheckoutOrder: TController = async ( req, res, next ) => {
         const availError = availabilityError(cart, openSplits)
         if (availError) return next(createError(409, availError))
 
+        const soldOut = soldOutError(openSplits)
+        if (soldOut) return next(createError(409, soldOut))
+
         const expectedTotal = expectedTotalFor(openSplits)
 
         try {
@@ -448,6 +540,15 @@ export const captureCheckout: TController = async ( req, res, next ) => {
 
         const openSplits = callerOpenSplits(cart, user._id)
         if (openSplits.length === 0) return next(createError(404, "No open split items to pay!"))
+
+        // Sold-out check, still before any money moves: a buyer who approved in
+        // the popup while the item sold out is rejected uncharged and the order
+        // simply expires. Checked here rather than in (d) so a deleted menu item
+        // (populated as null) can't crash the price lookup in (c). Deliberately
+        // NOT re-checked in settleCheckout: an item that sells out in the instant
+        // after capture has already been paid for, and is not refunded for that.
+        const soldOut = soldOutError(openSplits)
+        if (soldOut) return next(createError(409, soldOut))
 
         // (c) Fetch the order and confirm it is a buyer-approved order minted for
         // THIS cart + payer, for exactly the amount still due. Nothing is charged.
