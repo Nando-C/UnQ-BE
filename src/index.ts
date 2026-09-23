@@ -10,7 +10,7 @@ const PORT = env.PORT
 
 console.table(listEndpoints(app))
 
-mongoose.set('returnOriginal', false)
+mongoose.set('returnDocument', 'after')
 mongoose.set('strictQuery', true)
 
 mongoose.connect(env.MONGO_CONNECTION)

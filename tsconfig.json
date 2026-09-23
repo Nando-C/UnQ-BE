@@ -45,8 +45,9 @@
 
     /* Module Resolution Options */
     // "moduleResolution": "node",                  /* Specify module resolution strategy: 'node' (Node.js) or 'classic' (TypeScript pre-1.6). */
-    "baseUrl": "./",                             /* Base directory to resolve non-absolute module names. */
-    // "paths": {},                                 /* A series of entries which re-map imports to lookup locations relative to the 'baseUrl'. */
+    // "baseUrl" was removed for TypeScript 6 (deprecated, gone in 7). This mapping keeps the
+    // type-only `src/typings/...` imports resolving; paths resolve relative to this file.
+    "paths": { "src/*": ["./src/*"] },            /* A series of entries which re-map imports to lookup locations. */
     // "rootDirs": [],                              /* List of root folders whose combined content represents the structure of the project at runtime. */
     "typeRoots": ["./node_modules/@types", "src/typings"],                             /* List of folders to include type definitions from. */
     // "types": [],                                 /* Type declaration files to be included in compilation. */

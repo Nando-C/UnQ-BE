@@ -45,7 +45,7 @@ export const isShopManager: TController = async ( req, res, next ) => {
         const myShop = await ShopModel.findById(shopId)
 
         if (myShop) {
-            if ( myShop.shopMg.includes(user.id)){
+            if ( myShop.shopMg.some((managerId) => managerId.equals(String(user._id)))){
                 next()
             } else {
                 next(createError(403, `Shop Manager Only!`))

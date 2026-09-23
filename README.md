@@ -19,10 +19,10 @@
   </p>
 
   <p align="center">
-    <img src="https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=node.js&logoColor=white" alt="Node >=20">
-    <img src="https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white" alt="TypeScript 5.9">
-    <img src="https://img.shields.io/badge/Express-4-000000?logo=express&logoColor=white" alt="Express 4">
-    <img src="https://img.shields.io/badge/MongoDB-Mongoose%208-47A248?logo=mongodb&logoColor=white" alt="MongoDB / Mongoose 8">
+    <img src="https://img.shields.io/badge/Node.js-%3E%3D20.19-339933?logo=node.js&logoColor=white" alt="Node >=20.19">
+    <img src="https://img.shields.io/badge/TypeScript-6.0-3178C6?logo=typescript&logoColor=white" alt="TypeScript 6.0">
+    <img src="https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white" alt="Express 5">
+    <img src="https://img.shields.io/badge/MongoDB-Mongoose%209-47A248?logo=mongodb&logoColor=white" alt="MongoDB / Mongoose 9">
     <img src="https://img.shields.io/badge/tested%20with-Jest-C21325?logo=jest&logoColor=white" alt="Tested with Jest">
   </p>
 </div>
@@ -129,7 +129,7 @@ flowchart LR
         services -.-> ERR
     end
 
-    DB[("🗄️ MongoDB<br/><small>Mongoose 8</small>")]
+    DB[("🗄️ MongoDB<br/><small>Mongoose 9</small>")]
     GOOGLE["🌐 Google OAuth 2.0"]
     CDN["☁️ Cloudinary"]
     PAYPAL["💳 PayPal Orders v2"]

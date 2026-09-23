@@ -1,4 +1,4 @@
-import { Document, Schema } from "mongoose"
+import { Document, Types } from "mongoose"
 
 export interface IShop {
     name: string
@@ -7,13 +7,13 @@ export interface IShop {
     open_times: string
     phone: number
     web_URL: string
-    shopMg: Schema.Types.ObjectId[]
+    shopMg: Types.ObjectId[]
     tables: ITable[]
-    menu: Schema.Types.ObjectId[]
+    menu: Types.ObjectId[]
 }
 
 export interface ITable {
-    _id: Schema.Types.ObjectId
+    _id: Types.ObjectId
     name: string
     Qr_Url: string
 }

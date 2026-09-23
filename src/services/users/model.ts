@@ -35,9 +35,9 @@ const UserSchema = new Schema<IUserDocument, IUserModel>(
     { timestamps: true }
 )
 
-UserSchema.pre("save", async function (next) {
+// Mongoose 9: async middleware signals completion by resolving — there is no `next`.
+UserSchema.pre("save", async function () {
     if (this.isModified("password")) this.password = await bcrypt.hash(this.password!, 10)
-    next()
 })
 
 UserSchema.statics.checkCredentials = async function (email, password) {
