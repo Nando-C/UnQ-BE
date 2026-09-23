@@ -1,4 +1,5 @@
 import fs from "fs"
+import { spawnSync } from "child_process"
 
 // Runs via jest `setupFiles`, before any test module (and therefore before the
 // app under test) is imported, so the token helpers see real secrets at call time.
@@ -25,11 +26,19 @@ process.env.PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "test-paypal-clie
 process.env.PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || "test-paypal-client-secret"
 
 // If a mongod binary is already installed locally, point mongodb-memory-server at it
-// so the suite never tries to download one. Only set the var when the binary actually
-// exists — pointing memory-server at a missing path would make it fail rather than
-// fall back to downloading. Override via MONGOMS_SYSTEM_BINARY in the environment.
+// so the suite never tries to download one. Only use a binary that actually RUNS:
+// existing is not enough — an x86_64 mongod left by an old Intel Homebrew exists at
+// /usr/local/bin on Apple silicon but can't execute without Rosetta, and memory-server
+// then fails and every query hangs buffering until the suite times out. With no
+// runnable candidate, memory-server uses its own cached (or downloaded) native binary.
+// Override via MONGOMS_SYSTEM_BINARY in the environment.
+const runs = (bin: string) => {
+    const probe = spawnSync(bin, ["--version"], { encoding: "utf8", timeout: 5000 })
+    return probe.status === 0 && /db version v\d/.test(probe.stdout)
+}
+
 if (!process.env.MONGOMS_SYSTEM_BINARY) {
     const candidates = ["/usr/local/bin/mongod", "/opt/homebrew/bin/mongod", "/usr/bin/mongod"]
-    const found = candidates.find((p) => fs.existsSync(p))
+    const found = candidates.find((p) => fs.existsSync(p) && runs(p))
     if (found) process.env.MONGOMS_SYSTEM_BINARY = found
 }
