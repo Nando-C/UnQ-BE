@@ -5,7 +5,7 @@ import ShopModel from "../shops/model"
 import createError from "http-errors"
 import { menuRef, removeUnpaidUnits } from "./controllers"
 import UserModel from "../users/model"
-import { providerName, refundPayment } from "../../lib/payments"
+import { providerName, refundPayment, RefundRefused } from "../../lib/payments"
 import { IUserDocument } from "src/typings/users"
 
 // A shop manager's view of the tables' carts (read-only). Both routes run after
@@ -491,6 +491,15 @@ export const refundItems: TController = async ( req, res, next ) => {
             ({ providerRefundId } = await refundPayment(payment, amount, String(refundId)))
         } catch (error) {
             const reason = (error as Error).message
+            // No clear answer (a timeout, a 5xx): the refund may have gone
+            // through. It stays pending, holding its units, so they can't be
+            // refunded a second time under a new request id.
+            if (!(error instanceof RefundRefused)) {
+                console.error("Refund outcome unknown", { cartId, refundId, reason })
+                return next(createError(502,
+                    `${providerName(payment)} didn't confirm the refund (${reason}). It shows as in progress: check ${providerName(payment)} before refunding again.`,
+                    { expose: true }))
+            }
             const recorded = await withFreshCart(cartId, (c) => {
                 const r = findById(c.refunds, refundId)
                 if (r?.status === "pending") {

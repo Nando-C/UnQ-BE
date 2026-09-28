@@ -6,6 +6,7 @@ jest.mock("../lib/paypal", () => ({
     createOrder: jest.fn(),
     captureOrder: jest.fn(),
     refundCapture: jest.fn(),
+    PayPalRefundRefused: jest.requireActual<typeof import("../lib/paypal")>("../lib/paypal").PayPalRefundRefused,
 }))
 
 import request from "supertest"
@@ -13,7 +14,7 @@ import "./setup"
 import app from "../server"
 import { authFor } from "./helpers"
 import CartModel from "../services/carts/model"
-import { refundCapture } from "../lib/paypal"
+import { refundCapture, PayPalRefundRefused } from "../lib/paypal"
 
 const mockedRefund = jest.mocked(refundCapture)
 
@@ -144,7 +145,7 @@ describe("POST /shops/:shopId/carts/:cartId/refunds", () => {
 
     it("changes nothing when PayPal refuses, and says why", async () => {
         const { latte, cartId, refund } = await scaffold()
-        mockedRefund.mockRejectedValueOnce(new Error("PayPal refund failed (422): Refund amount exceeded"))
+        mockedRefund.mockRejectedValueOnce(new PayPalRefundRefused("PayPal refund failed (422): Refund amount exceeded"))
 
         const res = await refund([{ menuId: latte, qty: 1 }])
 
@@ -156,6 +157,26 @@ describe("POST /shops/:shopId/carts/:cartId/refunds", () => {
         expect(cart!.refunds[0]).toMatchObject({ status: "failed", failureReason: "PayPal refund failed (422): Refund amount exceeded" })
         // A failed refund doesn't hold the units: they can be refunded again.
         expect((await refund([{ menuId: latte, qty: 2 }])).status).toBe(200)
+    })
+
+    it("keeps the refund in progress when PayPal gives no clear answer, so it can't be sent twice", async () => {
+        const { latte, cartId, refund } = await scaffold()
+        // A timeout or a 5xx: PayPal may have refunded.
+        mockedRefund.mockRejectedValueOnce(new Error("PayPal refund failed (503)"))
+        const quiet = jest.spyOn(console, "error").mockImplementation(() => {})
+
+        const res = await refund([{ menuId: latte, qty: 2 }])
+        quiet.mockRestore()
+
+        expect(res.status).toBe(502)
+        expect(res.body.message).toBe(
+            "PayPal didn't confirm the refund (PayPal refund failed (503)). It shows as in progress: check PayPal before refunding again.")
+        const cart = await CartModel.findById(cartId)
+        expect(cart!.refunds[0].status).toBe("pending")
+        expect(cart!.items[0]).toMatchObject({ qty: 3, qtyPayed: 2 }) // nothing taken off the cart yet
+        // The units stay held: a second refund under a new request id is refused.
+        expect((await refund([{ menuId: latte, qty: 1 }])).status).toBe(400)
+        expect(mockedRefund).toHaveBeenCalledTimes(1)
     })
 
     it("leaves the refund in progress, and says so, if it went through but can't be recorded", async () => {

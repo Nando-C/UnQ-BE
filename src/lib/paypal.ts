@@ -127,6 +127,11 @@ export const captureOrder = async (orderId: string): Promise<PayPalOrder> => {
     return (await res.json()) as PayPalOrder
 }
 
+// PayPal answered and refused the refund (a 4xx), or it was never sent (no
+// token): nothing was refunded. Anything else refundCapture throws (a network
+// error, a timeout, a 5xx) leaves the outcome unknown: PayPal may have refunded.
+export class PayPalRefundRefused extends Error {}
+
 // Refund a capture. With no `partial`, in full (empty body): used to make the
 // buyer whole if a conflict is discovered in the tiny window after capture.
 // With `partial`, that amount only (a manager refunding some items), sent with
@@ -136,7 +141,9 @@ export const refundCapture = async (
     captureId: string,
     partial?: { value: string; currency: string; requestId: string }
 ): Promise<string | undefined> => {
-    const token = await getAccessToken()
+    const token = await getAccessToken().catch((error: Error) => {
+        throw new PayPalRefundRefused(error.message)
+    })
 
     const res = await fetch(`${apiBase()}/v2/payments/captures/${captureId}/refund`, {
         method: "POST",
@@ -157,7 +164,8 @@ export const refundCapture = async (
             | { message?: string; details?: { description?: string }[] }
             | null
         const reason = body?.details?.[0]?.description ?? body?.message
-        throw new Error(`PayPal refund failed (${res.status})${reason ? `: ${reason}` : ""}`)
+        const message = `PayPal refund failed (${res.status})${reason ? `: ${reason}` : ""}`
+        throw res.status < 500 ? new PayPalRefundRefused(message) : new Error(message)
     }
 
     const data = (await res.json().catch(() => null)) as { id?: string } | null
