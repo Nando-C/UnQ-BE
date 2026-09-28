@@ -95,6 +95,24 @@ describe("shops", () => {
     })
 
     describe("menu CRUD through /shops/:shopId/menu", () => {
+        it("won't read, edit or delete another shop's item through your own shop", async () => {
+            const victim = await authFor("shopMg")
+            const victimShop = (await request(app).post("/shops").set("Cookie", victim.cookies).send({ name: "Victim Cafe" })).body._id
+            const itemId = (await request(app).post(`/shops/${victimShop}/menu`).set("Cookie", victim.cookies).send(menuItem)).body._id
+
+            const intruder = await authFor("shopMg")
+            const ownShop = (await request(app).post("/shops").set("Cookie", intruder.cookies).send({ name: "Own Cafe" })).body._id
+            const via = `/shops/${ownShop}/menu/${itemId}`
+
+            expect((await request(app).get(via).set("Cookie", intruder.cookies)).status).toBe(404)
+            expect((await request(app).put(via).set("Cookie", intruder.cookies).send({ price: 0.01 })).status).toBe(404)
+            expect((await request(app).delete(via).set("Cookie", intruder.cookies)).status).toBe(404)
+
+            const list = await request(app).get(`/shops/${victimShop}/menu`).set("Cookie", victim.cookies)
+            expect(list.body).toHaveLength(1)
+            expect(list.body[0].price).toBe(menuItem.price)
+        })
+
         it("supports create, list, read, update, and delete", async () => {
             const owner = await authFor("shopMg")
             const shopRes = await request(app)

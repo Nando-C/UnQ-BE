@@ -154,6 +154,46 @@ describe("createCheckoutOrder (POST /carts/tables/:tableId/:cartId/createCheckou
         expect(mockedCreateOrder).not.toHaveBeenCalled()
     })
 
+    it("still checks out the rest of the cart after a menu item in it is deleted", async () => {
+        const { owner, shopId, tableId, menuId, cartId, customer, addSplit, addNamedItem } = await scaffold()
+        const muffinId = await addNamedItem("Muffin", 1)
+        await addSplit(customer.cookies, 1, muffinId) // £3.00 due, on the item that stays
+        // The first line's menu item is deleted: its cart line comes before mine.
+        await request(app).delete(`/shops/${shopId}/menu/${menuId}`).set("Cookie", owner.cookies)
+        mockedCreateOrder.mockResolvedValue("PAYPAL-NEW")
+
+        const res = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/createCheckoutOrder`)
+            .set("Cookie", customer.cookies)
+
+        expect(res.status).toBe(200)
+        expect(mockedCreateOrder).toHaveBeenCalledWith("3.00", `${cartId}:${customer.user._id}`)
+    })
+
+    it("shows a deleted menu item as sold out with its id, so it can be removed", async () => {
+        const { owner, shopId, tableId, menuId, cartId, customer, addSplit } = await scaffold()
+        await addSplit(customer.cookies, 1)
+        await request(app).delete(`/shops/${shopId}/menu/${menuId}`).set("Cookie", owner.cookies)
+
+        const cartRes = await request(app).get(`/carts/tables/${tableId}`)
+        expect(cartRes.body.items[0].menuId).toMatchObject({ _id: String(menuId), available: false })
+        expect(cartRes.body.split[0].menuId).toMatchObject({ _id: String(menuId), available: false })
+
+        const checkout = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/createCheckoutOrder`)
+            .set("Cookie", customer.cookies)
+        expect(checkout.status).toBe(409)
+        expect(checkout.body.message).toMatch(/^Some items you selected are sold out/)
+
+        const removed = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/deleteItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId })
+        expect(removed.status).toBe(200)
+        expect(removed.body.items).toHaveLength(0)
+        expect(removed.body.split).toHaveLength(0)
+    })
+
     it("returns 404 when the caller has no open splits", async () => {
         const { tableId, cartId, customer } = await scaffold()
 
