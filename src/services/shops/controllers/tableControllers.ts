@@ -2,6 +2,7 @@ import mongoose from "mongoose"
 import { TController } from "../../../typings/controllers"
 import ShopModel from "../model"
 import createError from "http-errors"
+import CartModel from "../../carts/model"
 import env from "../../../settings/env"
 
 // -------------------------------------------------------------------------
@@ -91,6 +92,12 @@ export const deleteTable: TController = async ( req, res, next ) => {
     try {
         const shopId = req.params.shopId
         const tableId = req.params.tableId
+
+        // A table with an open cart would leave that cart unreachable: the
+        // manager closes it first (POST …/carts/:cartId/close).
+        if (await CartModel.exists({ tableId, status: "open" })) {
+            return next(createError(409, "This table has an open cart — close it first"))
+        }
 
         const modifiedShop = await ShopModel.findByIdAndUpdate(shopId, { $pull: { tables: { _id: tableId} } })
         if (!modifiedShop) return next(createError(404, "Table Not Found!"))

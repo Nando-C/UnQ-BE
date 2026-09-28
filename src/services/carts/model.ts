@@ -1,5 +1,5 @@
 import mongoose from "mongoose"
-import { ICartDocument } from "src/typings/cart"
+import { ICartDocument, INotice } from "src/typings/cart"
 
 const { Schema, model } = mongoose
 
@@ -134,6 +134,27 @@ const CartSchema = new Schema<ICartDocument>(
                 ],
             }
         ],
+        // Notes to the table's diners when a manager changes their cart ("The
+        // staff released your selection of 2× Latte"). Text only. One with a
+        // `forUserId` is for that diner alone; one without is for the table.
+        // Diners see recent ones only (see dinerView).
+        notices: [
+            {
+                at: { type: Date, required: true },
+                forUserId: Schema.Types.ObjectId,
+                message: { type: String, required: true },
+            }
+        ],
+        // What managers did to this cart, for the manager view. Manager-only.
+        managerLog: [
+            {
+                _id: false,
+                at: { type: Date, required: true },
+                byUserId: { type: Schema.Types.ObjectId, required: true },
+                action: { type: String, required: true },
+                details: String,
+            }
+        ],
     },
     // Optimistic concurrency: every save() is version-checked on ANY modified
     // path (Mongoose's default versioning only guards array-structure changes,
@@ -150,11 +171,34 @@ const CartSchema = new Schema<ICartDocument>(
 // open carts — list them with src/scripts/findDuplicateOpenCarts.ts.
 CartSchema.index({ tableId: 1 }, { unique: true, partialFilterExpression: { status: "open" } })
 
+// Diners see notices from the last 2 hours, at most the 5 newest.
+const NOTICE_MAX_AGE_MS = 2 * 60 * 60 * 1000
+const NOTICE_MAX = 5
+
+// A cart as a diner may see it. The table's cart is public (no login), so the
+// payment records and the manager log never leave the server this way, and of
+// the notices only the table-wide ones do, plus those meant for `viewerId`
+// when the caller is known. Manager endpoints use toObject() instead.
+export const dinerView = (cart: ICartDocument, viewerId?: unknown) => {
+    const view = cart.toObject()
+    delete view.__v
+    delete view.payments
+    delete view.managerLog
+    const since = Date.now() - NOTICE_MAX_AGE_MS
+    const viewer = viewerId ? String(viewerId) : null
+    view.notices = (view.notices ?? [])
+        .filter((n: INotice) =>
+            n.at.getTime() >= since && (!n.forUserId || (viewer && String(n.forUserId) === viewer)))
+        .sort((a: INotice, b: INotice) => b.at.getTime() - a.at.getTime())
+        .slice(0, NOTICE_MAX)
+        .map((n: INotice) => ({ _id: n._id, at: n.at, message: n.message }))
+    return view
+}
+
+// What res.send(cart) sends: the public diner view (controllers that know the
+// caller use dinerView with their id, to include that diner's own notices).
 CartSchema.methods.toJSON = function () {
-    const cart = this.toObject()
-    delete cart.__v
-    delete cart.payments
-    return cart
+    return dinerView(this as ICartDocument)
 }
 
 export default model<ICartDocument>("Cart", CartSchema)

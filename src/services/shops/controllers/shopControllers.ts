@@ -2,6 +2,7 @@ import { TController } from "../../../typings/controllers"
 import { IUserDocument } from "src/typings/users"
 import ShopModel from "../model"
 import createError from "http-errors"
+import CartModel from "../../carts/model"
 import { destroyReplacedImage, discardUpload } from "../../../settings/cloudinary"
 
 // -------------------------------------------------------------------------
@@ -88,6 +89,12 @@ export const deleteMyShop: TController = async ( req, res, next ) => {
     try {
         const user = req.user as IUserDocument
         const shopId = req.params.shopId
+
+        // Same rule as deleting a table: no table may still have an open cart.
+        const shop = await ShopModel.findOne({_id: shopId, shopMg: user._id }).select("tables")
+        if (shop && await CartModel.exists({ tableId: { $in: shop.tables.map((t) => String(t._id)) }, status: "open" })) {
+            return next(createError(409, "A table in this shop has an open cart — close it first"))
+        }
 
         const deletedShop = await ShopModel.findOneAndDelete({_id: shopId, shopMg: user._id })
         if (!deletedShop) return next(createError(400, "Shop Not Found or you are not authorized!"))

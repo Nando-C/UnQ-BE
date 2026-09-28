@@ -9,7 +9,25 @@ export interface ICart {
     split: ISplitItem[]
     paypalOrderId?: string // legacy scalar, read-only for pre-multi-payer carts
     paypalOrderIds?: string[] // one recorded PayPal order per payer
-    payments: IPayment[] // manager-only: never in a diner response (see model toJSON)
+    payments: IPayment[] // manager-only: never in a diner response (see model dinerView)
+    notices: INotice[]
+    managerLog: IManagerLogEntry[] // manager-only
+}
+
+// A note to the table's diners about a manager's change; `forUserId` makes it
+// one diner's.
+export interface INotice {
+    _id?: Types.ObjectId
+    at: Date
+    forUserId?: Types.ObjectId
+    message: string
+}
+
+export interface IManagerLogEntry {
+    at: Date
+    byUserId: Types.ObjectId
+    action: string
+    details?: string
 }
 
 // One settled checkout: what a payer paid, when, and at what prices. Written in

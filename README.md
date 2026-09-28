@@ -357,6 +357,11 @@ Cart Model:
                 paidAt: Date,      // once paid
             }
         ],
+        // Notes to the diners about a manager's change. Diners get the table-wide
+        // ones and their own, from the last 2 hours (at most 5).
+        notices: [{ at: Date, forUserId?: ObjectId, message: string }],
+        // Manager-only: what managers did to this cart.
+        managerLog: [{ at: Date, byUserId: ObjectId, action: string, details: string }],
         // Manager-only: never included in a diner's cart response.
         // Provider-neutral, so other payment providers can record the same way.
         payments: [
@@ -459,6 +464,15 @@ These are the available endpoints created for this application. Every mutating r
   baseURL-api/shops/:shopId/tables/:tableId/carts
 
   Shop managers only. `{ open, recentlyClosed }`: the table's open cart(s) and the carts closed in the last 24 hours, newest first, each with its payment records. Diners in selections and payments are shown as `{ _id, name }` (first name only).
+
+- [ 'POST' ]
+
+  baseURL-api/shops/:shopId/tables/:tableId/carts/:cartId/releaseSelection
+  baseURL-api/shops/:shopId/tables/:tableId/carts/:cartId/removeItem
+  baseURL-api/shops/:shopId/tables/:tableId/carts/:cartId/close
+  baseURL-api/shops/:shopId/tables/:tableId/carts/:cartId/mergeInto
+
+  Shop managers only; no money moves. `releaseSelection` `{ userId?, menuId? }` frees units held in open selections (everyone's, one diner's or one item's). `removeItem` `{ menuId }` takes out an item's unpaid units by the same rule as the diner's bin. `close` drops every unpaid unit and open selection, keeps the paid ones, and closes the cart (a cart where nothing was ever paid is deleted); it answers `{ deleted, dropped, cart? }`. `mergeInto` moves an older duplicate open cart's unpaid units and selections into the table's newest one. Each leaves a note for the diners (`notices` in their cart responses: the table-wide ones and their own, from the last 2 hours) and an entry in the cart's `managerLog`. A concurrent change to the cart answers `409 The cart changed, please retry`. Deleting a table (or a shop) with an open cart is refused with `409` until it's closed.
 
 - [ 'POST', 'GET' ]
 

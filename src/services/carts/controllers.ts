@@ -1,7 +1,8 @@
 import { TController } from "src/typings/controllers"
 import { IUserDocument } from "src/typings/users"
 import { ICartDocument, ISplitItem } from "src/typings/cart"
-import CartModel from "./model"
+import CartModel, { dinerView } from "./model"
+import { Request } from "express"
 import createError from "http-errors"
 import mongoose from "mongoose"
 import { getOrder, createOrder, captureOrder, refundCapture, PayPalOrder } from "../../lib/paypal"
@@ -26,6 +27,11 @@ export const menuRef = (path: string) => ({
         doc ?? { _id: id, name: "No longer on the menu", short_description: "", price: 0, available: false },
 })
 
+// A cart as the caller may see it: the diner view, including the notices meant
+// for them (the public table view only has the table-wide ones).
+const forDiner = (cart: ICartDocument | null, req: Request) =>
+    cart && dinerView(cart, (req.user as IUserDocument | undefined)?._id)
+
 // Sold-out rule (S21, user decision 2026-09-22): the kitchen only acts on PAID
 // orders, so an unavailable item can't be added, newly split, or paid for.
 // Nothing is removed from carts automatically, and paid units are never touched.
@@ -44,7 +50,7 @@ export const getMyCarts: TController = async ( req, res, next) => {
             
         if (!myCarts) return next(createError(404, "Carts Not Found!"))
 
-        res.send(myCarts)
+        res.send(forDiner(myCarts, req))
     } catch (error) {
         next(createError(500, error as Error))
     }
@@ -65,7 +71,7 @@ export const getTableCart: TController = async ( req, res, next ) => {
 
         if (!cart) return next(createError(404, `Cart Not Found!`))
         
-        res.send(cart)
+        res.send(forDiner(cart, req))
     } catch (error) {
         next(createError(500, error as Error))
     }
@@ -86,7 +92,7 @@ export const getSingleCart: TController = async ( req, res, next ) => {
 
         if (!cart) return next(createError(404, `Cart Not Found!`))
         
-        res.send(cart)
+        res.send(forDiner(cart, req))
     } catch (error) {
         next(createError(500, error as Error))
     }
@@ -125,11 +131,11 @@ export const addItem: TController = async ( req, res, next ) => {
         // now landing on the first step.
         for (let attempt = 0; attempt < 3; attempt++) {
             const updatedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": req.body.qty }}, { sort: { createdAt: -1 } }).populate(menuRef("items.menuId"))
-            if (updatedItem) return res.send(updatedItem)
+            if (updatedItem) return res.send(forDiner(updatedItem, req))
 
             try {
                 const addedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": { $ne: item.menuId }}, { $push: { items: item }, $setOnInsert: { userId: user._id, shopId: req.params.shopId }}, { upsert: true, sort: { createdAt: -1 } }).populate(menuRef("items.menuId"))
-                return res.send(addedItem)
+                return res.send(forDiner(addedItem, req))
             } catch (error) {
                 const err = error as { code?: number; cause?: { code?: number } }
                 if (err.code !== 11000 && err.cause?.code !== 11000) throw error
@@ -180,11 +186,11 @@ export const decreaseItem: TController = async ( req, res, next ) => {
             if (deleteCart) {
                 res.status(204).send()
             } else if (closedCart) {
-                res.send(closedCart)
+                res.send(forDiner(closedCart, req))
             } else if (removedItem) {
-                res.send(removedItem)
+                res.send(forDiner(removedItem, req))
             } else {
-                res.send(decreasedItem)
+                res.send(forDiner(decreasedItem, req))
             }
 
         } else {
@@ -217,6 +223,26 @@ const lockedUnits = (cart: ICartDocument, menuId: string): number => {
     return (line?.qtyPayed ?? 0) + claimed
 }
 
+// Removes an item's unpaid units from a loaded cart, in memory (the caller
+// saves): the rule of the diner's bin (deleteItem) and the manager's removeItem.
+// Returns how many units went. See deleteItem for the rule.
+export const removeUnpaidUnits = (cart: ICartDocument, menuId: string) => {
+    // Works on a populated cart too (menuId is then the menu document).
+    const sameItem = (id: unknown) => String((id as { _id?: unknown } | null)?._id ?? id) === String(menuId)
+    const line = cart.items.find((i) => sameItem(i.menuId))
+    const removed = line ? line.qty - line.qtyPayed : 0
+    if (line && line.qtyPayed > 0) {
+        line.qty = line.qtyPayed
+    } else {
+        cart.items = cart.items.filter((i) => !sameItem(i.menuId))
+    }
+    cart.split = cart.split.filter((s) => !(s.splitStatus === "open" && sameItem(s.menuId)))
+    // Same rule settleCheckout applies after a payment: nothing left to pay
+    // means the table is finished.
+    if (cart.items.length > 0 && cart.items.every((i) => i.qty <= i.qtyPayed)) cart.status = "closed"
+    return removed
+}
+
 // Removes only the UNPAID units of an item. A partly-paid line is kept with
 // qty === qtyPayed as the record of what was paid; an unpaid line is dropped.
 // Every diner's open split on it goes too — those units no longer exist. This is
@@ -235,17 +261,7 @@ export const deleteItem: TController = async ( req, res, next ) => {
             return
         }
 
-        const sameItem = (id: unknown) => String(id) === String(menuId)
-        const line = cart.items.find((i) => sameItem(i.menuId))
-        if (line && line.qtyPayed > 0) {
-            line.qty = line.qtyPayed
-        } else {
-            cart.items = cart.items.filter((i) => !sameItem(i.menuId))
-        }
-        cart.split = cart.split.filter((s) => !(s.splitStatus === "open" && sameItem(s.menuId)))
-        // Same rule settleCheckout applies after a payment: nothing left to pay
-        // means the table is finished.
-        if (cart.items.length > 0 && cart.items.every((i) => i.qty <= i.qtyPayed)) cart.status = "closed"
+        removeUnpaidUnits(cart, menuId)
 
         try {
             await cart.save()
@@ -256,7 +272,7 @@ export const deleteItem: TController = async ( req, res, next ) => {
             throw error
         }
 
-        res.send(await cart.populate([menuRef("items.menuId"), menuRef("split.menuId")]))
+        res.send(forDiner(await cart.populate([menuRef("items.menuId"), menuRef("split.menuId")]), req))
     } catch (error) {
         next(createError(500, error as Error))
     }
@@ -346,13 +362,13 @@ export const addSplitItem: TController = async ( req, res, next ) => {
                 { _id: cartId, tableId, status: "open", split: { $elemMatch: mine }, ...fits },
                 { $inc: { "split.$.qty": qty } }
             ).populate(menuRef("split.menuId")).populate(menuRef("items.menuId"))
-            if (grown) return res.send(grown)
+            if (grown) return res.send(forDiner(grown, req))
 
             const started = await CartModel.findOneAndUpdate(
                 { _id: cartId, tableId, status: "open", split: { $not: { $elemMatch: mine } }, ...fits },
                 { $push: { split: { userId: user._id, menuId: menuOid, qty, claimedAt: new Date() } } }
             ).populate(menuRef("split.menuId")).populate(menuRef("items.menuId"))
-            if (started) return res.send(started)
+            if (started) return res.send(forDiner(started, req))
         }
 
         return next(createError(409, "Not enough units left to split"))
@@ -381,9 +397,9 @@ export const decreaseSplitItem: TController = async ( req, res, next ) => {
             const removedItem = await CartModel.findOneAndUpdate({_id: cartId, tableId: req.params.tableId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $pull: { split: { qty: { $lte: 0 } }}}).populate(menuRef("split.menuId")).populate(menuRef("items.menuId"))
             
             if (removedItem) {
-                res.send(removedItem)
+                res.send(forDiner(removedItem, req))
             } else {
-                res.send(decreasedItem)
+                res.send(forDiner(decreasedItem, req))
             }
         } else {
             res.status(404).send("Item Not Found!")
@@ -413,9 +429,9 @@ export const removeSplitItem: TController = async ( req, res, next ) => {
             const removedItem = await CartModel.findOneAndUpdate({_id: cartId, tableId: req.params.tableId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $pull: { split: { qty: { $lte: 0 } }}}).populate(menuRef("split.menuId")).populate(menuRef("items.menuId"))
 
             if (removedItem) {
-                res.send(removedItem)
+                res.send(forDiner(removedItem, req))
             } else {
-                res.send(decreasedItem)
+                res.send(forDiner(decreasedItem, req))
             }
         } else {
             res.status(404).send("Item Not Found!")
@@ -719,7 +735,7 @@ export const captureCheckout: TController = async ( req, res, next ) => {
             console.error("Settling a captured PayPal payment failed", { paypalOrderId, error: settleError })
             outcome = { ok: false, status: 500, message: "The payment could not be recorded" }
         }
-        if (outcome.ok) return res.send(outcome.cart)
+        if (outcome.ok) return res.send(forDiner(outcome.cart, req))
 
         // (g) The buyer HAS been charged but the settlement is impossible (a
         // concurrent payer took the units, a replay was hit, or attempts were

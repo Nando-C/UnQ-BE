@@ -6,6 +6,7 @@ import * as tableControllers from "./controllers/tableControllers"
 import * as managerControllers from "../carts/managerControllers"
 import { validate } from "../../middlewares/validate"
 import { createShopSchema, editShopSchema, createTableSchema, editTableSchema } from "./schemas"
+import { cartItemSchema, releaseSelectionSchema } from "../carts/schemas"
 
 const router = Router()
 
@@ -25,6 +26,11 @@ router.delete("/:shopId", JWTAuthMiddleware, adminOnly, shopControllers.deleteMy
 // public `tables/:tableId`, which would otherwise take "status" as a table id.
 router.get("/:shopId/tables/status", JWTAuthMiddleware, isShopManager, managerControllers.getTablesStatus)
 router.get("/:shopId/tables/:tableId/carts", JWTAuthMiddleware, isShopManager, managerControllers.getTableCarts)
+// Manager fixes to a table's open cart (no money moves).
+router.post("/:shopId/tables/:tableId/carts/:cartId/releaseSelection", JWTAuthMiddleware, isShopManager, validate(releaseSelectionSchema), managerControllers.releaseSelection)
+router.post("/:shopId/tables/:tableId/carts/:cartId/removeItem", JWTAuthMiddleware, isShopManager, validate(cartItemSchema), managerControllers.removeItem)
+router.post("/:shopId/tables/:tableId/carts/:cartId/close", JWTAuthMiddleware, isShopManager, managerControllers.closeCart)
+router.post("/:shopId/tables/:tableId/carts/:cartId/mergeInto", JWTAuthMiddleware, isShopManager, managerControllers.mergeInto)
 router.post("/:shopId/tables", JWTAuthMiddleware, isShopManager, validate(createTableSchema), tableControllers.createTable)
 router.get("/:shopId/tables", JWTAuthMiddleware, tableControllers.getTableList)
 router.get("/:shopId/tables/:tableId",  tableControllers.getSingleTable)
