@@ -355,6 +355,7 @@ describe("captureCheckout (POST /carts/tables/:tableId/:cartId/captureCheckout)"
         const unit = cart?.items.find((i) => String(i.menuId) === String(menuId))
         expect(unit?.qtyPayed).toBe(1) // only Bob's settlement, never Alice's
         expect(cart?.paypalOrderIds).not.toContain("ORDER-ALICE")
+        expect(cart?.payments).toEqual([]) // a refunded capture leaves no payment record
     })
 
     it("refunds when saving the settlement fails after capture, instead of keeping the money", async () => {
@@ -380,6 +381,7 @@ describe("captureCheckout (POST /carts/tables/:tableId/:cartId/captureCheckout)"
         const cart = await CartModel.findById(cartId)
         expect(cart?.split[0].splitStatus).toBe("open")
         expect(cart?.paypalOrderIds ?? []).toEqual([])
+        expect(cart?.payments).toEqual([])
     })
 
     it("returns 500 (contact staff) when the post-capture refund itself fails", async () => {
@@ -451,6 +453,94 @@ describe("a cart id used under another table's URL", () => {
         expect(capture.status).toBe(404)
         expect(mockedCreateOrder).not.toHaveBeenCalled()
         expect(mockedCaptureOrder).not.toHaveBeenCalled()
+    })
+})
+
+describe("payment records", () => {
+    // A settled £6 checkout of 2 × £3 Latte, captured as CAPTURE-7.
+    const settle = async () => {
+        const ctx = await scaffold()
+        await ctx.addSplit(ctx.customer.cookies, 2)
+        mockedGetOrder.mockResolvedValue(approvedOrder("6.00", `${ctx.cartId}:${ctx.customer.user._id}`))
+        mockedCaptureOrder.mockResolvedValue(capturedOrder("6.00", { captureId: "CAPTURE-7" }))
+        const res = await request(app)
+            .post(`/carts/tables/${ctx.tableId}/${ctx.cartId}/captureCheckout`)
+            .set("Cookie", ctx.customer.cookies)
+            .send({ paypalOrderId: "ORDER-1" })
+        return { ...ctx, res }
+    }
+
+    it("records who paid what, when, at which price, and the capture to refund", async () => {
+        const before = Date.now()
+        const { cartId, customer, menuId, res } = await settle()
+        expect(res.status).toBe(200)
+
+        const cart = await CartModel.findById(cartId)
+        expect(cart?.payments).toHaveLength(1)
+        const payment = cart!.payments[0]
+        expect(payment).toMatchObject({
+            provider: "paypal",
+            providerCheckoutId: "ORDER-1",
+            providerPaymentId: "CAPTURE-7",
+            currency: "GBP",
+            amount: 6,
+        })
+        expect(String(payment.userId)).toBe(String(customer.user._id))
+        expect(payment.paidAt.getTime()).toBeGreaterThanOrEqual(before)
+        expect(cart!.toObject().payments[0].lines).toEqual([
+            { menuId: expect.anything(), name: "Latte", qty: 2, unitPrice: 3, refundedQty: 0 },
+        ])
+        expect(String(payment.lines[0].menuId)).toBe(String(menuId))
+        // The closed split carries the price and time too.
+        expect(cart?.split[0]).toMatchObject({ splitStatus: "closed", unitPrice: 3 })
+        expect(cart?.split[0].paidAt?.getTime()).toBe(payment.paidAt.getTime())
+    })
+
+    it("keeps the price paid when the menu price changes afterwards", async () => {
+        const { owner, shopId, menuId, tableId, res } = await settle()
+        expect(res.status).toBe(200)
+        await request(app).put(`/shops/${shopId}/menu/${menuId}`).set("Cookie", owner.cookies).send({ price: 9 })
+
+        const cart = await request(app).get(`/carts/tables/${tableId}`)
+        // The table's cart closed when fully paid; read it straight from the DB.
+        expect(cart.status).toBe(404)
+        const stored = await CartModel.findOne({ tableId }).populate("split.menuId")
+        const split = stored!.split[0]
+        expect(split.unitPrice).toBe(3)
+        expect((split.menuId as unknown as { price: number }).price).toBe(9)
+        expect(stored!.payments[0].lines[0].unitPrice).toBe(3)
+    })
+
+    it("never sends payment records to diners", async () => {
+        const { tableId, cartId, customer, res } = await (async () => {
+            // Keep the cart open after paying, so the public table view returns it.
+            const ctx = await scaffold()
+            await ctx.addNamedItem("Muffin", 1)
+            await ctx.addSplit(ctx.customer.cookies, 2)
+            mockedGetOrder.mockResolvedValue(approvedOrder("6.00", `${ctx.cartId}:${ctx.customer.user._id}`))
+            mockedCaptureOrder.mockResolvedValue(capturedOrder("6.00", { captureId: "CAPTURE-7" }))
+            const res = await request(app)
+                .post(`/carts/tables/${ctx.tableId}/${ctx.cartId}/captureCheckout`)
+                .set("Cookie", ctx.customer.cookies)
+                .send({ paypalOrderId: "ORDER-1" })
+            return { ...ctx, res }
+        })()
+        expect(res.status).toBe(200)
+        expect((await CartModel.findById(cartId))?.payments).toHaveLength(1)
+
+        const responses = [
+            res,
+            await request(app).get(`/carts/tables/${tableId}`),
+            await request(app).get(`/carts/${cartId}`).set("Cookie", customer.cookies),
+            await request(app).get("/carts").set("Cookie", customer.cookies),
+        ]
+        for (const r of responses) {
+            expect(r.status).toBe(200)
+            expect(r.body).not.toHaveProperty("payments")
+            expect(JSON.stringify(r.body)).not.toContain("CAPTURE-7")
+        }
+        // What diners do get: the price paid on their closed split.
+        expect(responses[1].body.split[0]).toMatchObject({ splitStatus: "closed", unitPrice: 3 })
     })
 })
 
@@ -541,6 +631,11 @@ describe("multi-payer settlement (via captureCheckout)", () => {
         expect(cart?.paypalOrderIds).toEqual(expect.arrayContaining(["ORDER-A", "ORDER-B"]))
         expect(cart?.items[0].qtyPayed).toBe(2)
         expect(cart?.status).toBe("closed")
+        // One payment record per payer, each with its own capture.
+        expect(cart?.payments.map((p) => [p.providerCheckoutId, p.providerPaymentId, String(p.userId), p.amount])).toEqual([
+            ["ORDER-A", "CAPTURE-A", String(customer.user._id), 3],
+            ["ORDER-B", "CAPTURE-B", String(other.user._id), 3],
+        ])
     })
 
     it("serialises two concurrent payers via optimistic concurrency, recording both ids", async () => {

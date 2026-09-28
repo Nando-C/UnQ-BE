@@ -353,6 +353,24 @@ Cart Model:
                     type: String,
                     enum: ["open", "closed"],
                 },
+                unitPrice: number, // once paid: the price charged per unit
+                paidAt: Date,      // once paid
+            }
+        ],
+        // Manager-only: never included in a diner's cart response.
+        // Provider-neutral, so other payment providers can record the same way.
+        payments: [
+            {
+                provider: "paypal",
+                providerCheckoutId: string, // PayPal: the order id
+                providerPaymentId: string,  // PayPal: the capture id (what a refund is made against)
+                currency: string,           // "GBP"
+                userId: ObjectId,   // the payer
+                paidAt: Date,
+                amount: number,     // captured, in `currency`
+                lines: [
+                    { menuId: ObjectId, name: string, qty: number, unitPrice: number, refundedQty: number },
+                ],
             }
         ],
     }
@@ -490,7 +508,7 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/carts/tables/:tableId/:cartId/captureCheckout
 
-  Server-side checkout, step 2 of 2 — the money-moving endpoint. Body: `{ paypalOrderId }`. Confirms the buyer-approved order was minted for THIS cart + payer (`custom_id` match — `402` otherwise) and still matches the amount due (`409` if the caller changed their selection), re-checks availability (`409`), rejects sold-out items (`409`, same message as `createCheckoutOrder`), and only THEN captures the payment. If a concurrent payer takes the units in the tiny window after capture, the buyer is refunded automatically and the request returns `409` — so a rejection never leaves anyone charged for nothing. Order-id replay is rejected with `402` before any charge. Settlements are recorded per payer in the cart's `paypalOrderIds`. Together with `createCheckoutOrder` this is **the** checkout flow (charge only after reserving).
+  Server-side checkout, step 2 of 2 — the money-moving endpoint. Body: `{ paypalOrderId }`. Confirms the buyer-approved order was minted for THIS cart + payer (`custom_id` match — `402` otherwise) and still matches the amount due (`409` if the caller changed their selection), re-checks availability (`409`), rejects sold-out items (`409`, same message as `createCheckoutOrder`), and only THEN captures the payment. If a concurrent payer takes the units in the tiny window after capture, the buyer is refunded automatically and the request returns `409` — so a rejection never leaves anyone charged for nothing. Order-id replay is rejected with `402` before any charge. Settlements are recorded per payer in the cart's `paypalOrderIds`, and each one as a provider-neutral payment record (provider, its checkout and payment ids, payer, time, amount and currency, and every line at the price charged; kept out of diner responses). The paid splits carry `unitPrice` and `paidAt`, so what the cart says was paid doesn't change when a menu price is edited later. Together with `createCheckoutOrder` this is **the** checkout flow (charge only after reserving).
 
 - [ 'GET' ]
 

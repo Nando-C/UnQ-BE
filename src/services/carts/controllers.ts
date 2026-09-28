@@ -434,7 +434,7 @@ export const removeSplitItem: TController = async ( req, res, next ) => {
 // `paypalOrderIds`; a given order id can only ever settle one checkout across all
 // carts (replay protection), and optimistic concurrency serialises simultaneous
 // payers so no unit is double-settled and no recorded order id is lost.
-type PopulatedMenuRef = { _id: mongoose.Types.ObjectId; price: number; available?: boolean }
+type PopulatedMenuRef = { _id: mongoose.Types.ObjectId; name: string; price: number; available?: boolean }
 
 const menuIdOf = (ref: ISplitItem["menuId"]): string => {
     const populated = ref as unknown as PopulatedMenuRef
@@ -494,13 +494,39 @@ const orderVerificationError = (order: PayPalOrder, expectedTotal: number): stri
 }
 
 // Apply what a settlement does, in memory on the loaded doc, for a single
-// version-checked save(): close the caller's open splits and credit qtyPayed.
-const applyCheckout = (cart: ICartDocument, openSplits: ISplitItem[], paypalOrderId: string) => {
+// version-checked save(): close the caller's open splits and credit qtyPayed,
+// and record the payment. Prices are the populated menu's, the same ones
+// expectedTotalFor charged and the capture was verified against; `order` is
+// captureCheckout's own COMPLETED capture result.
+const applyCheckout = (
+    cart: ICartDocument,
+    openSplits: ISplitItem[],
+    userId: mongoose.Types.ObjectId,
+    paypalOrderId: string,
+    order: PayPalOrder
+) => {
+    const paidAt = new Date()
+    const capture = order.purchase_units?.[0]?.payments?.captures?.[0]
+    const lines = []
     for (const split of openSplits) {
+        const menu = split.menuId as unknown as PopulatedMenuRef
         split.splitStatus = "closed"
+        split.unitPrice = menu.price
+        split.paidAt = paidAt
+        lines.push({ menuId: menu._id, name: menu.name, qty: split.qty, unitPrice: menu.price, refundedQty: 0 })
         const item = cart.items.find((i) => menuIdOf(i.menuId) === menuIdOf(split.menuId))
         if (item) item.qtyPayed += split.qty
     }
+    cart.payments.push({
+        provider: "paypal",
+        providerCheckoutId: paypalOrderId,
+        providerPaymentId: capture?.id,
+        currency: capture?.amount?.currency_code ?? "GBP",
+        userId,
+        paidAt,
+        amount: Number(capture?.amount?.value ?? expectedTotalFor(openSplits).toFixed(2)),
+        lines,
+    })
     if (!cart.paypalOrderIds) cart.paypalOrderIds = []
     cart.paypalOrderIds.push(paypalOrderId)
     if (cart.items.every((i) => i.qty <= i.qtyPayed)) cart.status = "closed"
@@ -531,7 +557,7 @@ const settleCheckout = async (
 
     const MAX_ATTEMPTS = 3
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        applyCheckout(cart, openSplits, paypalOrderId)
+        applyCheckout(cart, openSplits, userId, paypalOrderId, order)
         try {
             await cart.save()
             return { ok: true, cart }

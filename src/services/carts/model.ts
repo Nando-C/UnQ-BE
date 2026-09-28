@@ -85,6 +85,49 @@ const CartSchema = new Schema<ICartDocument>(
                     enum: ["open", "closed"],
                     default: "open",
                 },
+                // Set when the split is paid: the price each unit was charged
+                // at, and when. "Total Payed" reads these, so a later menu price
+                // edit doesn't change what the cart says was paid. Legacy paid
+                // splits have neither.
+                unitPrice: Number,
+                paidAt: Date,
+            }
+        ],
+        // One record per settled checkout, written in the same save that settles
+        // it: who took the money and their ids for it, the payer, when, the
+        // amount, and each line at the price charged. `refundedQty` counts the
+        // units of a line refunded since. Manager-only: toJSON strips it, so it
+        // never reaches a diner (the table's cart is public). Manager endpoints
+        // read it from toObject().
+        //
+        // Provider-neutral, so another payment provider (e.g. Stripe) records
+        // into the same shape:
+        // - providerCheckoutId: what the checkout was keyed on. PayPal: the
+        //   order id. (Stripe: the PaymentIntent or Checkout Session id.)
+        // - providerPaymentId: the money movement a refund is made against.
+        //   PayPal: the capture id. (Stripe: the PaymentIntent or charge id.)
+        //   Missing only if the provider's result had no id, which must not
+        //   stop the payment being recorded; it can then only be refunded from
+        //   the provider's dashboard.
+        payments: [
+            {
+                provider: { type: String, enum: ["paypal"], required: true },
+                providerCheckoutId: { type: String, required: true },
+                providerPaymentId: String,
+                currency: { type: String, required: true },
+                userId: { type: Schema.Types.ObjectId, required: true },
+                paidAt: { type: Date, required: true },
+                amount: { type: Number, required: true },
+                lines: [
+                    {
+                        _id: false,
+                        menuId: { type: Schema.Types.ObjectId, required: true },
+                        name: { type: String, required: true },
+                        qty: { type: Number, required: true },
+                        unitPrice: { type: Number, required: true },
+                        refundedQty: { type: Number, default: 0 },
+                    }
+                ],
             }
         ],
     },
@@ -106,6 +149,7 @@ CartSchema.index({ tableId: 1 }, { unique: true, partialFilterExpression: { stat
 CartSchema.methods.toJSON = function () {
     const cart = this.toObject()
     delete cart.__v
+    delete cart.payments
     return cart
 }
 
