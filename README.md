@@ -357,6 +357,10 @@ Cart Model:
                 paidAt: Date,      // once paid
             }
         ],
+        // Manager-only: refunds against the payments, pending → completed | failed.
+        refunds: [{ paymentId: ObjectId, lines: [{ menuId, name, qty }], amount: number, currency: string,
+                    status: "pending" | "completed" | "failed", providerRefundId?: string, failureReason?: string,
+                    byUserId: ObjectId, at: Date }],
         // Notes to the diners about a manager's change. Diners get the table-wide
         // ones and their own, from the last 2 hours (at most 5).
         notices: [{ at: Date, forUserId?: ObjectId, message: string }],
@@ -473,6 +477,12 @@ These are the available endpoints created for this application. Every mutating r
   baseURL-api/shops/:shopId/tables/:tableId/carts/:cartId/mergeInto
 
   Shop managers only; no money moves. `releaseSelection` `{ userId?, menuId? }` frees units held in open selections (everyone's, one diner's or one item's). `removeItem` `{ menuId }` takes out an item's unpaid units by the same rule as the diner's bin. `close` drops every unpaid unit and open selection, keeps the paid ones, and closes the cart (a cart where nothing was ever paid is deleted); it answers `{ deleted, dropped, cart? }`. `mergeInto` moves an older duplicate open cart's unpaid units and selections into the table's newest one. Each leaves a note for the diners (`notices` in their cart responses: the table-wide ones and their own, from the last 2 hours) and an entry in the cart's `managerLog`. A concurrent change to the cart answers `409 The cart changed, please retry`. Deleting a table (or a shop) with an open cart is refused with `409` until it's closed.
+
+- [ 'POST' ]
+
+  baseURL-api/shops/:shopId/carts/:cartId/refunds
+
+  Shop managers only; money moves. Body `{ paymentId, lines: [{ menuId, qty }] }`: refunds those units of one recorded payment, at the prices it charged, through the payment's provider (PayPal: a partial refund of its capture, with an idempotency key), and takes them out of the cart. Open or closed carts of the shop. A `pending` refund record is saved before the provider is asked, so the same units can't be refunded twice; it then becomes `completed` or `failed`. Answers `{ refund, cart }`; `400` for more than is left to refund, `409` for a payment with no recorded capture (refund it from PayPal), `502` with the provider's reason when it refuses (nothing refunded), `500` if it went through but couldn't be recorded (the refund stays `pending`: check PayPal). The payer gets a note.
 
 - [ 'POST', 'GET' ]
 

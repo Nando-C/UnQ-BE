@@ -6,7 +6,7 @@ import * as tableControllers from "./controllers/tableControllers"
 import * as managerControllers from "../carts/managerControllers"
 import { validate } from "../../middlewares/validate"
 import { createShopSchema, editShopSchema, createTableSchema, editTableSchema } from "./schemas"
-import { cartItemSchema, releaseSelectionSchema } from "../carts/schemas"
+import { cartItemSchema, releaseSelectionSchema, refundSchema } from "../carts/schemas"
 
 const router = Router()
 
@@ -31,6 +31,8 @@ router.post("/:shopId/tables/:tableId/carts/:cartId/releaseSelection", JWTAuthMi
 router.post("/:shopId/tables/:tableId/carts/:cartId/removeItem", JWTAuthMiddleware, isShopManager, validate(cartItemSchema), managerControllers.removeItem)
 router.post("/:shopId/tables/:tableId/carts/:cartId/close", JWTAuthMiddleware, isShopManager, managerControllers.closeCart)
 router.post("/:shopId/tables/:tableId/carts/:cartId/mergeInto", JWTAuthMiddleware, isShopManager, managerControllers.mergeInto)
+// Manager refunds (money moves): open or closed carts of the shop.
+router.post("/:shopId/carts/:cartId/refunds", JWTAuthMiddleware, isShopManager, validate(refundSchema), managerControllers.refundItems)
 router.post("/:shopId/tables", JWTAuthMiddleware, isShopManager, validate(createTableSchema), tableControllers.createTable)
 router.get("/:shopId/tables", JWTAuthMiddleware, tableControllers.getTableList)
 router.get("/:shopId/tables/:tableId",  tableControllers.getSingleTable)

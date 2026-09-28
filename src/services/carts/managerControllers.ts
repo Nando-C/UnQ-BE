@@ -5,6 +5,7 @@ import ShopModel from "../shops/model"
 import createError from "http-errors"
 import { menuRef, removeUnpaidUnits } from "./controllers"
 import UserModel from "../users/model"
+import { providerName, refundPayment } from "../../lib/payments"
 import { IUserDocument } from "src/typings/users"
 
 // A shop manager's view of the tables' carts (read-only). Both routes run after
@@ -352,3 +353,167 @@ export const mergeInto: TController = async ( req, res, next ) => {
     }
 }
 
+
+// -------------------------------------------------------------------------
+// Cancel and refund (money moves). POST /shops/:shopId/carts/:cartId/refunds
+// { paymentId, lines: [{ menuId, qty }] }: refunds those units of one recorded
+// payment, at the prices that payment charged, and takes them out of the cart
+// (user decision: refunded units are cancelled, not made payable again). Works
+// on open and closed carts of the shop.
+//
+// Money and records must never disagree, so, in this order:
+// (a) a `pending` refund record is saved, version-checked. Pending units count
+//     as refunded, so a double click or two managers can't refund them twice.
+// (b) the provider is asked, with the record's id as its idempotency key.
+// (c) success: the record is completed and the cart updated (retrying on a
+//     version conflict); failure: the record says `failed`, nothing else moves.
+// If (c) can't be saved, the record stays `pending` and the manager is told to
+// check the provider: it's never guessed.
+
+type RefundLine = { menuId: string; qty: number }
+
+const money = (amount: number, currency: string) =>
+    new Intl.NumberFormat("en-GB", { style: "currency", currency }).format(amount)
+
+// Reloads the cart and applies `change` to it, saving version-checked, a few
+// times if other writes keep landing. False if it never saved.
+const withFreshCart = async (cartId: unknown, change: (cart: ICartDocument) => void) => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const cart = await CartModel.findById(cartId)
+        if (!cart) return false
+        change(cart)
+        if (await saveChecked(cart)) return true
+    }
+    return false
+}
+
+const findById = <T extends { _id?: unknown }>(list: T[], id: unknown) =>
+    list.find((x) => String(x._id) === String(id))
+
+// (c) on success: the refund completed, the payment's lines marked, the units
+// gone from the cart (item and the payer's paid selection alike), and a note
+// for the payer.
+const completeRefund = (
+    cart: ICartDocument,
+    refundId: unknown,
+    providerRefundId: string | undefined,
+    req: Parameters<TController>[0]
+) => {
+    const refund = findById(cart.refunds, refundId)
+    if (!refund || refund.status !== "pending") return
+    const payment = findById(cart.payments, refund.paymentId)
+    refund.status = "completed"
+    refund.providerRefundId = providerRefundId
+
+    for (const line of refund.lines) {
+        const menuId = String(line.menuId)
+        const paid = payment?.lines.find((l) => String(l.menuId) === menuId)
+        if (paid) paid.refundedQty += line.qty
+
+        const item = cart.items.find((i) => String(i.menuId) === menuId)
+        if (item) {
+            item.qty -= line.qty
+            item.qtyPayed = Math.max(0, item.qtyPayed - line.qty)
+        }
+        // The payer's paid selections of it: this payment's first (same paidAt).
+        let left = line.qty
+        const paidSplits = cart.split
+            .filter((s) => s.splitStatus === "closed" && String(s.menuId) === menuId && String(s.userId) === String(payment?.userId))
+            .sort((a, b) => Number(b.paidAt?.getTime() === payment?.paidAt.getTime()) - Number(a.paidAt?.getTime() === payment?.paidAt.getTime()))
+        for (const s of paidSplits) {
+            const take = Math.min(left, s.qty)
+            s.qty -= take
+            left -= take
+        }
+    }
+    cart.items = cart.items.filter((i) => i.qty > 0)
+    cart.split = cart.split.filter((s) => s.qty > 0)
+
+    const what = refund.lines.map((l) => `${l.qty}× ${l.name}`).join(", ")
+    note(cart, `The staff refunded ${money(refund.amount, refund.currency)} for ${what}.`, payment?.userId)
+    log(cart, req, "refund", `${money(refund.amount, refund.currency)} for ${what} (payment ${refund.paymentId})`)
+}
+
+export const refundItems: TController = async ( req, res, next ) => {
+    try {
+        const { shopId, cartId } = req.params
+        const { paymentId, lines } = req.body as { paymentId: string; lines: RefundLine[] }
+        const user = req.user as IUserDocument
+
+        const cart = await CartModel.findById(cartId)
+        const shop = await ShopModel.findById(shopId).select("tables")
+        if (!cart || !shop?.tables.some((t) => String(t._id) === cart.tableId)) {
+            return next(createError(404, "Cart Not Found!"))
+        }
+        const payment = findById(cart.payments, paymentId)
+        if (!payment) return next(createError(404, "Payment Not Found!"))
+        if (!payment.providerPaymentId) {
+            return next(createError(409, `This payment can only be refunded from ${providerName(payment)}`))
+        }
+
+        // What's left to refund of each line: paid, less refunded, less refunds
+        // already under way.
+        const underWay = (menuId: string) => cart.refunds
+            .filter((r) => r.status === "pending" && String(r.paymentId) === paymentId)
+            .flatMap((r) => r.lines)
+            .filter((l) => String(l.menuId) === menuId)
+            .reduce((sum, l) => sum + l.qty, 0)
+        const refundLines = []
+        for (const { menuId, qty } of lines) {
+            const paid = payment.lines.find((l) => String(l.menuId) === menuId)
+            if (!paid) return next(createError(400, "That item isn't in this payment"))
+            const left = paid.qty - paid.refundedQty - underWay(menuId)
+            if (qty > left) {
+                return next(createError(400, left > 0
+                    ? `Only ${left}× ${paid.name} of this payment can still be refunded`
+                    : `${paid.name} from this payment has already been refunded`))
+            }
+            refundLines.push({ menuId: paid.menuId, name: paid.name, qty, unitPrice: paid.unitPrice })
+        }
+        const amount = Math.round(refundLines.reduce((sum, l) => sum + l.qty * l.unitPrice, 0) * 100) / 100
+
+        // (a)
+        cart.refunds.push({
+            paymentId: payment._id as never,
+            lines: refundLines.map(({ menuId, name, qty }) => ({ menuId, name, qty })),
+            amount,
+            currency: payment.currency,
+            status: "pending",
+            byUserId: user._id,
+            at: new Date(),
+        })
+        const refundId = cart.refunds[cart.refunds.length - 1]._id
+        if (!(await saveChecked(cart))) return next(createError(409, CART_CHANGED))
+
+        // (b)
+        let providerRefundId: string | undefined
+        try {
+            ({ providerRefundId } = await refundPayment(payment, amount, String(refundId)))
+        } catch (error) {
+            const reason = (error as Error).message
+            const recorded = await withFreshCart(cartId, (c) => {
+                const r = findById(c.refunds, refundId)
+                if (r?.status === "pending") {
+                    r.status = "failed"
+                    r.failureReason = reason
+                }
+            })
+            if (!recorded) console.error("Refund failed and couldn't be marked failed", { cartId, refundId, reason })
+            return next(createError(502, `${reason}. Nothing was refunded.`, { expose: true }))
+        }
+
+        // (c)
+        const completed = await withFreshCart(cartId, (c) => completeRefund(c, refundId, providerRefundId, req))
+        if (!completed) {
+            console.error("Refund went through but couldn't be recorded", { cartId, refundId, providerRefundId })
+            return next(createError(500,
+                `The refund went through at ${providerName(payment)} but couldn't be recorded here. It shows as in progress: check ${providerName(payment)} before refunding again.`,
+                { expose: true }))
+        }
+
+        const fresh = await CartModel.findById(cartId).populate(menuRef("items.menuId")).populate(menuRef("split.menuId"))
+        res.send({ refund: findById(fresh!.refunds, refundId), cart: await managerView(fresh!) })
+    } catch (error) {
+        next(createError(500, error as Error))
+    }
+}

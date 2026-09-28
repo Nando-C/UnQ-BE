@@ -127,9 +127,15 @@ export const captureOrder = async (orderId: string): Promise<PayPalOrder> => {
     return (await res.json()) as PayPalOrder
 }
 
-// Refund a capture in full (empty body = full refund). Used to make the buyer
-// whole if a conflict is discovered in the tiny window after capture.
-export const refundCapture = async (captureId: string): Promise<void> => {
+// Refund a capture. With no `partial`, in full (empty body): used to make the
+// buyer whole if a conflict is discovered in the tiny window after capture.
+// With `partial`, that amount only (a manager refunding some items), sent with
+// a PayPal-Request-Id so a retried request can never refund twice: PayPal
+// answers a repeated id with the original refund. Returns PayPal's refund id.
+export const refundCapture = async (
+    captureId: string,
+    partial?: { value: string; currency: string; requestId: string }
+): Promise<string | undefined> => {
     const token = await getAccessToken()
 
     const res = await fetch(`${apiBase()}/v2/payments/captures/${captureId}/refund`, {
@@ -137,10 +143,23 @@ export const refundCapture = async (captureId: string): Promise<void> => {
         headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
+            ...(partial ? { "PayPal-Request-Id": partial.requestId } : {}),
         },
+        ...(partial
+            ? { body: JSON.stringify({ amount: { value: partial.value, currency_code: partial.currency } }) }
+            : {}),
     })
 
     if (!res.ok) {
-        throw new Error(`PayPal refund failed (${res.status})`)
+        // PayPal's reason, e.g. "The refund amount must be less than or equal to
+        // the capture amount that has not yet been refunded."
+        const body = (await res.json().catch(() => null)) as
+            | { message?: string; details?: { description?: string }[] }
+            | null
+        const reason = body?.details?.[0]?.description ?? body?.message
+        throw new Error(`PayPal refund failed (${res.status})${reason ? `: ${reason}` : ""}`)
     }
+
+    const data = (await res.json().catch(() => null)) as { id?: string } | null
+    return data?.id
 }

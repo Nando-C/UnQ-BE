@@ -134,6 +134,32 @@ const CartSchema = new Schema<ICartDocument>(
                 ],
             }
         ],
+        // Refunds a manager made against the payments above. Written as
+        // `pending` BEFORE the provider is asked (pending units count as
+        // refunded, so the same units can't be refunded twice), then
+        // `completed` with the provider's refund id, or `failed` with its reason.
+        // One left `pending` means the provider was asked but the answer wasn't
+        // recorded: check the provider before doing anything else. Manager-only.
+        refunds: [
+            {
+                paymentId: { type: Schema.Types.ObjectId, required: true },
+                lines: [
+                    {
+                        _id: false,
+                        menuId: { type: Schema.Types.ObjectId, required: true },
+                        name: { type: String, required: true },
+                        qty: { type: Number, required: true },
+                    }
+                ],
+                amount: { type: Number, required: true },
+                currency: { type: String, required: true },
+                status: { type: String, enum: ["pending", "completed", "failed"], required: true },
+                providerRefundId: String,
+                failureReason: String,
+                byUserId: { type: Schema.Types.ObjectId, required: true },
+                at: { type: Date, required: true },
+            }
+        ],
         // Notes to the table's diners when a manager changes their cart ("The
         // staff released your selection of 2× Latte"). Text only. One with a
         // `forUserId` is for that diner alone; one without is for the table.
@@ -176,13 +202,14 @@ const NOTICE_MAX_AGE_MS = 2 * 60 * 60 * 1000
 const NOTICE_MAX = 5
 
 // A cart as a diner may see it. The table's cart is public (no login), so the
-// payment records and the manager log never leave the server this way, and of
+// payment and refund records and the manager log never leave the server this way, and of
 // the notices only the table-wide ones do, plus those meant for `viewerId`
 // when the caller is known. Manager endpoints use toObject() instead.
 export const dinerView = (cart: ICartDocument, viewerId?: unknown) => {
     const view = cart.toObject()
     delete view.__v
     delete view.payments
+    delete view.refunds
     delete view.managerLog
     const since = Date.now() - NOTICE_MAX_AGE_MS
     const viewer = viewerId ? String(viewerId) : null
