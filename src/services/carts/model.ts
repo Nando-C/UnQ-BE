@@ -91,6 +91,10 @@ const CartSchema = new Schema<ICartDocument>(
                 // splits have neither.
                 unitPrice: Number,
                 paidAt: Date,
+                // When the diner first selected it (not moved by later +/-), so
+                // a manager can see a selection held for a long time. Legacy
+                // selections have none.
+                claimedAt: Date,
             }
         ],
         // One record per settled checkout, written in the same save that settles

@@ -19,7 +19,7 @@ const MENU_FIELDS = "name short_description image price available"
 // crashed. Such an item is shown instead as a sold-out stand-in carrying its
 // id. Sold out means it can't be claimed or paid for, and the existing
 // "remove them to pay for the rest" flow clears it; the price is never charged.
-const menuRef = (path: string) => ({
+export const menuRef = (path: string) => ({
     path,
     select: MENU_FIELDS,
     transform: (doc: unknown, id: unknown) =>
@@ -350,7 +350,7 @@ export const addSplitItem: TController = async ( req, res, next ) => {
 
             const started = await CartModel.findOneAndUpdate(
                 { _id: cartId, tableId, status: "open", split: { $not: { $elemMatch: mine } }, ...fits },
-                { $push: { split: { userId: user._id, menuId: menuOid, qty } } }
+                { $push: { split: { userId: user._id, menuId: menuOid, qty, claimedAt: new Date() } } }
             ).populate(menuRef("split.menuId")).populate(menuRef("items.menuId"))
             if (started) return res.send(started)
         }

@@ -52,6 +52,7 @@ export interface ISplitItem {
     // Set when the split is paid: the price charged per unit, and when.
     unitPrice?: number
     paidAt?: Date
+    claimedAt?: Date // when first selected
 }
 
 export interface ICartDocument extends Document, ICart {}

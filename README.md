@@ -448,6 +448,18 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/shops/:shopId/tables/:tableId
 
+- [ 'GET' ]
+
+  baseURL-api/shops/:shopId/tables/status
+
+  Shop managers only. One entry per table: `{ tableId, name, state, owed, paid, heldSince?, attention }`. `state` is `free`, `ordering` (items, nothing paid), `waitingToPay` (a diner has items selected) or `partlyPaid`. `attention` flags `soldOut` (unpaid units of an unavailable or deleted item), `staleSelection` (a selection held over 15 minutes) and `duplicateCarts` (more than one open cart). `owed` leaves out sold-out units; `paid` counts units at the price they were paid at.
+
+- [ 'GET' ]
+
+  baseURL-api/shops/:shopId/tables/:tableId/carts
+
+  Shop managers only. `{ open, recentlyClosed }`: the table's open cart(s) and the carts closed in the last 24 hours, newest first, each with its payment records. Diners in selections and payments are shown as `{ _id, name }` (first name only).
+
 - [ 'POST', 'GET' ]
 
   baseURL-api/shops/:shopId/menu

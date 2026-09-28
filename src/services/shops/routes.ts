@@ -3,6 +3,7 @@ import { shopCoverUpload } from "../../settings/cloudinary"
 import { adminOnly, isShopManager, JWTAuthMiddleware } from "../auth/middlewares"
 import * as shopControllers from "./controllers/shopControllers"
 import * as tableControllers from "./controllers/tableControllers"
+import * as managerControllers from "../carts/managerControllers"
 import { validate } from "../../middlewares/validate"
 import { createShopSchema, editShopSchema, createTableSchema, editTableSchema } from "./schemas"
 
@@ -20,6 +21,10 @@ router.put("/:shopId/cover", JWTAuthMiddleware, isShopManager, shopCoverUpload, 
 router.delete("/:shopId", JWTAuthMiddleware, adminOnly, shopControllers.deleteMyShop)
 
 // Shop's Tables Routes
+// Manager views of the tables' carts. `tables/status` is declared before the
+// public `tables/:tableId`, which would otherwise take "status" as a table id.
+router.get("/:shopId/tables/status", JWTAuthMiddleware, isShopManager, managerControllers.getTablesStatus)
+router.get("/:shopId/tables/:tableId/carts", JWTAuthMiddleware, isShopManager, managerControllers.getTableCarts)
 router.post("/:shopId/tables", JWTAuthMiddleware, isShopManager, validate(createTableSchema), tableControllers.createTable)
 router.get("/:shopId/tables", JWTAuthMiddleware, tableControllers.getTableList)
 router.get("/:shopId/tables/:tableId",  tableControllers.getSingleTable)
