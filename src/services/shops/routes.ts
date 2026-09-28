@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { shopCoverParser } from "../../settings/cloudinary"
+import { shopCoverUpload } from "../../settings/cloudinary"
 import { adminOnly, isShopManager, JWTAuthMiddleware } from "../auth/middlewares"
 import * as shopControllers from "./controllers/shopControllers"
 import * as tableControllers from "./controllers/tableControllers"
@@ -14,7 +14,9 @@ router.get("/", shopControllers.getAllShops)
 router.get("/me", JWTAuthMiddleware, adminOnly, shopControllers.getMyShops)
 router.get("/:shopId", shopControllers.getSingleShop)
 router.put("/:shopId", JWTAuthMiddleware, adminOnly, validate(editShopSchema), shopControllers.editMyShop)
-router.put("/:shopId/cover", JWTAuthMiddleware, adminOnly, shopCoverParser.single("cover"), shopControllers.editMyShopCover)
+// isShopManager (manages THIS shop) runs before the upload, so a refused
+// request never reaches Cloudinary.
+router.put("/:shopId/cover", JWTAuthMiddleware, isShopManager, shopCoverUpload, shopControllers.editMyShopCover)
 router.delete("/:shopId", JWTAuthMiddleware, adminOnly, shopControllers.deleteMyShop)
 
 // Shop's Tables Routes

@@ -96,7 +96,7 @@ You can find the Front-End repo of this project in the following link, where mor
 - Shop, table, and menu management for shop managers
 - Per-table QR code URLs, generated on table creation
 - Shared table carts with per-item bill splitting between multiple customers at the same table
-- Cloudinary image uploads for user avatars, shop covers, and menu item photos
+- Cloudinary image uploads for user avatars, shop covers, and menu item photos (images only, up to 5 MB; permissions checked before anything is uploaded, and a replaced image is deleted)
 - Request validation (`zod`) on every mutating endpoint, with a consistent `{ message, details }` error shape
 - Server-side PayPal checkout: the API creates the order for the exact amount due (database prices, bound to cart + payer via `custom_id`) and captures it only after reserving the units — a conflict discovered before capture costs the buyer nothing, and one discovered in the window after capture is refunded automatically. Order-id replay protection and multi-payer concurrency safety throughout; the API never takes the client's word that a payment happened
 

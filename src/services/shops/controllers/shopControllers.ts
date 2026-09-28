@@ -2,6 +2,7 @@ import { TController } from "../../../typings/controllers"
 import { IUserDocument } from "src/typings/users"
 import ShopModel from "../model"
 import createError from "http-errors"
+import { destroyReplacedImage, discardUpload } from "../../../settings/cloudinary"
 
 // -------------------------------------------------------------------------
 
@@ -104,11 +105,17 @@ export const editMyShopCover: TController = async ( req, res, next ) => {
         const user = req.user as IUserDocument
         const shopId = req.params.shopId
 
+        const previous = await ShopModel.findById(shopId).select("cover")
         const shopWithNewCover = await ShopModel.findOneAndUpdate({_id: shopId, shopMg: user._id }, { cover: req.file?.path }, {runValidators: true })
-        if (!shopWithNewCover) return next(createError(400, "Shop Not Found or you are not authorized!"))
+        if (!shopWithNewCover) {
+            discardUpload(req)
+            return next(createError(400, "Shop Not Found or you are not authorized!"))
+        }
 
+        destroyReplacedImage(previous?.cover)
         res.send(shopWithNewCover)
     } catch (error) {
+        discardUpload(req)
         next(createError(500, error as Error))
     }
 }

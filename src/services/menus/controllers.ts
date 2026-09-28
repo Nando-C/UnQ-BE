@@ -2,13 +2,22 @@ import { TController } from "src/typings/controllers"
 import MenuModel from "./model"
 import ShopModel from "../shops/model"
 import createError from "http-errors"
+import { destroyReplacedImage, discardUpload } from "../../settings/cloudinary"
 
 // -------------------------------------------------------------------------
 
-// Whether the item is on this shop's menu. isShopManager only checks the shop in
-// the URL, so without this a manager of one shop could read, edit or delete
-// another shop's items by id.
-const onShopMenu = (shopId: string, itemId: string) => ShopModel.exists({ _id: shopId, menu: itemId })
+// Route guard: the item must be on this shop's menu. isShopManager only checks
+// the shop in the URL, so without this a manager of one shop could read or edit
+// another shop's items by id. On the image route it runs before the upload.
+export const isOnShopMenu: TController = async ( req, res, next ) => {
+    try {
+        const onMenu = await ShopModel.exists({ _id: req.params.shopId, menu: req.params.itemId })
+        if (!onMenu) return next(createError(404, "Menu Item Not Found!"))
+        next()
+    } catch (error) {
+        next(createError(500, error as Error))
+    }
+}
 
 // -------------------------------------------------------------------------
 
@@ -47,8 +56,6 @@ export const getMenuItem: TController = async ( req, res, next ) => {
     try {
         const itemId = req.params.itemId
 
-        if (!(await onShopMenu(req.params.shopId, itemId))) return next(createError(404, "Menu Item Not Found!"))
-
         const menuItem = await MenuModel.findById(itemId)
         if (!menuItem) return next(createError(404, "Menu Item Not Found!"))
 
@@ -63,8 +70,6 @@ export const getMenuItem: TController = async ( req, res, next ) => {
 export const editItem: TController = async ( req, res, next ) => {
     try {
         const itemId = req.params.itemId
-
-        if (!(await onShopMenu(req.params.shopId, itemId))) return next(createError(404, "Menu Item Not Found!"))
 
         const modifiedItem = await MenuModel.findByIdAndUpdate(itemId, req.body, { runValidators: true })
         if (!modifiedItem) return next(createError(404, "Menu Item Not Found!"))
@@ -81,13 +86,23 @@ export const editItemImage: TController = async ( req, res, next ) => {
     try {
         const itemId = req.params.itemId
 
-        if (!(await onShopMenu(req.params.shopId, itemId))) return next(createError(404, "Menu Item Not Found!"))
+        // Deleted while the image was uploading.
+        const previous = await MenuModel.findById(itemId).select("image")
+        if (!previous) {
+            discardUpload(req)
+            return next(createError(404, "Menu Item Not Found!"))
+        }
 
         const modifiedItem = await MenuModel.findByIdAndUpdate(itemId, { image: req.file?.path}, { runValidators: true })
-        if (!modifiedItem) return next(createError(404, "Menu Item Not Found!"))
+        if (!modifiedItem) {
+            discardUpload(req)
+            return next(createError(404, "Menu Item Not Found!"))
+        }
 
+        destroyReplacedImage(previous.image)
         res.send(modifiedItem)
     } catch (error) {
+        discardUpload(req)
         next(createError(500, error as Error))
     }
 }

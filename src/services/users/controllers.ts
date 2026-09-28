@@ -1,6 +1,7 @@
 import { TController } from "../../typings/controllers"
 import { IUserDocument } from "src/typings/users"
 import createError from "http-errors"
+import { destroyReplacedImage, discardUpload } from "../../settings/cloudinary"
 
 // -------------------------------------------------------------------------
 
@@ -31,10 +32,13 @@ export const editMe: TController = async ( req, res, next) => {
 export const editMyAvatar: TController = async ( req, res, next) => {
     const me = req.user as IUserDocument
     try {
+        const previous = me.avatar
         me.avatar = req.file?.path
         await me.save()
+        destroyReplacedImage(previous)
         res.send(me)
     } catch {
+        discardUpload(req)
         next(createError(500, "An Error ocurred while updating the user's avatar"))
     }
 }
