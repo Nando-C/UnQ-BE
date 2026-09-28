@@ -196,6 +196,59 @@ describe("carts", () => {
         expect(contested.status).toBe(409)
     })
 
+    // Concurrent claims. The availability check and the write used to be
+    // separate steps, so requests arriving together all passed the check and
+    // the split grew past the item's quantity.
+
+    it("concurrent addSplitItem calls from one diner never claim more units than exist", async () => {
+        const { shopId, tableId, menuId, customer } = await scaffold()
+        const created = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/addItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 2 })
+        const cartId = created.body._id
+        const url = `/carts/${shopId}/tables/${tableId}/${cartId}/addSplitItem`
+
+        const results = await Promise.all(
+            Array.from({ length: 6 }, () =>
+                request(app).post(url).set("Cookie", customer.cookies).send({ menuId, qty: 1 })
+            )
+        )
+        const statuses = results.map((r) => r.status).sort()
+        expect(statuses).toEqual([200, 200, 409, 409, 409, 409])
+
+        // One split entry for this diner, holding exactly the 2 units there are.
+        const cart = await CartModel.findById(cartId).lean()
+        const open = cart!.split.filter((s) => s.splitStatus === "open")
+        expect(open).toHaveLength(1)
+        expect(open[0].qty).toBe(2)
+    })
+
+    it("two diners racing for the last unit: exactly one gets it", async () => {
+        const { shopId, tableId, menuId, customer } = await scaffold()
+        const created = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/addItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 1 })
+        const cartId = created.body._id
+        const url = `/carts/${shopId}/tables/${tableId}/${cartId}/addSplitItem`
+        const others = await Promise.all([authFor("customer"), authFor("customer"), authFor("customer")])
+
+        const results = await Promise.all(
+            [customer, ...others].map((diner) =>
+                request(app).post(url).set("Cookie", diner.cookies).send({ menuId, qty: 1 })
+            )
+        )
+        expect(results.filter((r) => r.status === 200)).toHaveLength(1)
+        expect(results.filter((r) => r.status === 409)).toHaveLength(3)
+
+        const cart = await CartModel.findById(cartId).lean()
+        const claimed = cart!.split
+            .filter((s) => s.splitStatus === "open")
+            .reduce((sum, s) => sum + s.qty, 0)
+        expect(claimed).toBe(1)
+    })
+
     // ---------------------------------------------------------------------
     // S21: sold-out items
 

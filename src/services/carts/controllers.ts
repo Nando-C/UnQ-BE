@@ -222,18 +222,61 @@ export const deleteItem: TController = async ( req, res, next ) => {
 
 // -------------------------------------------------------------------------
 
+// The availability rule as a query condition: the units every diner's open
+// split already holds for this item, plus the request, plus the paid units, must
+// fit in the item's quantity. It goes in the FILTER of the update, so checking
+// and claiming are one atomic step on the cart document: of two requests racing
+// for the last unit, the second no longer matches and claims nothing. (Checked
+// on a separate read first, concurrent requests all passed and the split grew
+// past the item — one diner tapping + fast, or two diners at once.) $expr isn't
+// cast by Mongoose, so ids come in as ObjectIds.
+const fitsInItem = (menuId: mongoose.Types.ObjectId, qty: number) => ({
+    $expr: {
+        $let: {
+            vars: {
+                item: {
+                    $arrayElemAt: [
+                        { $filter: { input: "$items", cond: { $eq: ["$$this.menuId", menuId] } } },
+                        0,
+                    ],
+                },
+                claimed: {
+                    $sum: {
+                        $map: {
+                            input: {
+                                $filter: {
+                                    input: "$split",
+                                    cond: {
+                                        $and: [
+                                            { $eq: ["$$this.menuId", menuId] },
+                                            { $eq: ["$$this.splitStatus", "open"] },
+                                        ],
+                                    },
+                                },
+                            },
+                            in: "$$this.qty",
+                        },
+                    },
+                },
+            },
+            in: {
+                $lte: [
+                    { $add: ["$$claimed", qty, { $ifNull: ["$$item.qtyPayed", 0] }] },
+                    "$$item.qty",
+                ],
+            },
+        },
+    },
+})
+
 export const addSplitItem: TController = async ( req, res, next ) => {
     try {
         const user = req.user as IUserDocument
         const cartId = req.params.cartId
         const { menuId, qty } = req.body as { menuId: string; qty: number }
 
-        // Availability guard: a split can only claim units that actually exist.
-        // The units already claimed by ALL diners' open splits for this item, plus
-        // this request's qty and the already-paid units, can never exceed the item
-        // quantity — otherwise two customers could hold splits on the same unit and
-        // both pay for it. A pre-check is enough here; captureCheckout re-verifies
-        // authoritatively at settlement time (closing the residual TOCTOU window).
+        // Plain reads for the 404s and the sold-out rule. They are not the
+        // availability guard — that lives in the updates below.
         const cart = await CartModel.findOne({ _id: cartId, status: "open" })
         if (!cart) return next(createError(404, "Cart Not Found!"))
 
@@ -246,29 +289,30 @@ export const addSplitItem: TController = async ( req, res, next ) => {
         const menuItem = await MenuModel.findById(menuId).select("available")
         if (!menuItem?.available) return next(createError(409, SOLD_OUT))
 
-        const claimed = cart.split
-            .filter((s) => s.menuId.toString() === menuId.toString() && s.splitStatus === "open")
-            .reduce((sum, s) => sum + s.qty, 0)
+        const menuOid = new mongoose.Types.ObjectId(menuId)
+        const mine = { userId: user._id, menuId: menuOid, splitStatus: "open" }
+        const fits = fitsInItem(menuOid, qty)
 
-        if (claimed + qty + item.qtyPayed > item.qty) {
-            return next(createError(409, "Not enough units left to split"))
+        // Grow my open split for this item, or start one: each a single
+        // conditional update. The $not on the push also stops two concurrent
+        // first claims from creating two entries for the same diner. Whichever
+        // of the pair doesn't match can flip between the two calls (my own
+        // concurrent request just created the entry), so try the pair twice.
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const grown = await CartModel.findOneAndUpdate(
+                { _id: cartId, status: "open", split: { $elemMatch: mine }, ...fits },
+                { $inc: { "split.$.qty": qty } }
+            ).populate("split.menuId", MENU_FIELDS).populate("items.menuId", MENU_FIELDS)
+            if (grown) return res.send(grown)
+
+            const started = await CartModel.findOneAndUpdate(
+                { _id: cartId, status: "open", split: { $not: { $elemMatch: mine } }, ...fits },
+                { $push: { split: { userId: user._id, menuId: menuOid, qty } } }
+            ).populate("split.menuId", MENU_FIELDS).populate("items.menuId", MENU_FIELDS)
+            if (started) return res.send(started)
         }
 
-        const splitItem = {
-            userId: user._id,
-            ...req.body
-        }
-
-        const isItemThere = await CartModel.findOne({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } })
-
-        if (isItemThere) {
-            const updatedSplit = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $inc: { "split.$.qty": req.body.qty }}).populate("split.menuId", MENU_FIELDS).populate("items.menuId", MENU_FIELDS)
-            res.send(updatedSplit)
-
-        } else {
-            const addedItem = await CartModel.findOneAndUpdate({ _id: cartId, status: "open" }, { $push: { split: splitItem }}).populate("split.menuId", MENU_FIELDS).populate("items.menuId", MENU_FIELDS)
-            res.send(addedItem)
-        }
+        return next(createError(409, "Not enough units left to split"))
     } catch (error) {
         next(createError(500, error as Error))
     }
