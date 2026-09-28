@@ -372,6 +372,39 @@ describe("carts", () => {
         expect(res.body.status).toBe("open")
     })
 
+    it("deleteItem never overwrites another diner's order placed while it runs", async () => {
+        const { owner, shopId, tableId, menuId, customer } = await scaffold()
+        const tea = (
+            await request(app)
+                .post(`/shops/${shopId}/menu`)
+                .set("Cookie", owner.cookies)
+                .send({ name: "Tea", short_description: "Hot", price: 2, category: "drinks" })
+        ).body._id
+        const other = await authFor("customer")
+        await request(app).post(`/carts/${shopId}/tables/${tableId}/addItem`).set("Cookie", customer.cookies).send({ menuId, qty: 1 })
+
+        // Between deleteItem's read and its save, another diner orders a Tea.
+        const save = CartModel.prototype.save
+        let raced = false
+        const spy = jest.spyOn(CartModel.prototype, "save").mockImplementation(async function (this: typeof CartModel.prototype) {
+            if (!raced) {
+                raced = true
+                await request(app).post(`/carts/${shopId}/tables/${tableId}/addItem`).set("Cookie", other.cookies).send({ menuId: tea, qty: 1 })
+            }
+            return save.call(this)
+        } as never)
+        const res = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/deleteItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId })
+        spy.mockRestore()
+
+        expect(res.status).toBe(409)
+        expect(res.body.message).toBe("The cart changed, please retry")
+        const cart = await CartModel.findOne({ tableId })
+        expect(cart!.items.map((i) => String(i.menuId))).toEqual([menuId, tea]) // the Tea survived
+    })
+
     it("decreaseItem refuses to go below the paid + claimed units (409)", async () => {
         const { shopId, tableId, menuId, customer } = await scaffold()
         const cartId = (

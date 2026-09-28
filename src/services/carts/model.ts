@@ -1,4 +1,4 @@
-import mongoose from "mongoose"
+import mongoose, { UpdateQuery } from "mongoose"
 import { ICartDocument, INotice } from "src/typings/cart"
 
 const { Schema, model } = mongoose
@@ -184,11 +184,22 @@ const CartSchema = new Schema<ICartDocument>(
     },
     // Optimistic concurrency: every save() is version-checked on ANY modified
     // path (Mongoose's default versioning only guards array-structure changes,
-    // not the subpath $sets a settlement performs). The sole save() call site on
-    // carts is captureCheckout, so this closes the multi-payer lost-update hole
-    // there without affecting the findOneAndUpdate-based item/split endpoints.
+    // not the subpath $sets a settlement performs). Checkout, deleteItem, the
+    // refunds and the manager actions load, change and save(); a save that meets
+    // a newer version throws VersionError and retries or answers 409.
     { timestamps: true, optimisticConcurrency: true }
 )
+
+// Every direct update bumps the version too. Mongoose only does that in save(),
+// so an addItem or an untick (findOneAndUpdate) would change a cart without it,
+// and a save() that loaded the cart before would pass its check and write over
+// the change: by array position, so onto someone else's selection.
+CartSchema.pre(["findOneAndUpdate", "updateOne", "updateMany"], function () {
+    const update = this.getUpdate()
+    if (!update || Array.isArray(update)) return
+    const inc = ((update as UpdateQuery<ICartDocument>).$inc ??= {}) as Record<string, number>
+    if (!("__v" in inc)) inc.__v = 1
+})
 
 // One open cart per table: the database refuses a second one, so two diners
 // placing a table's first order at the same moment can't each create a cart

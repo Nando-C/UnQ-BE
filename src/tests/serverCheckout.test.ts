@@ -654,6 +654,66 @@ describe("multi-payer settlement (via captureCheckout)", () => {
         ])
     })
 
+    it("settles the payer's own selection when another diner unticks theirs during the capture", async () => {
+        const { shopId, tableId, cartId, customer, addSplit } = await scaffold() // item qty 2
+        const other = await authFor("customer")
+        await addSplit(other.cookies, 1) // split[0]: the other diner's unit
+        await addSplit(customer.cookies, 1) // split[1]: the payer's, £3.00
+
+        mockedGetOrder.mockResolvedValue(approvedOrder("3.00", `${cartId}:${customer.user._id}`))
+        // While PayPal takes the money, the other diner unticks: split[1] moves to split[0].
+        mockedCaptureOrder.mockImplementation(async () => {
+            const untick = await request(app)
+                .post(`/carts/${shopId}/tables/${tableId}/${cartId}/removeSplitItem`)
+                .set("Cookie", other.cookies)
+                .send({ menuId: (await CartModel.findById(cartId))!.items[0].menuId })
+            expect(untick.status).toBe(200)
+            return capturedOrder("3.00")
+        })
+
+        const res = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/captureCheckout`)
+            .set("Cookie", customer.cookies)
+            .send({ paypalOrderId: "ORDER-1" })
+
+        expect(res.status).toBe(200)
+        const cart = await CartModel.findById(cartId)
+        expect(cart!.split.map((s) => [String(s.userId), s.qty, s.splitStatus])).toEqual([
+            [String(customer.user._id), 1, "closed"],
+        ])
+        expect(cart!.items[0].qtyPayed).toBe(1)
+        expect(cart!.status).toBe("open") // the other unit is still unpaid
+    })
+
+    it("marks exactly what was charged when the payer grows their selection during the capture", async () => {
+        const { shopId, tableId, cartId, menuId, customer, addSplit } = await scaffold({ qty: 3 })
+        await addSplit(customer.cookies, 1) // £3.00 approved
+
+        mockedGetOrder.mockResolvedValue(approvedOrder("3.00", `${cartId}:${customer.user._id}`))
+        mockedCaptureOrder.mockImplementation(async () => {
+            // Same diner, another tab: one more unit on the selection being paid.
+            await request(app)
+                .post(`/carts/${shopId}/tables/${tableId}/${cartId}/addSplitItem`)
+                .set("Cookie", customer.cookies)
+                .send({ menuId, qty: 1 })
+            return capturedOrder("3.00")
+        })
+        mockedRefundCapture.mockResolvedValue(undefined as never)
+
+        const res = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/captureCheckout`)
+            .set("Cookie", customer.cookies)
+            .send({ paypalOrderId: "ORDER-1" })
+
+        // The selection no longer matches the £3.00 charged: refunded, nothing marked paid.
+        expect(res.status).toBe(409)
+        expect(res.body.message).toBe("The table's cart changed while you were paying — your payment was refunded")
+        expect(mockedRefundCapture).toHaveBeenCalledTimes(1)
+        const cart = await CartModel.findById(cartId)
+        expect(cart!.items[0].qtyPayed).toBe(0)
+        expect(cart!.split.map((s) => [s.qty, s.splitStatus])).toEqual([[2, "open"]])
+    })
+
     it("serialises two concurrent payers via optimistic concurrency, recording both ids", async () => {
         await CartModel.syncIndexes()
         const { tableId, cartId, customer, addSplit } = await scaffold() // item qty 2

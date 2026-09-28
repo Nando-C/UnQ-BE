@@ -757,7 +757,7 @@ export const captureCheckout: TController = async ( req, res, next ) => {
         // they've been refunded.
         return next(createError(409, outcome.status === 500
             ? "Your payment could not be recorded — your payment was refunded"
-            : "A concurrent payment took these items — your payment was refunded"))
+            : "The table's cart changed while you were paying — your payment was refunded"))
     } catch (error) {
         next(createError(500, error as Error))
     }
