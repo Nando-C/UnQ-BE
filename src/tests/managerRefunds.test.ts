@@ -8,6 +8,7 @@ jest.mock("../lib/paypal", () => ({
     refundCapture: jest.fn(),
     findRefund: jest.fn(),
     PayPalRefundRefused: jest.requireActual<typeof import("../lib/paypal")>("../lib/paypal").PayPalRefundRefused,
+    PayPalCaptureRefused: jest.requireActual<typeof import("../lib/paypal")>("../lib/paypal").PayPalCaptureRefused,
 }))
 
 import request from "supertest"

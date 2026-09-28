@@ -112,10 +112,22 @@ export const createOrder = async (amount: string, customId: string): Promise<str
     return data.id
 }
 
+// Whether a 4xx from PayPal means it answered and did nothing. Not a 409
+// (PREVIOUS_REQUEST_IN_PROGRESS: an earlier request on the same capture or
+// order is still running, and may still go through) nor a 429 (rate limited).
+const refusedStatus = (status: number) => status < 500 && status !== 409 && status !== 429
+
+// PayPal answered and refused the capture, or it was never sent (no token):
+// nothing was charged. Anything else captureOrder throws (a network error, a
+// timeout, a 5xx, a request still in progress) leaves the outcome unknown.
+export class PayPalCaptureRefused extends Error {}
+
 // Capture (charge) a buyer-approved order. Returns the full order body so the
 // caller can read the capture's id (needed for a possible refund) and status.
 export const captureOrder = async (orderId: string): Promise<PayPalOrder> => {
-    const token = await getAccessToken()
+    const token = await getAccessToken().catch((error: Error) => {
+        throw new PayPalCaptureRefused(error.message)
+    })
 
     const res = await fetch(`${apiBase()}/v2/checkout/orders/${orderId}/capture`, {
         method: "POST",
@@ -126,15 +138,17 @@ export const captureOrder = async (orderId: string): Promise<PayPalOrder> => {
     })
 
     if (!res.ok) {
-        throw new Error(`PayPal order capture failed (${res.status})`)
+        const message = `PayPal order capture failed (${res.status})`
+        throw refusedStatus(res.status) ? new PayPalCaptureRefused(message) : new Error(message)
     }
 
     return (await res.json()) as PayPalOrder
 }
 
-// PayPal answered and refused the refund (a 4xx), or it was never sent (no
-// token): nothing was refunded. Anything else refundCapture throws (a network
-// error, a timeout, a 5xx) leaves the outcome unknown: PayPal may have refunded.
+// PayPal answered and refused the refund (a 4xx other than refusedStatus's
+// exceptions), or it was never sent (no token): nothing was refunded. Anything
+// else refundCapture throws (a network error, a timeout, a 5xx, a request
+// still in progress) leaves the outcome unknown: PayPal may have refunded.
 export class PayPalRefundRefused extends Error {}
 
 // Refund a capture. With no `partial`, in full (empty body): used to make the
@@ -174,7 +188,7 @@ export const refundCapture = async (
             | null
         const reason = body?.details?.[0]?.description ?? body?.message
         const message = `PayPal refund failed (${res.status})${reason ? `: ${reason}` : ""}`
-        throw res.status < 500 ? new PayPalRefundRefused(message) : new Error(message)
+        throw refusedStatus(res.status) ? new PayPalRefundRefused(message) : new Error(message)
     }
 
     const data = (await res.json().catch(() => null)) as { id?: string } | null

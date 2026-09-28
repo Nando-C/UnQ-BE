@@ -1,8 +1,8 @@
 import { jest, describe, it, expect, afterEach } from "@jest/globals"
-import { refundCapture, findRefund, PayPalRefundRefused } from "../lib/paypal"
+import { refundCapture, findRefund, captureOrder, PayPalRefundRefused, PayPalCaptureRefused } from "../lib/paypal"
 
 // The PayPal client's refund request, with the network faked: the first call
-// is the OAuth token, the second the refund.
+// is the OAuth token, the second the request (a refund or a capture).
 const fakeFetch = (refund: { status: number; body: unknown }) =>
     jest.spyOn(globalThis, "fetch")
         .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "TOKEN" }), { status: 200 }))
@@ -53,6 +53,16 @@ describe("refundCapture", () => {
             .rejects.toBeInstanceOf(PayPalRefundRefused)
     })
 
+    it.each([
+        [409, "PREVIOUS_REQUEST_IN_PROGRESS"],
+        [429, "RATE_LIMIT_REACHED"],
+    ])("doesn't say refused on a %i, when an earlier request may still refund", async (status, name) => {
+        fakeFetch({ status, body: { name, message: "Try again later" } })
+        const error = await refundCapture("CAP-1", { value: "1.00", currency: "GBP", requestId: "r" }).catch((e) => e)
+        expect(error).toBeInstanceOf(Error)
+        expect(error).not.toBeInstanceOf(PayPalRefundRefused)
+    })
+
     it("doesn't say refused on a 5xx, when PayPal may have refunded", async () => {
         fakeFetch({ status: 503, body: { message: "Service Unavailable" } })
         const error = await refundCapture("CAP-1", { value: "1.00", currency: "GBP", requestId: "r" }).catch((e) => e)
@@ -96,3 +106,30 @@ describe("findRefund", () => {
     })
 })
 
+
+describe("captureOrder", () => {
+    it.each([400, 422])("says refused on a %i, when nothing was charged", async (status) => {
+        fakeFetch({ status, body: { name: "UNPROCESSABLE_ENTITY" } })
+        await expect(captureOrder("ORDER-1")).rejects.toBeInstanceOf(PayPalCaptureRefused)
+    })
+
+    it.each([409, 429, 500, 503])("doesn't say refused on a %i, when PayPal may have charged", async (status) => {
+        fakeFetch({ status, body: {} })
+        const error = await captureOrder("ORDER-1").catch((e) => e)
+        expect(error).toBeInstanceOf(Error)
+        expect(error).not.toBeInstanceOf(PayPalCaptureRefused)
+    })
+
+    it("doesn't say refused when the capture request never got an answer", async () => {
+        jest.spyOn(globalThis, "fetch")
+            .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "TOKEN" }), { status: 200 }))
+            .mockRejectedValueOnce(new TypeError("fetch failed"))
+        const error = await captureOrder("ORDER-1").catch((e) => e)
+        expect(error).not.toBeInstanceOf(PayPalCaptureRefused)
+    })
+
+    it("says refused when it couldn't sign in to PayPal, as the capture was never sent", async () => {
+        jest.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response("{}", { status: 401 }))
+        await expect(captureOrder("ORDER-1")).rejects.toBeInstanceOf(PayPalCaptureRefused)
+    })
+})

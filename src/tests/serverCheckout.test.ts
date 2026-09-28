@@ -8,6 +8,7 @@ jest.mock("../lib/paypal", () => ({
     captureOrder: jest.fn(),
     refundCapture: jest.fn(),
     PayPalRefundRefused: jest.requireActual<typeof import("../lib/paypal")>("../lib/paypal").PayPalRefundRefused,
+    PayPalCaptureRefused: jest.requireActual<typeof import("../lib/paypal")>("../lib/paypal").PayPalCaptureRefused,
 }))
 
 import request from "supertest"
@@ -15,7 +16,7 @@ import "./setup"
 import app from "../server"
 import { authFor } from "./helpers"
 import CartModel from "../services/carts/model"
-import { getOrder, createOrder, captureOrder, refundCapture, PayPalOrder } from "../lib/paypal"
+import { getOrder, createOrder, captureOrder, refundCapture, PayPalOrder, PayPalCaptureRefused } from "../lib/paypal"
 
 const mockedGetOrder = jest.mocked(getOrder)
 const mockedCreateOrder = jest.mocked(createOrder)
@@ -433,6 +434,57 @@ describe("captureCheckout (POST /carts/tables/:tableId/:cartId/captureCheckout)"
         expect(res.body.message).toBe(
             "Payment captured but could not be settled or refunded — please contact staff (order ORDER-ALICE)")
         expect(mockedRefundCapture).toHaveBeenCalledTimes(1)
+    })
+
+    // What the diner is told when PayPal's answer to the capture is:
+    const captureWith = async (answer: () => Promise<PayPalOrder>) => {
+        const { tableId, cartId, customer, addSplit } = await scaffold()
+        await addSplit(customer.cookies, 2) // £6.00 due
+        mockedGetOrder.mockResolvedValue(approvedOrder("6.00", `${cartId}:${customer.user._id}`))
+        mockedCaptureOrder.mockImplementation(answer)
+        const res = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/captureCheckout`)
+            .set("Cookie", customer.cookies)
+            .send({ paypalOrderId: "ORDER-1" })
+        return { res, cart: await CartModel.findById(cartId) }
+    }
+
+    it("says nothing was charged (402) when PayPal refuses the capture", async () => {
+        const { res, cart } = await captureWith(() =>
+            Promise.reject(new PayPalCaptureRefused("PayPal order capture failed (422)")))
+
+        expect(res.status).toBe(402)
+        expect(cart?.split[0].splitStatus).toBe("open")
+    })
+
+    it("asks the diner to contact staff, not to pay again, when the capture gets no clear answer", async () => {
+        const { res, cart } = await captureWith(() => Promise.reject(new Error("PayPal order capture failed (503)")))
+
+        expect(res.status).toBe(502)
+        expect(res.body.message).toBe(
+            "We couldn't confirm your payment with PayPal — please contact staff before paying again (order ORDER-1)")
+        // Nothing recorded, and nothing refunded: there may be nothing to refund.
+        expect(cart?.split[0].splitStatus).toBe("open")
+        expect(cart?.paypalOrderIds ?? []).not.toContain("ORDER-1")
+        expect(mockedRefundCapture).not.toHaveBeenCalled()
+    })
+
+    it("asks the diner to contact staff when PayPal holds the capture as pending", async () => {
+        const pending = capturedOrder("6.00")
+        pending.purchase_units![0].payments!.captures![0].status = "PENDING"
+        const { res, cart } = await captureWith(async () => pending)
+
+        expect(res.status).toBe(502)
+        expect(res.body.message).toMatch(/contact staff before paying again \(order ORDER-1\)$/)
+        expect(cart?.split[0].splitStatus).toBe("open")
+    })
+
+    it("says nothing was charged (402) when PayPal declines the capture", async () => {
+        const declined = capturedOrder("6.00")
+        declined.purchase_units![0].payments!.captures![0].status = "DECLINED"
+        const { res } = await captureWith(async () => declined)
+
+        expect(res.status).toBe(402)
     })
 })
 

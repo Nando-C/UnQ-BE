@@ -5,7 +5,7 @@ import CartModel, { dinerView } from "./model"
 import { Request } from "express"
 import createError from "http-errors"
 import mongoose from "mongoose"
-import { getOrder, createOrder, captureOrder, refundCapture, PayPalOrder } from "../../lib/paypal"
+import { getOrder, createOrder, captureOrder, refundCapture, PayPalOrder, PayPalCaptureRefused } from "../../lib/paypal"
 import MenuModel from "../menus/model"
 import ShopModel from "../shops/model"
 
@@ -713,15 +713,28 @@ export const captureCheckout: TController = async ( req, res, next ) => {
         const availError = availabilityError(cart, openSplits)
         if (availError) return next(createError(409, availError))
 
-        // (e) Only now capture the money.
+        // (e) Only now capture the money. When PayPal's answer doesn't say
+        // whether the buyer was charged, they must not be told to pay again:
+        // shown as is (expose), with the order id for staff to look up.
+        const unconfirmed = () => next(createError(502,
+            `We couldn't confirm your payment with PayPal — please contact staff before paying again (order ${paypalOrderId})`,
+            { expose: true }))
         let captured: PayPalOrder
         try {
             captured = await captureOrder(paypalOrderId)
-        } catch {
-            return next(createError(402, "PayPal capture failed"))
+        } catch (captureError) {
+            if (captureError instanceof PayPalCaptureRefused) return next(createError(402, "PayPal capture failed"))
+            console.error("PayPal capture outcome unknown", { paypalOrderId, error: captureError })
+            return unconfirmed()
         }
 
         const capture = captured.purchase_units?.[0]?.payments?.captures?.[0]
+        if (capture?.status === "PENDING") {
+            // Captured but held for review: it usually settles later, but
+            // nothing here records it when it does.
+            console.error("PayPal capture pending", { paypalOrderId, captureId: capture.id })
+            return unconfirmed()
+        }
         if (captured.status !== "COMPLETED" || capture?.status !== "COMPLETED") {
             // Capture did not go through — no money moved, so no refund needed.
             return next(createError(402, "PayPal capture did not complete"))
