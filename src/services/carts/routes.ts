@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { JWTAuthMiddleware } from "../auth/middlewares"
+import { JWTAuthMiddleware, optionalJWT } from "../auth/middlewares"
 import * as controllers from "./controllers"
 import { validate } from "../../middlewares/validate"
 import { cartItemSchema, cartItemWithQtySchema, checkOutSplitSchema } from "./schemas"
@@ -14,7 +14,8 @@ router.post("/:shopId/tables/:tableId/:cartId/decreaseSplitItem", JWTAuthMiddlew
 router.post("/:shopId/tables/:tableId/:cartId/removeSplitItem", JWTAuthMiddleware, validate(cartItemSchema), controllers.removeSplitItem)
 router.post("/tables/:tableId/:cartId/createCheckoutOrder", JWTAuthMiddleware, controllers.createCheckoutOrder)
 router.post("/tables/:tableId/:cartId/captureCheckout", JWTAuthMiddleware, validate(checkOutSplitSchema), controllers.captureCheckout)
-router.get("/tables/:tableId", controllers.getTableCart)
+// Public (anyone at the table); a signed-in diner also gets their own notices.
+router.get("/tables/:tableId", optionalJWT, controllers.getTableCart)
 router.get("/", JWTAuthMiddleware, controllers.getMyCarts)
 router.get("/:cartId", JWTAuthMiddleware, controllers.getSingleCart)
 

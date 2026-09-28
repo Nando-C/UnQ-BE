@@ -9,6 +9,25 @@ import { IUserDocument } from "src/typings/users"
 
 // -------------------------------------------------------------------------
 
+// For routes open to everyone that show more to a signed-in user: sets req.user
+// when the access token is valid, and otherwise carries on as a guest. Never
+// refuses a request (an expired token just means the guest view).
+export const optionalJWT: TController = async (req, res, next) => {
+    const token = req.cookies.accessToken
+    if (token) {
+        try {
+            const decodedToken = (await verifyJWT(token)) as JwtPayload
+            const user = await UserModel.findById(decodedToken._id)
+            if (user) req.user = user
+        } catch {
+            // Guest view.
+        }
+    }
+    next()
+}
+
+// -------------------------------------------------------------------------
+
 export const JWTAuthMiddleware: TController = async (req, res, next) => {
     if (!req.cookies.accessToken) return next(createError(401, "Please provide credentials in cookies!"))
     const token = req.cookies.accessToken

@@ -540,6 +540,8 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/carts/tables/:tableId
 
+  Public: the table's open cart, for everyone at the table. When the request carries a valid login, the response also includes that diner's own notices; an expired or missing login gets the public view, never a 401.
+
 - [ 'GET' ]
 
   baseURL-api/carts
