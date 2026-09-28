@@ -21,8 +21,11 @@ const ShopSchema = new Schema<IShopDocument> (
             type: String,
             required: false,
         },
+        // Text, as typed ("0161 496 0000"): a number would drop the leading 0.
+        // Shops saved before it was text hold a number; Mongoose reads it as
+        // text. "" clears it.
         phone: {
-            type: Number,
+            type: String,
             required: false,
         },
         web_URL: {

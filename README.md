@@ -267,7 +267,7 @@ Shop Model:
         cover: string,
         bio: string,
         open_times: string,
-        phone: number,
+        phone: string, // as typed, e.g. "0161 496 0000"; "" clears it
         web_URL: string,
         shopMg: {
             type: ObjectId,

@@ -3,6 +3,7 @@ import request from "supertest"
 import "./setup"
 import app from "../server"
 import { authFor } from "./helpers"
+import ShopModel from "../services/shops/model"
 
 const menuItem = {
     name: "Espresso",
@@ -48,6 +49,28 @@ describe("shops", () => {
         // shopMg is set from the authenticated user, never from the body
         expect(res.body.shopMg.map(String)).toEqual([String(user._id)])
         expect(res.body.menu).toEqual([])
+    })
+
+    it("keeps the phone number as typed, and clears it", async () => {
+        const { cookies } = await authFor("shopMg")
+        const created = await request(app).post("/shops").set("Cookie", cookies).send({ name: "Cafe", phone: " 0161 496-0000 " })
+        expect(created.body.phone).toBe("0161 496-0000")
+
+        const edit = (phone: unknown) => request(app).put(`/shops/${created.body._id}`).set("Cookie", cookies).send({ phone })
+        expect((await edit("+44 (0)7700 900123")).body.phone).toBe("+44 (0)7700 900123")
+        expect((await edit("")).body.phone).toBe("")
+
+        const refused = await edit("call me")
+        expect(refused.status).toBe(400)
+        expect(refused.body.details[0].message).toBe("Phone number can only contain digits, spaces, dashes and brackets")
+    })
+
+    it("reads a phone saved as a number, from before it was text, as text", async () => {
+        const { cookies, user } = await authFor("shopMg")
+        const { insertedId } = await ShopModel.collection.insertOne({ name: "Old", phone: 7700900123, shopMg: [user._id], tables: [], menu: [] })
+
+        const res = await request(app).get(`/shops/${insertedId}`).set("Cookie", cookies)
+        expect(res.body.phone).toBe("7700900123")
     })
 
     it("forbids a shopMg who doesn't manage the shop (isShopManager 403)", async () => {
