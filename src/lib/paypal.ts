@@ -24,6 +24,11 @@ export interface PayPalOrder {
                 status?: string
                 amount?: PayPalAmount
             }>
+            refunds?: Array<{
+                id?: string
+                status?: string
+                custom_id?: string
+            }>
         }
     }>
 }
@@ -153,7 +158,11 @@ export const refundCapture = async (
             ...(partial ? { "PayPal-Request-Id": partial.requestId } : {}),
         },
         ...(partial
-            ? { body: JSON.stringify({ amount: { value: partial.value, currency_code: partial.currency } }) }
+            ? { body: JSON.stringify({
+                amount: { value: partial.value, currency_code: partial.currency },
+                // Finds it again on the order (findRefund).
+                custom_id: partial.requestId,
+            }) }
             : {}),
     })
 
@@ -170,4 +179,14 @@ export const refundCapture = async (
 
     const data = (await res.json().catch(() => null)) as { id?: string } | null
     return data?.id
+}
+
+// The refund of this order that was sent with `customId` (refundCapture's
+// requestId), as PayPal lists it on the order; null if PayPal has none.
+export const findRefund = async (orderId: string, customId: string) => {
+    const order = await getOrder(orderId)
+    const refund = (order.purchase_units ?? [])
+        .flatMap((u) => u.payments?.refunds ?? [])
+        .find((r) => r.custom_id === customId)
+    return refund ? { id: refund.id, status: refund.status } : null
 }

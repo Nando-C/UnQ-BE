@@ -1,11 +1,11 @@
 import { TController } from "src/typings/controllers"
-import { ICartDocument } from "src/typings/cart"
+import { ICartDocument, IPayment } from "src/typings/cart"
 import CartModel from "./model"
 import ShopModel from "../shops/model"
 import createError from "http-errors"
 import { menuRef, removeUnpaidUnits } from "./controllers"
 import UserModel from "../users/model"
-import { providerName, refundPayment, RefundRefused } from "../../lib/payments"
+import { findProviderRefund, providerName, refundPayment, RefundRefused } from "../../lib/payments"
 import { IUserDocument } from "src/typings/users"
 
 // A shop manager's view of the tables' carts (read-only). Both routes run after
@@ -367,8 +367,8 @@ export const mergeInto: TController = async ( req, res, next ) => {
 // (b) the provider is asked, with the record's id as its idempotency key.
 // (c) success: the record is completed and the cart updated (retrying on a
 //     version conflict); failure: the record says `failed`, nothing else moves.
-// If (c) can't be saved, the record stays `pending` and the manager is told to
-// check the provider: it's never guessed.
+// If the provider's answer is unclear, or (c) can't be saved, the record stays
+// `pending`: it's never guessed. retryRefund settles it later.
 
 type RefundLine = { menuId: string; qty: number }
 
@@ -434,17 +434,83 @@ const completeRefund = (
     log(cart, req, "refund", `${money(refund.amount, refund.currency)} for ${what} (payment ${refund.paymentId})`)
 }
 
+// A cart of one of the shop's tables, open or closed.
+const loadShopCart = async (shopId: string, cartId: string) => {
+    const cart = await CartModel.findById(cartId)
+    const shop = await ShopModel.findById(shopId).select("tables")
+    return cart && shop?.tables.some((t) => String(t._id) === cart.tableId) ? cart : null
+}
+
+type Req = Parameters<TController>[0]
+type Res = Parameters<TController>[1]
+type Next = Parameters<TController>[2]
+
+// Marks the pending refund failed: the provider refused it, nothing moved.
+const markFailed = async (cartId: unknown, refundId: unknown, reason: string) => {
+    const recorded = await withFreshCart(cartId, (c) => {
+        const r = findById(c.refunds, refundId)
+        if (r?.status === "pending") {
+            r.status = "failed"
+            r.failureReason = reason
+        }
+    })
+    if (!recorded) console.error("Refund failed and couldn't be marked failed", { cartId, refundId, reason })
+}
+
+// (c): the provider refunded; complete the record and answer { refund, cart }.
+const recordRefund = async (
+    req: Req, res: Res, next: Next,
+    cartId: unknown, payment: IPayment, refundId: unknown, providerRefundId: string | undefined
+) => {
+    const completed = await withFreshCart(cartId, (c) => completeRefund(c, refundId, providerRefundId, req))
+    if (!completed) {
+        console.error("Refund went through but couldn't be recorded", { cartId, refundId, providerRefundId })
+        return next(createError(500,
+            `The refund went through at ${providerName(payment)} but couldn't be recorded here. It shows as in progress: retry it to record it.`,
+            { expose: true }))
+    }
+
+    const fresh = await CartModel.findById(cartId).populate(menuRef("items.menuId")).populate(menuRef("split.menuId"))
+    res.send({ refund: findById(fresh!.refunds, refundId), cart: await managerView(fresh!) })
+}
+
+// (b) then (c) for the pending refund `refundId`. Its id is the provider's
+// idempotency key, so sending it again (retryRefund) can't refund twice.
+const sendRefund = async (
+    req: Req, res: Res, next: Next,
+    cartId: unknown, payment: IPayment, refundId: unknown, amount: number
+) => {
+    // (b)
+    let providerRefundId: string | undefined
+    try {
+        ({ providerRefundId } = await refundPayment(payment, amount, String(refundId)))
+    } catch (error) {
+        const reason = (error as Error).message
+        // No clear answer (a timeout, a 5xx): the refund may have gone
+        // through. It stays pending, holding its units, so they can't be
+        // refunded a second time under a new request id.
+        if (!(error instanceof RefundRefused)) {
+            console.error("Refund outcome unknown", { cartId, refundId, reason })
+            return next(createError(502,
+                `${providerName(payment)} didn't confirm the refund (${reason}). It shows as in progress: retry it, which checks with ${providerName(payment)} first.`,
+                { expose: true }))
+        }
+        await markFailed(cartId, refundId, reason)
+        return next(createError(502, `${reason}. Nothing was refunded.`, { expose: true }))
+    }
+
+    // (c)
+    await recordRefund(req, res, next, cartId, payment, refundId, providerRefundId)
+}
+
 export const refundItems: TController = async ( req, res, next ) => {
     try {
         const { shopId, cartId } = req.params
         const { paymentId, lines } = req.body as { paymentId: string; lines: RefundLine[] }
         const user = req.user as IUserDocument
 
-        const cart = await CartModel.findById(cartId)
-        const shop = await ShopModel.findById(shopId).select("tables")
-        if (!cart || !shop?.tables.some((t) => String(t._id) === cart.tableId)) {
-            return next(createError(404, "Cart Not Found!"))
-        }
+        const cart = await loadShopCart(shopId, cartId)
+        if (!cart) return next(createError(404, "Cart Not Found!"))
         const payment = findById(cart.payments, paymentId)
         if (!payment) return next(createError(404, "Payment Not Found!"))
         if (!payment.providerPaymentId) {
@@ -485,43 +551,44 @@ export const refundItems: TController = async ( req, res, next ) => {
         const refundId = cart.refunds[cart.refunds.length - 1]._id
         if (!(await saveChecked(cart))) return next(createError(409, CART_CHANGED))
 
-        // (b)
-        let providerRefundId: string | undefined
-        try {
-            ({ providerRefundId } = await refundPayment(payment, amount, String(refundId)))
-        } catch (error) {
-            const reason = (error as Error).message
-            // No clear answer (a timeout, a 5xx): the refund may have gone
-            // through. It stays pending, holding its units, so they can't be
-            // refunded a second time under a new request id.
-            if (!(error instanceof RefundRefused)) {
-                console.error("Refund outcome unknown", { cartId, refundId, reason })
-                return next(createError(502,
-                    `${providerName(payment)} didn't confirm the refund (${reason}). It shows as in progress: check ${providerName(payment)} before refunding again.`,
-                    { expose: true }))
-            }
-            const recorded = await withFreshCart(cartId, (c) => {
-                const r = findById(c.refunds, refundId)
-                if (r?.status === "pending") {
-                    r.status = "failed"
-                    r.failureReason = reason
-                }
-            })
-            if (!recorded) console.error("Refund failed and couldn't be marked failed", { cartId, refundId, reason })
-            return next(createError(502, `${reason}. Nothing was refunded.`, { expose: true }))
-        }
+        await sendRefund(req, res, next, cartId, payment, refundId, amount)
+    } catch (error) {
+        next(createError(500, error as Error))
+    }
+}
 
-        // (c)
-        const completed = await withFreshCart(cartId, (c) => completeRefund(c, refundId, providerRefundId, req))
-        if (!completed) {
-            console.error("Refund went through but couldn't be recorded", { cartId, refundId, providerRefundId })
-            return next(createError(500,
-                `The refund went through at ${providerName(payment)} but couldn't be recorded here. It shows as in progress: check ${providerName(payment)} before refunding again.`,
+// POST /shops/:shopId/carts/:cartId/refunds/:refundId/retry
+// Settles a refund left in progress (the provider's answer was unclear, or it
+// went through but couldn't be recorded). First asks the provider whether it
+// has the refund, by its id: if so it's recorded as the provider says. If not,
+// it's sent again under the same id, which the provider can't apply twice.
+export const retryRefund: TController = async ( req, res, next ) => {
+    try {
+        const { shopId, cartId, refundId } = req.params
+        const cart = await loadShopCart(shopId, cartId)
+        if (!cart) return next(createError(404, "Cart Not Found!"))
+        const refund = findById(cart.refunds, refundId)
+        if (!refund) return next(createError(404, "Refund Not Found!"))
+        if (refund.status !== "pending") return next(createError(409, "This refund isn't in progress any more"))
+        const payment = findById(cart.payments, refund.paymentId)
+        if (!payment) return next(createError(404, "Payment Not Found!"))
+
+        let found: Awaited<ReturnType<typeof findProviderRefund>>
+        try {
+            found = await findProviderRefund(payment, String(refund._id))
+        } catch (error) {
+            return next(createError(502,
+                `Couldn't check with ${providerName(payment)} (${(error as Error).message}). The refund is still in progress: try again shortly.`,
                 { expose: true }))
         }
 
-        const fresh = await CartModel.findById(cartId).populate(menuRef("items.menuId")).populate(menuRef("split.menuId"))
-        res.send({ refund: findById(fresh!.refunds, refundId), cart: await managerView(fresh!) })
+        if (found?.failed) {
+            const reason = `${providerName(payment)} says this refund failed`
+            await markFailed(cartId, refund._id, reason)
+            return next(createError(502, `${reason}. Nothing was refunded.`, { expose: true }))
+        }
+        if (found) return await recordRefund(req, res, next, cartId, payment, refund._id, found.providerRefundId)
+        await sendRefund(req, res, next, cartId, payment, refund._id, refund.amount)
     } catch (error) {
         next(createError(500, error as Error))
     }

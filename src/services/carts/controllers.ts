@@ -116,6 +116,10 @@ export const addItem: TController = async ( req, res, next ) => {
             : null
         const onShopMenu = menuItem && await ShopModel.exists({ _id: shopId, menu: item.menuId })
         if (!menuItem || !onShopMenu) return next(createError(404, "Menu Item Not Found!"))
+        // And the table must be one of the shop's: a deleted table's page left
+        // open would otherwise start a cart no manager can see or close.
+        const atShopTable = mongoose.isValidObjectId(tableId) && await ShopModel.exists({ _id: shopId, "tables._id": tableId })
+        if (!atShopTable) return next(createError(404, "Table Not Found!"))
         if (!menuItem.available) return next(createError(409, SOLD_OUT))
 
         // A table has ONE shared open cart: whoever orders first creates it,

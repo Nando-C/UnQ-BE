@@ -1,5 +1,5 @@
 import { jest, describe, it, expect, afterEach } from "@jest/globals"
-import { refundCapture, PayPalRefundRefused } from "../lib/paypal"
+import { refundCapture, findRefund, PayPalRefundRefused } from "../lib/paypal"
 
 // The PayPal client's refund request, with the network faked: the first call
 // is the OAuth token, the second the refund.
@@ -22,7 +22,8 @@ describe("refundCapture", () => {
         const [url, init] = fetch.mock.calls[1] as [string, RequestInit]
         expect(url).toMatch(/\/v2\/payments\/captures\/CAP-1\/refund$/)
         expect(init.headers).toMatchObject({ Authorization: "Bearer TOKEN", "PayPal-Request-Id": "refund-123" })
-        expect(JSON.parse(init.body as string)).toEqual({ amount: { value: "4.50", currency_code: "GBP" } })
+        // Labelled with the same id, so findRefund can find it on the order.
+        expect(JSON.parse(init.body as string)).toEqual({ amount: { value: "4.50", currency_code: "GBP" }, custom_id: "refund-123" })
     })
 
     it("refunds in full with an empty body when no amount is given", async () => {
@@ -74,3 +75,24 @@ describe("refundCapture", () => {
             .rejects.toBeInstanceOf(PayPalRefundRefused)
     })
 })
+
+describe("findRefund", () => {
+    const orderWith = (refunds: unknown[]) => {
+        jest.spyOn(globalThis, "fetch")
+            .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "TOKEN" }), { status: 200 }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({
+                id: "ORDER-1", status: "COMPLETED", purchase_units: [{ payments: { refunds } }],
+            }), { status: 200 }))
+    }
+
+    it("finds the refund sent with that id on the order", async () => {
+        orderWith([{ id: "R1", status: "COMPLETED", custom_id: "other" }, { id: "R2", status: "PENDING", custom_id: "refund-123" }])
+        expect(await findRefund("ORDER-1", "refund-123")).toEqual({ id: "R2", status: "PENDING" })
+    })
+
+    it("is null when the order has no such refund", async () => {
+        orderWith([])
+        expect(await findRefund("ORDER-1", "refund-123")).toBeNull()
+    })
+})
+

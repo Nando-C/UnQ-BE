@@ -281,6 +281,22 @@ describe("carts", () => {
         expect(res.body.message).toBe("Menu Item Not Found!")
     })
 
+    it("refuses an order on a table that was deleted, or belongs to another shop", async () => {
+        const { owner, shopId, tableId, menuId, customer } = await scaffold()
+        const add = (table: string) =>
+            request(app).post(`/carts/${shopId}/tables/${table}/addItem`).set("Cookie", customer.cookies).send({ menuId, qty: 1 })
+
+        const otherShop = (await request(app).post("/shops").set("Cookie", owner.cookies).send({ name: "Other" })).body._id
+        const theirTable = (await request(app).post(`/shops/${otherShop}/tables`).set("Cookie", owner.cookies).send({ name: "T9" })).body._id
+        expect((await add(theirTable)).status).toBe(404)
+
+        await request(app).delete(`/shops/${shopId}/tables/${tableId}`).set("Cookie", owner.cookies).expect(204)
+        const res = await add(tableId)
+        expect(res.status).toBe(404)
+        expect(res.body.message).toBe("Table Not Found!")
+        expect(await CartModel.countDocuments()).toBe(0)
+    })
+
     it("includes menuId.available in cart responses", async () => {
         const { shopId, tableId, menuId, customer, markSoldOut } = await scaffold()
         await request(app)

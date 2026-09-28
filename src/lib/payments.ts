@@ -3,7 +3,7 @@
 // a provider (e.g. Stripe) means adding its branch here, not touching a route.
 
 import { IPayment } from "src/typings/cart"
-import { PayPalRefundRefused, refundCapture } from "./paypal"
+import { findRefund, PayPalRefundRefused, refundCapture } from "./paypal"
 
 // The provider's name as people know it, for messages.
 export const providerName = (payment: IPayment) =>
@@ -39,5 +39,24 @@ export const refundPayment = async (
             }
         default:
             throw new RefundRefused(`Refunds aren't supported for ${providerName(payment)}`)
+    }
+}
+
+// Whether the provider already has the refund sent under `requestId` (see
+// refundPayment): null if not, else its id and whether it failed there. Throws
+// if the provider can't be asked.
+export const findProviderRefund = async (
+    payment: IPayment,
+    requestId: string
+): Promise<{ providerRefundId?: string; failed: boolean } | null> => {
+    switch (payment.provider) {
+        case "paypal": {
+            const refund = await findRefund(payment.providerCheckoutId, requestId)
+            return refund
+                ? { providerRefundId: refund.id, failed: refund.status === "FAILED" || refund.status === "CANCELLED" }
+                : null
+        }
+        default:
+            throw new Error(`Refunds aren't supported for ${providerName(payment)}`)
     }
 }

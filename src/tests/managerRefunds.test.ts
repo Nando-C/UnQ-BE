@@ -6,6 +6,7 @@ jest.mock("../lib/paypal", () => ({
     createOrder: jest.fn(),
     captureOrder: jest.fn(),
     refundCapture: jest.fn(),
+    findRefund: jest.fn(),
     PayPalRefundRefused: jest.requireActual<typeof import("../lib/paypal")>("../lib/paypal").PayPalRefundRefused,
 }))
 
@@ -14,13 +15,16 @@ import "./setup"
 import app from "../server"
 import { authFor } from "./helpers"
 import CartModel from "../services/carts/model"
-import { refundCapture, PayPalRefundRefused } from "../lib/paypal"
+import { refundCapture, findRefund, PayPalRefundRefused } from "../lib/paypal"
 
 const mockedRefund = jest.mocked(refundCapture)
+const mockedFind = jest.mocked(findRefund)
 
 beforeEach(() => {
     mockedRefund.mockReset()
     mockedRefund.mockResolvedValue("REF-1")
+    mockedFind.mockReset()
+    mockedFind.mockResolvedValue(null)
 })
 
 // A shop with a £3 Latte and a £2 Muffin; Ada ordered 3 Lattes and a Muffin and
@@ -170,7 +174,7 @@ describe("POST /shops/:shopId/carts/:cartId/refunds", () => {
 
         expect(res.status).toBe(502)
         expect(res.body.message).toBe(
-            "PayPal didn't confirm the refund (PayPal refund failed (503)). It shows as in progress: check PayPal before refunding again.")
+            "PayPal didn't confirm the refund (PayPal refund failed (503)). It shows as in progress: retry it, which checks with PayPal first.")
         const cart = await CartModel.findById(cartId)
         expect(cart!.refunds[0].status).toBe("pending")
         expect(cart!.items[0]).toMatchObject({ qty: 3, qtyPayed: 2 }) // nothing taken off the cart yet
@@ -195,7 +199,7 @@ describe("POST /shops/:shopId/carts/:cartId/refunds", () => {
         quiet.mockRestore()
 
         expect(res.status).toBe(500)
-        expect(res.body.message).toMatch(/^The refund went through at PayPal but couldn't be recorded here/)
+        expect(res.body.message).toBe("The refund went through at PayPal but couldn't be recorded here. It shows as in progress: retry it to record it.")
         expect(mockedRefund).toHaveBeenCalledTimes(1)
         const cart = await CartModel.findById(cartId)
         expect(cart!.refunds[0].status).toBe("pending")
@@ -222,3 +226,89 @@ describe("POST /shops/:shopId/carts/:cartId/refunds", () => {
         expect(mockedRefund).not.toHaveBeenCalled()
     })
 })
+
+describe("POST /shops/:shopId/carts/:cartId/refunds/:refundId/retry", () => {
+    // A £6 refund of both Lattes left in progress: PayPal timed out.
+    const leftPending = async () => {
+        const ctx = await scaffold()
+        mockedRefund.mockRejectedValueOnce(new Error("PayPal refund failed (503)"))
+        const quiet = jest.spyOn(console, "error").mockImplementation(() => {})
+        await ctx.refund([{ menuId: ctx.latte, qty: 2 }])
+        quiet.mockRestore()
+        mockedRefund.mockClear()
+        const refundId = String((await CartModel.findById(ctx.cartId))!.refunds[0]._id)
+        const retry = (who = ctx.owner) =>
+            request(app).post(`/shops/${ctx.shopId}/carts/${ctx.cartId}/refunds/${refundId}/retry`).set("Cookie", who.cookies)
+        return { ...ctx, refundId, retry }
+    }
+
+    it("records a refund PayPal already made, without sending it again", async () => {
+        const { cartId, latte, refundId, retry } = await leftPending()
+        mockedFind.mockResolvedValue({ id: "REF-9", status: "COMPLETED" })
+
+        const res = await retry()
+
+        expect(res.status).toBe(200)
+        expect(res.body.refund).toMatchObject({ status: "completed", providerRefundId: "REF-9", amount: 6 })
+        expect(mockedFind).toHaveBeenCalledWith("ORDER-1", refundId)
+        expect(mockedRefund).not.toHaveBeenCalled()
+        const cart = await CartModel.findById(cartId)
+        expect(cart!.items.find((i) => String(i.menuId) === latte)).toMatchObject({ qty: 1, qtyPayed: 0 })
+        expect(cart!.payments[0].lines[0].refundedQty).toBe(2)
+    })
+
+    it("sends it again under the same id when PayPal doesn't have it", async () => {
+        const { refundId, retry } = await leftPending()
+
+        const res = await retry()
+
+        expect(res.status).toBe(200)
+        expect(res.body.refund.status).toBe("completed")
+        expect(mockedRefund).toHaveBeenCalledWith("CAP-1", { value: "6.00", currency: "GBP", requestId: refundId })
+    })
+
+    it("marks it failed when PayPal says it failed, freeing the units", async () => {
+        const { latte, cartId, retry, refund } = await leftPending()
+        mockedFind.mockResolvedValue({ id: "REF-9", status: "FAILED" })
+
+        const res = await retry()
+
+        expect(res.status).toBe(502)
+        expect(res.body.message).toBe("PayPal says this refund failed. Nothing was refunded.")
+        expect((await CartModel.findById(cartId))!.refunds[0].status).toBe("failed")
+        expect((await refund([{ menuId: latte, qty: 2 }])).status).toBe(200)
+    })
+
+    it("stays in progress when PayPal can't be reached", async () => {
+        const { cartId, retry } = await leftPending()
+        mockedFind.mockRejectedValue(new Error("PayPal order lookup failed (503)"))
+
+        const res = await retry()
+
+        expect(res.status).toBe(502)
+        expect(res.body.message).toBe(
+            "Couldn't check with PayPal (PayPal order lookup failed (503)). The refund is still in progress: try again shortly.")
+        expect((await CartModel.findById(cartId))!.refunds[0].status).toBe("pending")
+        expect(mockedRefund).not.toHaveBeenCalled()
+    })
+
+    it("does nothing for a refund that isn't in progress", async () => {
+        const { retry } = await leftPending()
+        mockedFind.mockResolvedValue({ id: "REF-9", status: "COMPLETED" })
+        await retry()
+        mockedFind.mockClear()
+
+        const again = await retry()
+        expect(again.status).toBe(409)
+        expect(again.body.message).toBe("This refund isn't in progress any more")
+        expect(mockedFind).not.toHaveBeenCalled()
+    })
+
+    it("is for that shop's managers only", async () => {
+        const { ada, retry } = await leftPending()
+        expect((await retry(ada)).status).toBe(403)
+        expect((await retry(await authFor("shopMg"))).status).toBe(403)
+        expect(mockedFind).not.toHaveBeenCalled()
+    })
+})
+

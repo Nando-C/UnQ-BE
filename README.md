@@ -482,7 +482,13 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/shops/:shopId/carts/:cartId/refunds
 
-  Shop managers only; money moves. Body `{ paymentId, lines: [{ menuId, qty }] }`: refunds those units of one recorded payment, at the prices it charged, through the payment's provider (PayPal: a partial refund of its capture, with an idempotency key), and takes them out of the cart. Open or closed carts of the shop. A `pending` refund record is saved before the provider is asked, so the same units can't be refunded twice; it then becomes `completed` or `failed`. Answers `{ refund, cart }`; `400` for more than is left to refund, `409` for a payment with no recorded capture (refund it from PayPal), `502` with the provider's reason when it refuses (nothing refunded; the record is `failed`), `502` also when the provider gives no clear answer (a timeout or a provider error: the refund may have gone through, so the record stays `pending`: check PayPal), `500` if it went through but couldn't be recorded (the refund stays `pending`: check PayPal). The payer gets a note.
+  Shop managers only; money moves. Body `{ paymentId, lines: [{ menuId, qty }] }`: refunds those units of one recorded payment, at the prices it charged, through the payment's provider (PayPal: a partial refund of its capture, with an idempotency key), and takes them out of the cart. Open or closed carts of the shop. A `pending` refund record is saved before the provider is asked, so the same units can't be refunded twice; it then becomes `completed` or `failed`. Answers `{ refund, cart }`; `400` for more than is left to refund, `409` for a payment with no recorded capture (refund it from PayPal), `502` with the provider's reason when it refuses (nothing refunded; the record is `failed`), `502` also when the provider gives no clear answer (a timeout or a provider error: the refund may have gone through, so the record stays `pending`: retry it), `500` if it went through but couldn't be recorded (the refund stays `pending`: retry it). The payer gets a note.
+
+- [ 'POST' ]
+
+  baseURL-api/shops/:shopId/carts/:cartId/refunds/:refundId/retry
+
+  Shop managers only. Settles a `pending` refund. First asks the provider whether it already has it (PayPal: the refund is sent with `custom_id` = the refund's id and looked up on the order); if so, records it as the provider says (`completed`, or `failed`). If not, sends it again under the same id, which the provider can't apply twice. Answers `{ refund, cart }` like the refund route, with the same `502`/`500` cases; `409` if the refund isn't `pending`, `502` if the provider can't be asked (still `pending`).
 
 - [ 'POST', 'GET' ]
 
@@ -506,7 +512,7 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/carts/:shopId/tables/:tableId/addItem
 
-  `404` if the item isn't on this shop's menu; `409` (`"This item is sold out"`) if it is unavailable.
+  `404` if the item isn't on this shop's menu, or `"Table Not Found!"` if the table isn't one of this shop's (e.g. deleted); `409` (`"This item is sold out"`) if it is unavailable.
 
 - [ 'POST' ]
 
