@@ -53,9 +53,12 @@ export const getSingleTable: TController = async ( req, res, next ) => {
         const tableId = req.params.tableId
 
         const shopTables = await ShopModel.findById(shopId, { tables: { $elemMatch: {_id: tableId}} } )
-        if (!shopTables) return next(createError(404, "Table Not Found!"))
+        // No such shop, or no such table in it (deleted, or another shop's):
+        // the projection then leaves `tables` empty.
+        const table = shopTables?.tables[0]
+        if (!table) return next(createError(404, "Table Not Found!"))
 
-        res.send(shopTables.tables[0])
+        res.send(table)
     } catch (error) {
         next(createError(500, error as Error))
     }

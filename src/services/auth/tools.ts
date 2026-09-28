@@ -60,20 +60,25 @@ export const verifyRefreshJWT = (token: string) =>
 
 // -------------------------------------------------------------------------
 
+// New tokens for a valid refresh token, or null when there's no session to
+// refresh: the token is expired, malformed or signed with another key, its user
+// is gone, or it was already rotated. The route answers null with a 401 — an
+// ended session is not a server fault. Database errors still throw (a 500).
 export const refreshTokens = async ( currentRefreshToken: string) => {
+    let decoded: jwt.JwtPayload
     try {
-        const decoded = (await verifyRefreshJWT(currentRefreshToken)) as jwt.JwtPayload
-        const user = await UserModel.findById(decoded._id)
-
-        if (!user) return null
-
-        if (currentRefreshToken === user.refreshToken) {
-            const { accessToken, refreshToken } = await getTokens(user)
-            return { accessToken, refreshToken }
-        } else return null
+        decoded = (await verifyRefreshJWT(currentRefreshToken)) as jwt.JwtPayload
     } catch {
-        throw new Error("Token not valid!")
+        return null
     }
+
+    const user = await UserModel.findById(decoded._id)
+    if (!user) return null
+
+    if (currentRefreshToken === user.refreshToken) {
+        const { accessToken, refreshToken } = await getTokens(user)
+        return { accessToken, refreshToken }
+    } else return null
 }
 
 // -------------------------------------------------------------------------

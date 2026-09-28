@@ -67,6 +67,17 @@ describe("shops", () => {
         expect(res.status).toBe(403)
     })
 
+    it("returns 404 for a table that isn't in the shop", async () => {
+        const owner = await authFor("shopMg")
+        const shopId = (await request(app).post("/shops").set("Cookie", owner.cookies).send({ name: "Cafe" })).body._id
+        const other = (await request(app).post("/shops").set("Cookie", owner.cookies).send({ name: "Other" })).body._id
+        const otherTable = (await request(app).post(`/shops/${other}/tables`).set("Cookie", owner.cookies).send({ name: "T" })).body._id
+
+        expect((await request(app).get(`/shops/${shopId}/tables/aaaaaaaaaaaaaaaaaaaaaaaa`)).status).toBe(404)
+        expect((await request(app).get(`/shops/${shopId}/tables/${otherTable}`)).status).toBe(404)
+        expect((await request(app).get(`/shops/${other}/tables/${otherTable}`)).status).toBe(200)
+    })
+
     it("renaming a table preserves its _id and Qr_Url", async () => {
         const owner = await authFor("shopMg")
         const shopRes = await request(app)

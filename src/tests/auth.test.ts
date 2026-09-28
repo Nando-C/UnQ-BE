@@ -160,6 +160,13 @@ describe("auth", () => {
             expect(reuse.status).toBe(401)
         })
 
+        it("returns 401 (not 500) for an invalid or expired refresh token", async () => {
+            const res = await request(app)
+                .post("/auth/refreshToken")
+                .set("Cookie", ["refreshToken=not-a-jwt"])
+            expect(res.status).toBe(401)
+        })
+
         it("returns 400 when no refresh token is provided", async () => {
             const res = await request(app).post("/auth/refreshToken")
             expect(res.status).toBe(400)

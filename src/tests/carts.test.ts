@@ -1,4 +1,5 @@
-import { describe, it, expect } from "@jest/globals"
+import { jest, describe, it, expect } from "@jest/globals"
+import mongoose from "mongoose"
 import request from "supertest"
 import "./setup"
 import app from "../server"
@@ -399,5 +400,71 @@ describe("carts", () => {
             .send({ menuId, qty: 1 })
         expect(ok.status).toBe(200)
         expect(ok.body.items[0].qty).toBe(2)
+    })
+
+    it("decreaseItem closes the cart when what's left is all paid, so the next party starts fresh", async () => {
+        const { shopId, tableId, menuId, customer } = await scaffold()
+        const cartId = (
+            await request(app)
+                .post(`/carts/${shopId}/tables/${tableId}/addItem`)
+                .set("Cookie", customer.cookies)
+                .send({ menuId, qty: 2 })
+        ).body._id
+        await CartModel.updateOne({ _id: cartId, "items.menuId": menuId }, { $set: { "items.$.qtyPayed": 1 } })
+
+        // Take off the one unpaid unit: 1 unit left, 1 paid.
+        const res = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/removeItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 1 })
+        expect(res.status).toBe(200)
+        expect(res.body.status).toBe("closed")
+
+        const next = await authFor("customer")
+        const fresh = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/addItem`)
+            .set("Cookie", next.cookies)
+            .send({ menuId, qty: 1 })
+        expect(fresh.body._id).not.toBe(cartId)
+    })
+
+    it("the database refuses a second open cart for a table, but not once the first is closed", async () => {
+        await CartModel.init() // builds the one-open-cart-per-table index
+        const cart = (tableId: string, status = "open") =>
+            ({ userId: new mongoose.Types.ObjectId(), tableId, status, items: [], split: [] })
+
+        await CartModel.create(cart("T1"))
+        await expect(CartModel.create(cart("T1"))).rejects.toMatchObject({ code: 11000 })
+        await CartModel.create(cart("T2")) // other tables are unaffected
+
+        await CartModel.updateOne({ tableId: "T1" }, { status: "closed" })
+        await CartModel.create(cart("T1"))
+        expect(await CartModel.countDocuments({ tableId: "T1", status: "open" })).toBe(1)
+    })
+
+    it("addItem that loses the race for a table's first cart adds to the winner's cart", async () => {
+        await CartModel.init()
+        const { shopId, tableId, menuId, customer } = await scaffold()
+        // The other diner's cart, holding the same item, lands just after this
+        // request looked for one: the first lookup is made to miss it.
+        await CartModel.create({ userId: new mongoose.Types.ObjectId(), tableId, status: "open", items: [{ menuId, qty: 1 }], split: [] })
+        const lookup = jest.spyOn(CartModel, "findOneAndUpdate")
+        lookup.mockImplementationOnce(() => CartModel.findOneAndUpdate({ _id: null }, {}) as never)
+
+        const res = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/addItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 1 })
+        // The missed lookup (and its stand-in query), the refused new cart,
+        // then the lookup again, which finds the winner's line.
+        const calls = lookup.mock.calls.length
+        lookup.mockRestore()
+        expect(calls).toBe(4)
+
+        // Its own cart was refused (11000), so it retried onto the winner's.
+        expect(res.status).toBe(200)
+        const carts = await CartModel.find({ tableId, status: "open" })
+        expect(carts).toHaveLength(1)
+        expect(carts[0].items.map((i) => i.qty)).toEqual([2])
     })
 })

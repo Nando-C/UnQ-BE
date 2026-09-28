@@ -96,6 +96,13 @@ const CartSchema = new Schema<ICartDocument>(
     { timestamps: true, optimisticConcurrency: true }
 )
 
+// One open cart per table: the database refuses a second one, so two diners
+// placing a table's first order at the same moment can't each create a cart
+// (addItem retries onto the one that won). Mongoose builds it at startup
+// (index.ts reports a failure); it can't be built while a table already has two
+// open carts — list them with src/scripts/findDuplicateOpenCarts.ts.
+CartSchema.index({ tableId: 1 }, { unique: true, partialFilterExpression: { status: "open" } })
+
 CartSchema.methods.toJSON = function () {
     const cart = this.toObject()
     delete cart.__v

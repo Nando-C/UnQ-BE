@@ -116,15 +116,26 @@ export const addItem: TController = async ( req, res, next ) => {
         // everyone else at the table adds to it (the split array tracks who
         // pays for what). Keying by userId here used to spawn a duplicate cart
         // per user, which getTableCart could not disambiguate.
-        const isItemThere = await CartModel.findOne({tableId: tableId, status: "open", "items.menuId": item.menuId})
-
-        if (isItemThere) {
+        //
+        // Each step is one atomic update: add to the item's line if the open
+        // cart has one; else add the line to the open cart, creating the cart
+        // if the table has none. Racing another diner, the second step can find
+        // the line or the cart just created: its insert then breaks the
+        // one-open-cart-per-table index (11000) and the pair is tried again,
+        // now landing on the first step.
+        for (let attempt = 0; attempt < 3; attempt++) {
             const updatedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": req.body.qty }}, { sort: { createdAt: -1 } }).populate(menuRef("items.menuId"))
-            res.send(updatedItem)
-        } else {
-            const addedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open"}, { $push: { items: item }, $setOnInsert: { userId: user._id, shopId: req.params.shopId }}, { upsert: true, sort: { createdAt: -1 } }).populate(menuRef("items.menuId"))
-            res.send(addedItem)
+            if (updatedItem) return res.send(updatedItem)
+
+            try {
+                const addedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": { $ne: item.menuId }}, { $push: { items: item }, $setOnInsert: { userId: user._id, shopId: req.params.shopId }}, { upsert: true, sort: { createdAt: -1 } }).populate(menuRef("items.menuId"))
+                return res.send(addedItem)
+            } catch (error) {
+                const err = error as { code?: number; cause?: { code?: number } }
+                if (err.code !== 11000 && err.cause?.code !== 11000) throw error
+            }
         }
+        next(createError(409, "The cart changed, please retry"))
     } catch (error) {
         next(createError(500, error as Error))
     }
@@ -156,9 +167,20 @@ export const decreaseItem: TController = async ( req, res, next ) => {
             const removedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: { $lte: 0 } }}}, { sort: { createdAt: -1 } }).populate(menuRef("items.menuId"))
 
             const deleteCart = await CartModel.findOneAndDelete({tableId: tableId, status: "open", items: []}, { sort: { createdAt: -1 } }).populate(menuRef("items.menuId"))
-            
+
+            // Taking off the last unpaid units can leave everything paid: then
+            // the table is finished, the same rule deleteItem and a checkout
+            // apply. Left open, the next party at the table would inherit it.
+            const closedCart = deleteCart ? null : await CartModel.findOneAndUpdate(
+                { tableId: tableId, status: "open", "items.menuId": item.menuId, ...allItemsPaid },
+                { $set: { status: "closed" } },
+                { sort: { createdAt: -1 } }
+            ).populate(menuRef("items.menuId"))
+
             if (deleteCart) {
                 res.status(204).send()
+            } else if (closedCart) {
+                res.send(closedCart)
             } else if (removedItem) {
                 res.send(removedItem)
             } else {
@@ -174,6 +196,16 @@ export const decreaseItem: TController = async ( req, res, next ) => {
 }
 
 // -------------------------------------------------------------------------
+
+// A cart whose every item is fully paid, as a query condition.
+const allItemsPaid = {
+    items: { $ne: [] },
+    $expr: {
+        $allElementsTrue: [{
+            $map: { input: "$items", in: { $lte: ["$$this.qty", { $ifNull: ["$$this.qtyPayed", 0] }] } },
+        }],
+    },
+}
 
 // Units of an item that must survive any decrease: those already paid, plus
 // those held in any diner's open split.
