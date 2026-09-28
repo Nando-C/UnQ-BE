@@ -498,13 +498,13 @@ const soldOutError = (openSplits: ISplitItem[]): string | null =>
         ? SOLD_OUT_CHECKOUT
         : null
 
-// The PayPal order must be COMPLETED, its capture COMPLETED, in GBP, for exactly
-// the amount due. Returns a message on any mismatch, or null when it verifies.
+// The PayPal order must be COMPLETED with its capture COMPLETED (or its capture
+// PENDING: taken, held by PayPal for review), in GBP, for exactly the amount
+// due. Returns a message on any mismatch, or null when it verifies.
 const orderVerificationError = (order: PayPalOrder, expectedTotal: number): string | null => {
     const capture = order.purchase_units?.[0]?.payments?.captures?.[0]
     if (
-        order.status !== "COMPLETED" ||
-        capture?.status !== "COMPLETED" ||
+        !(capture?.status === "PENDING" || (order.status === "COMPLETED" && capture?.status === "COMPLETED")) ||
         capture?.amount?.currency_code !== "GBP" ||
         capture?.amount?.value !== expectedTotal.toFixed(2)
     ) {
@@ -513,11 +513,21 @@ const orderVerificationError = (order: PayPalOrder, expectedTotal: number): stri
     return null
 }
 
+// Closes a cart whose every unit is paid, unless a payment on it is still
+// pending: until it's confirmed, the table must keep showing it.
+export const closeIfPaidOff = (cart: ICartDocument) => {
+    if (cart.items.every((i) => i.qty <= i.qtyPayed) && !cart.payments.some((p) => p.status === "pending")) {
+        cart.status = "closed"
+    }
+}
+
 // Apply what a settlement does, in memory on the loaded doc, for a single
 // version-checked save(): close the caller's open splits and credit qtyPayed,
 // and record the payment. Prices are the populated menu's, the same ones
 // expectedTotalFor charged and the capture was verified against; `order` is
-// captureCheckout's own COMPLETED capture result.
+// captureCheckout's own capture result. A PENDING capture is recorded as a
+// pending payment: its units are held as paid, and the cart stays open until
+// a manager checks it (checkPayment), so the table still shows it.
 const applyCheckout = (
     cart: ICartDocument,
     openSplits: ISplitItem[],
@@ -539,6 +549,7 @@ const applyCheckout = (
     }
     cart.payments.push({
         provider: "paypal",
+        status: capture?.status === "PENDING" ? "pending" : "completed",
         providerCheckoutId: paypalOrderId,
         providerPaymentId: capture?.id,
         currency: capture?.amount?.currency_code ?? "GBP",
@@ -549,7 +560,7 @@ const applyCheckout = (
     })
     if (!cart.paypalOrderIds) cart.paypalOrderIds = []
     cart.paypalOrderIds.push(paypalOrderId)
-    if (cart.items.every((i) => i.qty <= i.qtyPayed)) cart.status = "closed"
+    closeIfPaidOff(cart)
 }
 
 // Outcome of a settlement attempt. Returned (not sent) so captureCheckout can
@@ -562,7 +573,7 @@ type SettleOutcome =
 // payer's save bumps __v and makes ours throw VersionError; on that, reload,
 // re-derive everything from the fresh doc, re-check replay/availability, re-verify
 // against the already-known (immutable) `order`, and retry a bounded number of
-// times. `order` is captureCheckout's own COMPLETED capture result.
+// times. `order` is captureCheckout's own capture result.
 const settleCheckout = async (
     cartId: string,
     tableId: string,
@@ -713,33 +724,30 @@ export const captureCheckout: TController = async ( req, res, next ) => {
         const availError = availabilityError(cart, openSplits)
         if (availError) return next(createError(409, availError))
 
-        // (e) Only now capture the money. When PayPal's answer doesn't say
-        // whether the buyer was charged, they must not be told to pay again:
-        // shown as is (expose), with the order id for staff to look up.
-        const unconfirmed = () => next(createError(502,
-            `We couldn't confirm your payment with PayPal — please contact staff before paying again (order ${paypalOrderId})`,
-            { expose: true }))
+        // (e) Only now capture the money.
         let captured: PayPalOrder
         try {
             captured = await captureOrder(paypalOrderId)
         } catch (captureError) {
             if (captureError instanceof PayPalCaptureRefused) return next(createError(402, "PayPal capture failed"))
+            // PayPal's answer doesn't say whether the buyer was charged, so
+            // they must not be told to pay again: shown as is (expose), with
+            // the order id for staff to look up.
             console.error("PayPal capture outcome unknown", { paypalOrderId, error: captureError })
-            return unconfirmed()
+            return next(createError(502,
+                `We couldn't confirm your payment with PayPal — please contact staff before paying again (order ${paypalOrderId})`,
+                { expose: true }))
         }
 
         const capture = captured.purchase_units?.[0]?.payments?.captures?.[0]
-        if (capture?.status === "PENDING") {
-            // Captured but held for review: it usually settles later, but
-            // nothing here records it when it does.
-            console.error("PayPal capture pending", { paypalOrderId, captureId: capture.id })
-            return unconfirmed()
-        }
-        if (captured.status !== "COMPLETED" || capture?.status !== "COMPLETED") {
+        // PENDING: taken, but held by PayPal for review. It settles like a
+        // completed one, as a pending payment (see applyCheckout).
+        const pending = capture?.status === "PENDING"
+        if (!pending && (captured.status !== "COMPLETED" || capture?.status !== "COMPLETED")) {
             // Capture did not go through — no money moved, so no refund needed.
             return next(createError(402, "PayPal capture did not complete"))
         }
-        const captureId = capture.id
+        const captureId = capture?.id
 
         // (f) Settle under optimistic concurrency, re-verifying against our own
         // capture result on any version conflict.
@@ -753,7 +761,9 @@ export const captureCheckout: TController = async ( req, res, next ) => {
             console.error("Settling a captured PayPal payment failed", { paypalOrderId, error: settleError })
             outcome = { ok: false, status: 500, message: "The payment could not be recorded" }
         }
-        if (outcome.ok) return res.send(forDiner(outcome.cart, req))
+        // 202 for a pending payment: the diner's units are held, but PayPal
+        // hasn't confirmed it yet.
+        if (outcome.ok) return res.status(pending ? 202 : 200).send(forDiner(outcome.cart, req))
 
         // (g) The buyer HAS been charged but the settlement is impossible (a
         // concurrent payer took the units, a replay was hit, or attempts were

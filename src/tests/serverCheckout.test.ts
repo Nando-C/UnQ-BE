@@ -469,16 +469,6 @@ describe("captureCheckout (POST /carts/tables/:tableId/:cartId/captureCheckout)"
         expect(mockedRefundCapture).not.toHaveBeenCalled()
     })
 
-    it("asks the diner to contact staff when PayPal holds the capture as pending", async () => {
-        const pending = capturedOrder("6.00")
-        pending.purchase_units![0].payments!.captures![0].status = "PENDING"
-        const { res, cart } = await captureWith(async () => pending)
-
-        expect(res.status).toBe(502)
-        expect(res.body.message).toMatch(/contact staff before paying again \(order ORDER-1\)$/)
-        expect(cart?.split[0].splitStatus).toBe("open")
-    })
-
     it("says nothing was charged (402) when PayPal declines the capture", async () => {
         const declined = capturedOrder("6.00")
         declined.purchase_units![0].payments!.captures![0].status = "DECLINED"

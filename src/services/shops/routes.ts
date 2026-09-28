@@ -34,6 +34,8 @@ router.post("/:shopId/tables/:tableId/carts/:cartId/mergeInto", JWTAuthMiddlewar
 // Manager refunds (money moves): open or closed carts of the shop.
 router.post("/:shopId/carts/:cartId/refunds", JWTAuthMiddleware, isShopManager, validate(refundSchema), managerControllers.refundItems)
 router.post("/:shopId/carts/:cartId/refunds/:refundId/retry", JWTAuthMiddleware, isShopManager, managerControllers.retryRefund)
+// A payment PayPal hadn't confirmed at checkout: ask it again.
+router.post("/:shopId/carts/:cartId/payments/:paymentId/check", JWTAuthMiddleware, isShopManager, managerControllers.checkPayment)
 router.post("/:shopId/tables", JWTAuthMiddleware, isShopManager, validate(createTableSchema), tableControllers.createTable)
 router.get("/:shopId/tables", JWTAuthMiddleware, tableControllers.getTableList)
 router.get("/:shopId/tables/:tableId",  tableControllers.getSingleTable)

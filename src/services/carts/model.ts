@@ -113,9 +113,16 @@ const CartSchema = new Schema<ICartDocument>(
         //   Missing only if the provider's result had no id, which must not
         //   stop the payment being recorded; it can then only be refunded from
         //   the provider's dashboard.
+        // - status: `pending` when the provider took the money but hasn't
+        //   confirmed it (PayPal holds some captures for review). Its units are
+        //   held as paid, the cart stays open, and it can't be refunded, until a
+        //   manager checks it (checkPayment): `completed`, or `failed`, which
+        //   makes its units unpaid again. Payments recorded before it existed
+        //   read as `completed`.
         payments: [
             {
                 provider: { type: String, enum: ["paypal"], required: true },
+                status: { type: String, enum: ["completed", "pending", "failed"], default: "completed" },
                 providerCheckoutId: { type: String, required: true },
                 providerPaymentId: String,
                 currency: { type: String, required: true },

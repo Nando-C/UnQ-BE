@@ -2,8 +2,8 @@
 // `payments`). Routes call these, never a provider's client directly, so adding
 // a provider (e.g. Stripe) means adding its branch here, not touching a route.
 
-import { IPayment } from "src/typings/cart"
-import { findRefund, PayPalRefundRefused, refundCapture } from "./paypal"
+import { IPayment, PaymentStatus } from "src/typings/cart"
+import { findRefund, getOrder, PayPalRefundRefused, refundCapture } from "./paypal"
 
 // The provider's name as people know it, for messages.
 export const providerName = (payment: IPayment) =>
@@ -58,5 +58,32 @@ export const findProviderRefund = async (
         }
         default:
             throw new Error(`Refunds aren't supported for ${providerName(payment)}`)
+    }
+}
+
+// Where the provider says a payment it hasn't confirmed yet stands: `completed`
+// (the money is ours; a refund since doesn't change that), `failed` (nothing
+// was taken), or still `pending`. Throws if the provider can't be asked.
+export const checkProviderPayment = async (payment: IPayment): Promise<PaymentStatus> => {
+    switch (payment.provider) {
+        case "paypal": {
+            const order = await getOrder(payment.providerCheckoutId)
+            const captures = (order.purchase_units ?? []).flatMap((u) => u.payments?.captures ?? [])
+            const capture = captures.find((c) => c.id === payment.providerPaymentId)
+            if (!capture) throw new Error("PayPal has no record of this payment's capture")
+            switch (capture.status) {
+                case "COMPLETED":
+                case "PARTIALLY_REFUNDED":
+                case "REFUNDED":
+                    return "completed"
+                case "DECLINED":
+                case "FAILED":
+                    return "failed"
+                default:
+                    return "pending"
+            }
+        }
+        default:
+            throw new Error(`Payments can't be checked for ${providerName(payment)}`)
     }
 }

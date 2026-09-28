@@ -3,9 +3,9 @@ import { ICartDocument, IPayment } from "src/typings/cart"
 import CartModel from "./model"
 import ShopModel from "../shops/model"
 import createError from "http-errors"
-import { menuRef, removeUnpaidUnits } from "./controllers"
+import { closeIfPaidOff, menuRef, removeUnpaidUnits } from "./controllers"
 import UserModel from "../users/model"
-import { findProviderRefund, providerName, refundPayment, RefundRefused } from "../../lib/payments"
+import { checkProviderPayment, findProviderRefund, providerName, refundPayment, RefundRefused } from "../../lib/payments"
 import { IUserDocument } from "src/typings/users"
 
 // A shop manager's view of the tables' carts (read-only). Both routes run after
@@ -25,7 +25,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100
 // -------------------------------------------------------------------------
 
 type TableState = "free" | "ordering" | "waitingToPay" | "partlyPaid"
-type Attention = "soldOut" | "duplicateCarts" | "staleSelection"
+type Attention = "soldOut" | "duplicateCarts" | "staleSelection" | "paymentPending"
 
 // A table's state from its open carts (newest first; more than one only for
 // legacy duplicates). Money as the diner's cart counts it: the unpaid units of a
@@ -40,6 +40,7 @@ const tableSummary = (carts: ICartDocument[], now: number) => {
     const attention = new Set<Attention>()
 
     if (carts.length > 1) attention.add("duplicateCarts")
+    if (carts.some((c) => c.payments.some((p) => p.status === "pending"))) attention.add("paymentPending")
 
     for (const cart of carts) {
         for (const item of cart.items) {
@@ -159,6 +160,10 @@ export const getTableCarts: TController = async ( req, res, next ) => {
 // manager log. Routes: /shops/:shopId/tables/:tableId/carts/:cartId/<action>.
 
 const CART_CHANGED = "The cart changed, please retry"
+// Closing or merging would take a pending payment's units off the open table
+// before anyone knows whether they were paid.
+const PAYMENT_PENDING = "A payment on this table is still awaiting PayPal: check it first"
+const hasPendingPayment = (cart: ICartDocument) => cart.payments.some((p) => p.status === "pending")
 
 type Params = { shopId: string; tableId: string; cartId: string }
 
@@ -280,6 +285,7 @@ export const closeCart: TController = async ( req, res, next ) => {
     try {
         const cart = await loadManagedCart(req.params as Params)
         if (!cart) return next(createError(404, "Cart Not Found!"))
+        if (hasPendingPayment(cart)) return next(createError(409, PAYMENT_PENDING))
 
         if (neverPaid(cart)) {
             const dropped = dropUnpaid(cart)
@@ -311,6 +317,7 @@ export const mergeInto: TController = async ( req, res, next ) => {
     try {
         const source = await loadManagedCart(req.params as Params)
         if (!source) return next(createError(404, "Cart Not Found!"))
+        if (hasPendingPayment(source)) return next(createError(409, PAYMENT_PENDING))
         const target = await CartModel.findOne({ tableId: source.tableId, status: "open", _id: { $ne: source._id } })
             .sort({ createdAt: -1 })
         if (!target) return next(createError(409, "This table has only one open cart"))
@@ -513,6 +520,12 @@ export const refundItems: TController = async ( req, res, next ) => {
         if (!cart) return next(createError(404, "Cart Not Found!"))
         const payment = findById(cart.payments, paymentId)
         if (!payment) return next(createError(404, "Payment Not Found!"))
+        if (payment.status === "pending") {
+            return next(createError(409, `${providerName(payment)} hasn't confirmed this payment yet: check it first`))
+        }
+        if (payment.status === "failed") {
+            return next(createError(409, `This payment didn't go through at ${providerName(payment)}: nothing was taken`))
+        }
         if (!payment.providerPaymentId) {
             return next(createError(409, `This payment can only be refunded from ${providerName(payment)}`))
         }
@@ -589,6 +602,86 @@ export const retryRefund: TController = async ( req, res, next ) => {
         }
         if (found) return await recordRefund(req, res, next, cartId, payment, refund._id, found.providerRefundId)
         await sendRefund(req, res, next, cartId, payment, refund._id, refund.amount)
+    } catch (error) {
+        next(createError(500, error as Error))
+    }
+}
+
+// -------------------------------------------------------------------------
+// POST /shops/:shopId/carts/:cartId/payments/:paymentId/check
+// Asks the provider about a payment it hadn't confirmed at checkout (see the
+// cart model's `payments.status`). Confirmed: it becomes `completed`, and the
+// cart closes if that was all it was waiting for. Failed: it becomes `failed`
+// and its units are unpaid again, back in the payer's selection so they can
+// pay another way. Still pending: nothing changes (409). Answers
+// { payment, cart }; the payer gets a note.
+
+// The payment's units back to unpaid: its items' paid count, and the payer's
+// paid selections of it (those paid at its time) reopened, into the payer's
+// open selection of the item if they've made one since (one per item).
+const unsettle = (cart: ICartDocument, payment: IPayment) => {
+    const payer = String(payment.userId)
+    for (const line of payment.lines) {
+        const menuId = String(line.menuId)
+        const item = cart.items.find((i) => String(i.menuId) === menuId)
+        if (item) item.qtyPayed = Math.max(0, item.qtyPayed - line.qty)
+        const ofPayer = (s: ICartDocument["split"][number]) => String(s.menuId) === menuId && String(s.userId) === payer
+        for (const s of cart.split) {
+            if (s.splitStatus !== "closed" || !ofPayer(s) || s.paidAt?.getTime() !== payment.paidAt.getTime()) continue
+            const open = cart.split.find((o) => o.splitStatus === "open" && ofPayer(o))
+            if (open) {
+                open.qty += s.qty
+                s.qty = 0
+            } else {
+                s.splitStatus = "open"
+                s.unitPrice = undefined
+                s.paidAt = undefined
+            }
+        }
+    }
+    cart.split = cart.split.filter((s) => s.qty > 0)
+}
+
+export const checkPayment: TController = async ( req, res, next ) => {
+    try {
+        const { shopId, cartId, paymentId } = req.params
+        const cart = await loadShopCart(shopId, cartId)
+        if (!cart) return next(createError(404, "Cart Not Found!"))
+        const payment = findById(cart.payments, paymentId)
+        if (!payment) return next(createError(404, "Payment Not Found!"))
+        if (payment.status !== "pending") return next(createError(409, "This payment isn't awaiting confirmation any more"))
+
+        let status: Awaited<ReturnType<typeof checkProviderPayment>>
+        try {
+            status = await checkProviderPayment(payment)
+        } catch (error) {
+            return next(createError(502,
+                `Couldn't check with ${providerName(payment)} (${(error as Error).message}). Try again shortly.`,
+                { expose: true }))
+        }
+        if (status === "pending") {
+            return next(createError(409, `${providerName(payment)} is still processing this payment. Check again later`))
+        }
+
+        const amount = money(payment.amount, payment.currency)
+        const recorded = await withFreshCart(cartId, (c) => {
+            const p = findById(c.payments, paymentId)
+            if (p?.status !== "pending") return
+            p.status = status
+            if (status === "completed") {
+                note(c, `${providerName(p)} confirmed your payment of ${amount}.`, p.userId)
+                log(c, req, "checkPayment", `${amount} confirmed (payment ${paymentId})`)
+                closeIfPaidOff(c)
+            } else {
+                unsettle(c, p)
+                note(c, `${providerName(p)} didn't complete your payment of ${amount}, so nothing was taken. Those items are unpaid again.`, p.userId)
+                log(c, req, "checkPayment", `${amount} failed at ${providerName(p)} (payment ${paymentId}): its items are unpaid again`)
+            }
+        })
+        if (!recorded) return next(createError(409, CART_CHANGED))
+
+        const fresh = await CartModel.findById(cartId).populate(menuRef("items.menuId")).populate(menuRef("split.menuId"))
+        res.send({ payment: findById(fresh!.payments, paymentId), cart: await managerView(fresh!) })
     } catch (error) {
         next(createError(500, error as Error))
     }

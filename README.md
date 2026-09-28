@@ -371,6 +371,7 @@ Cart Model:
         payments: [
             {
                 provider: "paypal",
+                status: "completed" | "pending" | "failed", // pending: taken, not yet confirmed (see payments/:paymentId/check)
                 providerCheckoutId: string, // PayPal: the order id
                 providerPaymentId: string,  // PayPal: the capture id (what a refund is made against)
                 currency: string,           // "GBP"
@@ -461,7 +462,7 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/shops/:shopId/tables/status
 
-  Shop managers only. One entry per table: `{ tableId, name, state, owed, paid, heldSince?, attention }`. `state` is `free`, `ordering` (items, nothing paid), `waitingToPay` (a diner has items selected) or `partlyPaid`. `attention` flags `soldOut` (unpaid units of an unavailable or deleted item), `staleSelection` (a selection held over 15 minutes) and `duplicateCarts` (more than one open cart). `owed` leaves out sold-out units; `paid` counts units at the price they were paid at.
+  Shop managers only. One entry per table: `{ tableId, name, state, owed, paid, heldSince?, attention }`. `state` is `free`, `ordering` (items, nothing paid), `waitingToPay` (a diner has items selected) or `partlyPaid`. `attention` flags `soldOut` (unpaid units of an unavailable or deleted item), `staleSelection` (a selection held over 15 minutes), `duplicateCarts` (more than one open cart) and `paymentPending` (a payment PayPal hasn't confirmed: check it). `owed` leaves out sold-out units; `paid` counts units at the price they were paid at.
 
 - [ 'GET' ]
 
@@ -476,19 +477,25 @@ These are the available endpoints created for this application. Every mutating r
   baseURL-api/shops/:shopId/tables/:tableId/carts/:cartId/close
   baseURL-api/shops/:shopId/tables/:tableId/carts/:cartId/mergeInto
 
-  Shop managers only; no money moves. `releaseSelection` `{ userId?, menuId? }` frees units held in open selections (everyone's, one diner's or one item's). `removeItem` `{ menuId }` takes out an item's unpaid units by the same rule as the diner's bin. `close` drops every unpaid unit and open selection, keeps the paid ones, and closes the cart (a cart where nothing was ever paid is deleted); it answers `{ deleted, dropped, cart? }`. `mergeInto` moves an older duplicate open cart's unpaid units and selections into the table's newest one. Each leaves a note for the diners (`notices` in their cart responses: the table-wide ones and their own, from the last 2 hours) and an entry in the cart's `managerLog`. A concurrent change to the cart answers `409 The cart changed, please retry`. Deleting a table (or a shop) with an open cart is refused with `409` until it's closed.
+  Shop managers only; no money moves. `releaseSelection` `{ userId?, menuId? }` frees units held in open selections (everyone's, one diner's or one item's). `removeItem` `{ menuId }` takes out an item's unpaid units by the same rule as the diner's bin. `close` drops every unpaid unit and open selection, keeps the paid ones, and closes the cart (a cart where nothing was ever paid is deleted); it answers `{ deleted, dropped, cart? }`. `mergeInto` moves an older duplicate open cart's unpaid units and selections into the table's newest one. Each leaves a note for the diners (`notices` in their cart responses: the table-wide ones and their own, from the last 2 hours) and an entry in the cart's `managerLog`. A concurrent change to the cart answers `409 The cart changed, please retry`. `close` and `mergeInto` answer `409` while a payment on the cart is `pending`. Deleting a table (or a shop) with an open cart is refused with `409` until it's closed.
 
 - [ 'POST' ]
 
   baseURL-api/shops/:shopId/carts/:cartId/refunds
 
-  Shop managers only; money moves. Body `{ paymentId, lines: [{ menuId, qty }] }`: refunds those units of one recorded payment, at the prices it charged, through the payment's provider (PayPal: a partial refund of its capture, with an idempotency key), and takes them out of the cart. Open or closed carts of the shop. A `pending` refund record is saved before the provider is asked, so the same units can't be refunded twice; it then becomes `completed` or `failed`. Answers `{ refund, cart }`; `400` for more than is left to refund, `409` for a payment with no recorded capture (refund it from PayPal), `502` with the provider's reason when it refuses (nothing refunded; the record is `failed`), `502` also when the provider gives no clear answer (a timeout, a provider error, or an earlier request for it still in progress: the refund may have gone through, so the record stays `pending`: retry it), `500` if it went through but couldn't be recorded (the refund stays `pending`: retry it). The payer gets a note.
+  Shop managers only; money moves. Body `{ paymentId, lines: [{ menuId, qty }] }`: refunds those units of one recorded payment, at the prices it charged, through the payment's provider (PayPal: a partial refund of its capture, with an idempotency key), and takes them out of the cart. Open or closed carts of the shop. A `pending` refund record is saved before the provider is asked, so the same units can't be refunded twice; it then becomes `completed` or `failed`. Answers `{ refund, cart }`; `400` for more than is left to refund, `409` for a payment with no recorded capture (refund it from PayPal) or one that is `pending` or `failed`, `502` with the provider's reason when it refuses (nothing refunded; the record is `failed`), `502` also when the provider gives no clear answer (a timeout, a provider error, or an earlier request for it still in progress: the refund may have gone through, so the record stays `pending`: retry it), `500` if it went through but couldn't be recorded (the refund stays `pending`: retry it). The payer gets a note.
 
 - [ 'POST' ]
 
   baseURL-api/shops/:shopId/carts/:cartId/refunds/:refundId/retry
 
   Shop managers only. Settles a `pending` refund. First asks the provider whether it already has it (PayPal: the refund is sent with `custom_id` = the refund's id and looked up on the order); if so, records it as the provider says (`completed`, or `failed`). If not, sends it again under the same id, which the provider can't apply twice. Answers `{ refund, cart }` like the refund route, with the same `502`/`500` cases; `409` if the refund isn't `pending`, `502` if the provider can't be asked (still `pending`).
+
+- [ 'POST' ]
+
+  baseURL-api/shops/:shopId/carts/:cartId/payments/:paymentId/check
+
+  Shop managers only. Asks the provider about a `pending` payment (one PayPal held for review at checkout). Confirmed: it becomes `completed`, and the cart closes if everything on it is paid. Declined or failed: it becomes `failed` and its units are unpaid again, back in the payer's selection (nothing was taken). Answers `{ payment, cart }` and the payer gets a note; `409` if PayPal is still processing it (nothing changes) or it isn't `pending`, `502` if the provider can't be asked.
 
 - [ 'POST', 'GET' ]
 
@@ -550,7 +557,7 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/carts/tables/:tableId/:cartId/captureCheckout
 
-  Server-side checkout, step 2 of 2 — the money-moving endpoint. Body: `{ paypalOrderId }`. Confirms the buyer-approved order was minted for THIS cart + payer (`custom_id` match — `402` otherwise) and still matches the amount due (`409` if the caller changed their selection), re-checks availability (`409`), rejects sold-out items (`409`, same message as `createCheckoutOrder`), and only THEN captures the payment. If a concurrent payer takes the units in the tiny window after capture, the buyer is refunded automatically and the request returns `409` — so a rejection never leaves anyone charged for nothing. Order-id replay is rejected with `402` before any charge. A capture PayPal refuses or declines is `402` (nothing charged); one whose outcome is unknown (no answer, a PayPal error, a request still in progress) or that PayPal holds as `PENDING` is `502`, asking the diner to contact staff before paying again, with the order id: nothing is recorded for it, so staff check it in PayPal. Settlements are recorded per payer in the cart's `paypalOrderIds`, and each one as a provider-neutral payment record (provider, its checkout and payment ids, payer, time, amount and currency, and every line at the price charged; kept out of diner responses). The paid splits carry `unitPrice` and `paidAt`, so what the cart says was paid doesn't change when a menu price is edited later. Together with `createCheckoutOrder` this is **the** checkout flow (charge only after reserving).
+  Server-side checkout, step 2 of 2 — the money-moving endpoint. Body: `{ paypalOrderId }`. Confirms the buyer-approved order was minted for THIS cart + payer (`custom_id` match — `402` otherwise) and still matches the amount due (`409` if the caller changed their selection), re-checks availability (`409`), rejects sold-out items (`409`, same message as `createCheckoutOrder`), and only THEN captures the payment. If a concurrent payer takes the units in the tiny window after capture, the buyer is refunded automatically and the request returns `409` — so a rejection never leaves anyone charged for nothing. Order-id replay is rejected with `402` before any charge. A capture PayPal refuses or declines is `402` (nothing charged); one whose outcome is unknown (no answer, a PayPal error, a request still in progress, or the order already captured by an earlier request) is `502`, asking the diner to contact staff before paying again, with the order id: nothing is recorded for it, so staff check it in PayPal. A capture PayPal holds as `PENDING` (taken, under review) settles like a completed one but answers `202`: its payment record is `pending`, its units are held as paid, and the cart stays open until a manager checks it (`payments/:paymentId/check`). Settlements are recorded per payer in the cart's `paypalOrderIds`, and each one as a provider-neutral payment record (provider, its checkout and payment ids, payer, time, amount and currency, and every line at the price charged; kept out of diner responses). The paid splits carry `unitPrice` and `paidAt`, so what the cart says was paid doesn't change when a menu price is edited later. Together with `createCheckoutOrder` this is **the** checkout flow (charge only after reserving).
 
 - [ 'GET' ]
 

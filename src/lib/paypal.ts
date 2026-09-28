@@ -119,7 +119,9 @@ const refusedStatus = (status: number) => status < 500 && status !== 409 && stat
 
 // PayPal answered and refused the capture, or it was never sent (no token):
 // nothing was charged. Anything else captureOrder throws (a network error, a
-// timeout, a 5xx, a request still in progress) leaves the outcome unknown.
+// timeout, a 5xx, a request still in progress, or ORDER_ALREADY_CAPTURED: a
+// second capture of an order an earlier request already charged) leaves the
+// outcome unknown.
 export class PayPalCaptureRefused extends Error {}
 
 // Capture (charge) a buyer-approved order. Returns the full order body so the
@@ -138,8 +140,12 @@ export const captureOrder = async (orderId: string): Promise<PayPalOrder> => {
     })
 
     if (!res.ok) {
-        const message = `PayPal order capture failed (${res.status})`
-        throw refusedStatus(res.status) ? new PayPalCaptureRefused(message) : new Error(message)
+        const body = (await res.json().catch(() => null)) as { details?: { issue?: string }[] } | null
+        const issue = body?.details?.[0]?.issue
+        const message = `PayPal order capture failed (${res.status})${issue ? `: ${issue}` : ""}`
+        throw refusedStatus(res.status) && issue !== "ORDER_ALREADY_CAPTURED"
+            ? new PayPalCaptureRefused(message)
+            : new Error(message)
     }
 
     return (await res.json()) as PayPalOrder

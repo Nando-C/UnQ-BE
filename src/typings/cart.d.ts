@@ -50,10 +50,13 @@ export interface IManagerLogEntry {
 // have none (their closed splits have no unitPrice either). Provider-neutral:
 // only `provider` says whose ids the two provider* fields are.
 export type PaymentProvider = "paypal"
+// See the model: pending until the provider confirms it.
+export type PaymentStatus = "completed" | "pending" | "failed"
 
 export interface IPayment {
     _id?: Types.ObjectId // set by Mongoose on push
     provider: PaymentProvider
+    status: PaymentStatus
     providerCheckoutId: string
     providerPaymentId?: string
     currency: string

@@ -113,6 +113,13 @@ describe("captureOrder", () => {
         await expect(captureOrder("ORDER-1")).rejects.toBeInstanceOf(PayPalCaptureRefused)
     })
 
+    it("doesn't say refused when an earlier request already captured the order", async () => {
+        fakeFetch({ status: 422, body: { name: "UNPROCESSABLE_ENTITY", details: [{ issue: "ORDER_ALREADY_CAPTURED" }] } })
+        const error = await captureOrder("ORDER-1").catch((e) => e)
+        expect(error).not.toBeInstanceOf(PayPalCaptureRefused)
+        expect(error.message).toBe("PayPal order capture failed (422): ORDER_ALREADY_CAPTURED")
+    })
+
     it.each([409, 429, 500, 503])("doesn't say refused on a %i, when PayPal may have charged", async (status) => {
         fakeFetch({ status, body: {} })
         const error = await captureOrder("ORDER-1").catch((e) => e)
