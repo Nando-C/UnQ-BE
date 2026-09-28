@@ -640,7 +640,8 @@ export const createCheckoutOrder: TController = async ( req, res, next ) => {
             const paypalOrderId = await createOrder(expectedTotal.toFixed(2), `${cartId}:${user._id}`)
             res.send({ paypalOrderId })
         } catch {
-            return next(createError(502, "Could not create PayPal order"))
+            // Shown to the diner as is (expose), not as "Generic Server Error".
+            return next(createError(502, "Could not create PayPal order", { expose: true }))
         }
     } catch (error) {
         next(createError(500, error as Error))
@@ -749,7 +750,8 @@ export const captureCheckout: TController = async ( req, res, next ) => {
                 settlement: outcome.message,
                 error: refundError,
             })
-            return next(createError(500, `Payment captured but could not be settled or refunded — please contact staff (order ${paypalOrderId})`))
+            // Shown to the diner as is (expose): staff need the order id.
+            return next(createError(500, `Payment captured but could not be settled or refunded — please contact staff (order ${paypalOrderId})`, { expose: true }))
         }
         // 409 with REFUNDED_MARKER's wording either way: the FE tells the buyer
         // they've been refunded.

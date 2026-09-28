@@ -194,6 +194,19 @@ describe("createCheckoutOrder (POST /carts/tables/:tableId/:cartId/createCheckou
         expect(removed.body.split).toHaveLength(0)
     })
 
+    it("says so, as a 502, when PayPal won't create the order", async () => {
+        const { tableId, cartId, customer, addSplit } = await scaffold()
+        await addSplit(customer.cookies, 1)
+        mockedCreateOrder.mockRejectedValue(new Error("PayPal create order failed (500)"))
+
+        const res = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/createCheckoutOrder`)
+            .set("Cookie", customer.cookies)
+
+        expect(res.status).toBe(502)
+        expect(res.body.message).toBe("Could not create PayPal order")
+    })
+
     it("returns 404 when the caller has no open splits", async () => {
         const { tableId, cartId, customer } = await scaffold()
 
@@ -415,6 +428,9 @@ describe("captureCheckout (POST /carts/tables/:tableId/:cartId/captureCheckout)"
             .send({ paypalOrderId: "ORDER-ALICE" })
 
         expect(res.status).toBe(500)
+        // The diner sees the order id to give staff, not "Generic Server Error".
+        expect(res.body.message).toBe(
+            "Payment captured but could not be settled or refunded — please contact staff (order ORDER-ALICE)")
         expect(mockedRefundCapture).toHaveBeenCalledTimes(1)
     })
 })
