@@ -4,6 +4,8 @@ import "./setup"
 import app from "../server"
 import UserModel from "../services/users/model"
 import { cookiesFrom } from "./helpers"
+import { googleUserFor } from "../services/auth/oauth"
+import type GoogleStrategy from "passport-google-oauth20"
 
 const validUser = {
     name: "Ada",
@@ -181,5 +183,47 @@ describe("auth", () => {
             expect(setCookie.join(";")).toMatch(/accessToken=/)
             expect(setCookie.join(";")).toMatch(/refreshToken=/)
         })
+    })
+})
+
+// What Google hands the strategy after a sign-in.
+const googleProfile = (email: string, verified = true) =>
+    ({
+        id: "google-42",
+        name: { givenName: "Ada", familyName: "Lovelace" },
+        emails: [{ value: email, verified }],
+        photos: [{ value: "https://lh3.googleusercontent.example/ada.jpg" }],
+    }) as unknown as GoogleStrategy.Profile
+
+describe("Google sign-in (googleUserFor)", () => {
+    it("links Google to an existing password account with the same verified email", async () => {
+        await request(app).post("/auth/register").send(validUser)
+
+        const user = await googleUserFor(googleProfile(validUser.email))
+
+        const all = await UserModel.find({ email: validUser.email })
+        expect(all).toHaveLength(1)
+        expect(String(user?._id)).toBe(String(all[0]._id))
+        expect(all[0].googleId).toBe("google-42")
+        // The password still works after linking.
+        const login = await request(app).post("/auth/login").send({ email: validUser.email, password: validUser.password })
+        expect(login.status).toBe(200)
+        // And the next Google sign-in finds the same account by its googleId.
+        expect(String((await googleUserFor(googleProfile(validUser.email)))?._id)).toBe(String(all[0]._id))
+    })
+
+    it("won't link when Google hasn't verified the email", async () => {
+        await request(app).post("/auth/register").send(validUser)
+
+        expect(await googleUserFor(googleProfile(validUser.email, false))).toBeNull()
+        expect((await UserModel.findOne({ email: validUser.email }))?.googleId).toBeUndefined()
+    })
+
+    it("creates an account for a new email", async () => {
+        const user = await googleUserFor(googleProfile("new@example.com"))
+
+        expect(user?.email).toBe("new@example.com")
+        expect(user?.googleId).toBe("google-42")
+        expect(await UserModel.countDocuments({ email: "new@example.com" })).toBe(1)
     })
 })

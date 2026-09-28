@@ -16,33 +16,48 @@ const googleStrategy = new GoogleStrategy.Strategy(
 
     async(accessToken, refreshToken, profile, passportNext) => {
         try {
-            const user = await UserModel.findOne({googleId: profile.id})
+            const user = await googleUserFor(profile)
+            // Nobody to sign in: passport answers with the route's failureRedirect.
+            if (!user) return passportNext(null, false)
 
-            if (user) {
-                const tokens = await getTokens(user)
-                passportNext(null, {tokens})
-                
-            } else {
-                const newUser = {
-                    name: profile.name?.givenName,
-                    surname: profile.name?.familyName,
-                    email: profile.emails![0].value,  // double check typings here
-                    avatar: profile.photos![0].value, // double check typings here
-                    googleId: profile.id,
-                }
-                
-                const createdUser = new UserModel(newUser)
-                const savedUser = await createdUser.save()
-                const tokens = await getTokens(savedUser)
-
-                passportNext(null, {user: savedUser, tokens})
-            }
-            
+            const tokens = await getTokens(user)
+            passportNext(null, {user, tokens})
         } catch (error) { 
             console.log(error)
             passportNext(error as Error)
         }
     }
 )
+
+// The account a Google sign-in belongs to. Already linked: found by googleId.
+// Otherwise an account with the same email (registered with a password) is
+// linked to this Google account rather than duplicated: creating a second user
+// hit the unique email index and the sign-in failed with a 500. Linking trusts
+// Google's word that the address is the user's own, so only a verified email
+// links; an unverified one that matches an account gets no sign-in (null), as
+// does a profile with no email at all. A new email gets a new account.
+export const googleUserFor = async (profile: GoogleStrategy.Profile) => {
+    const linked = await UserModel.findOne({googleId: profile.id})
+    if (linked) return linked
+
+    const email = profile.emails?.[0]
+    if (!email?.value) return null
+
+    const existing = await UserModel.findOne({email: email.value})
+    if (existing) {
+        if (!email.verified) return null
+        existing.googleId = profile.id
+        if (!existing.avatar) existing.avatar = profile.photos?.[0]?.value
+        return existing.save()
+    }
+
+    return new UserModel({
+        name: profile.name?.givenName,
+        surname: profile.name?.familyName,
+        email: email.value,
+        avatar: profile.photos?.[0]?.value,
+        googleId: profile.id,
+    }).save()
+}
 
 export default googleStrategy

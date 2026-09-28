@@ -357,6 +357,31 @@ describe("captureCheckout (POST /carts/tables/:tableId/:cartId/captureCheckout)"
         expect(cart?.paypalOrderIds).not.toContain("ORDER-ALICE")
     })
 
+    it("refunds when saving the settlement fails after capture, instead of keeping the money", async () => {
+        const { tableId, cartId, customer, addSplit } = await scaffold()
+        await addSplit(customer.cookies, 2)
+        mockedGetOrder.mockResolvedValue(approvedOrder("6.00", `${cartId}:${customer.user._id}`))
+        mockedCaptureOrder.mockResolvedValue(capturedOrder("6.00", { captureId: "CAPTURE-9" }))
+        mockedRefundCapture.mockResolvedValue(undefined as never)
+        // The database fails on the settlement save (not a version conflict).
+        const save = jest.spyOn(CartModel.prototype, "save").mockRejectedValueOnce(new Error("db down"))
+        const quiet = jest.spyOn(console, "error").mockImplementation(() => {})
+
+        const res = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/captureCheckout`)
+            .set("Cookie", customer.cookies)
+            .send({ paypalOrderId: "ORDER-1" })
+        save.mockRestore()
+        quiet.mockRestore()
+
+        expect(res.status).toBe(409)
+        expect(res.body.message).toMatch(/your payment was refunded/)
+        expect(mockedRefundCapture).toHaveBeenCalledWith("CAPTURE-9")
+        const cart = await CartModel.findById(cartId)
+        expect(cart?.split[0].splitStatus).toBe("open")
+        expect(cart?.paypalOrderIds ?? []).toEqual([])
+    })
+
     it("returns 500 (contact staff) when the post-capture refund itself fails", async () => {
         await CartModel.syncIndexes()
         const { tableId, cartId, customer, menuId, addSplit, addNamedItem } = await scaffold({ qty: 1 })
@@ -389,6 +414,43 @@ describe("captureCheckout (POST /carts/tables/:tableId/:cartId/captureCheckout)"
 
         expect(res.status).toBe(500)
         expect(mockedRefundCapture).toHaveBeenCalledTimes(1)
+    })
+})
+
+describe("a cart id used under another table's URL", () => {
+    it("is refused on the split and checkout routes", async () => {
+        const { owner, shopId, cartId, customer, menuId } = await scaffold()
+        const otherTable = (
+            await request(app).post(`/shops/${shopId}/tables`).set("Cookie", owner.cookies).send({ name: "T2" })
+        ).body._id
+
+        const split = await request(app)
+            .post(`/carts/${shopId}/tables/${otherTable}/${cartId}/addSplitItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 1 })
+        expect(split.status).toBe(404)
+        expect((await CartModel.findById(cartId))?.split).toHaveLength(0)
+
+        for (const step of ["decreaseSplitItem", "removeSplitItem"]) {
+            const res = await request(app)
+                .post(`/carts/${shopId}/tables/${otherTable}/${cartId}/${step}`)
+                .set("Cookie", customer.cookies)
+                .send({ menuId })
+            expect(res.status).toBe(404)
+        }
+
+        const order = await request(app)
+            .post(`/carts/tables/${otherTable}/${cartId}/createCheckoutOrder`)
+            .set("Cookie", customer.cookies)
+        expect(order.status).toBe(404)
+
+        const capture = await request(app)
+            .post(`/carts/tables/${otherTable}/${cartId}/captureCheckout`)
+            .set("Cookie", customer.cookies)
+            .send({ paypalOrderId: "ORDER-1" })
+        expect(capture.status).toBe(404)
+        expect(mockedCreateOrder).not.toHaveBeenCalled()
+        expect(mockedCaptureOrder).not.toHaveBeenCalled()
     })
 })
 

@@ -287,7 +287,8 @@ export const addSplitItem: TController = async ( req, res, next ) => {
 
         // Plain reads for the 404s and the sold-out rule. They are not the
         // availability guard — that lives in the updates below.
-        const cart = await CartModel.findOne({ _id: cartId, status: "open" })
+        const tableId = req.params.tableId
+        const cart = await CartModel.findOne({ _id: cartId, tableId, status: "open" })
         if (!cart) return next(createError(404, "Cart Not Found!"))
 
         const item = cart.items.find((i) => i.menuId.toString() === menuId.toString())
@@ -310,13 +311,13 @@ export const addSplitItem: TController = async ( req, res, next ) => {
         // concurrent request just created the entry), so try the pair twice.
         for (let attempt = 0; attempt < 2; attempt++) {
             const grown = await CartModel.findOneAndUpdate(
-                { _id: cartId, status: "open", split: { $elemMatch: mine }, ...fits },
+                { _id: cartId, tableId, status: "open", split: { $elemMatch: mine }, ...fits },
                 { $inc: { "split.$.qty": qty } }
             ).populate(menuRef("split.menuId")).populate(menuRef("items.menuId"))
             if (grown) return res.send(grown)
 
             const started = await CartModel.findOneAndUpdate(
-                { _id: cartId, status: "open", split: { $not: { $elemMatch: mine } }, ...fits },
+                { _id: cartId, tableId, status: "open", split: { $not: { $elemMatch: mine } }, ...fits },
                 { $push: { split: { userId: user._id, menuId: menuOid, qty } } }
             ).populate(menuRef("split.menuId")).populate(menuRef("items.menuId"))
             if (started) return res.send(started)
@@ -340,12 +341,12 @@ export const decreaseSplitItem: TController = async ( req, res, next ) => {
             ...req.body
         }
 
-        const isItemThere = await CartModel.findOne({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } })
+        const isItemThere = await CartModel.findOne({_id: cartId, tableId: req.params.tableId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } })
 
         if (isItemThere) {
-            const decreasedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $inc: { "split.$.qty": -(1) }}).populate(menuRef("split.menuId")).populate(menuRef("items.menuId"))
+            const decreasedItem = await CartModel.findOneAndUpdate({_id: cartId, tableId: req.params.tableId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $inc: { "split.$.qty": -(1) }}).populate(menuRef("split.menuId")).populate(menuRef("items.menuId"))
 
-            const removedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $pull: { split: { qty: { $lte: 0 } }}}).populate(menuRef("split.menuId")).populate(menuRef("items.menuId"))
+            const removedItem = await CartModel.findOneAndUpdate({_id: cartId, tableId: req.params.tableId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $pull: { split: { qty: { $lte: 0 } }}}).populate(menuRef("split.menuId")).populate(menuRef("items.menuId"))
             
             if (removedItem) {
                 res.send(removedItem)
@@ -372,12 +373,12 @@ export const removeSplitItem: TController = async ( req, res, next ) => {
             ...req.body
         }
 
-        const isItemThere = await CartModel.findOne({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } })
+        const isItemThere = await CartModel.findOne({_id: cartId, tableId: req.params.tableId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } })
 
         if (isItemThere) {
-            const decreasedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $set: { "split.$.qty": 0 }}).populate(menuRef("split.menuId")).populate(menuRef("items.menuId"))
+            const decreasedItem = await CartModel.findOneAndUpdate({_id: cartId, tableId: req.params.tableId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $set: { "split.$.qty": 0 }}).populate(menuRef("split.menuId")).populate(menuRef("items.menuId"))
 
-            const removedItem = await CartModel.findOneAndUpdate({_id: cartId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $pull: { split: { qty: { $lte: 0 } }}}).populate(menuRef("split.menuId")).populate(menuRef("items.menuId"))
+            const removedItem = await CartModel.findOneAndUpdate({_id: cartId, tableId: req.params.tableId, split: { $elemMatch: {userId: user._id, menuId: splitItem.menuId, splitStatus: "open"} } }, { $pull: { split: { qty: { $lte: 0 } }}}).populate(menuRef("split.menuId")).populate(menuRef("items.menuId"))
 
             if (removedItem) {
                 res.send(removedItem)
@@ -408,8 +409,11 @@ const menuIdOf = (ref: ISplitItem["menuId"]): string => {
     return (populated._id ?? ref).toString()
 }
 
-const loadOpenCart = (cartId: string) =>
-    CartModel.findOne({ _id: cartId, status: "open" })
+// The cart must be the one of the table in the URL: a cart id is otherwise
+// enough to act on any table's cart (a stale page after moving tables, or a
+// tampered request).
+const loadOpenCart = (cartId: string, tableId: string) =>
+    CartModel.findOne({ _id: cartId, tableId, status: "open" })
         .populate(menuRef("split.menuId"))
         .populate(menuRef("items.menuId"))
 
@@ -483,6 +487,7 @@ type SettleOutcome =
 // times. `order` is captureCheckout's own COMPLETED capture result.
 const settleCheckout = async (
     cartId: string,
+    tableId: string,
     initialCart: ICartDocument,
     initialSplits: ISplitItem[],
     userId: mongoose.Types.ObjectId,
@@ -509,7 +514,7 @@ const settleCheckout = async (
             }
 
             // Reload and re-derive from the fresh doc before the next attempt.
-            const reloaded = await loadOpenCart(cartId)
+            const reloaded = await loadOpenCart(cartId, tableId)
             if (!reloaded) return { ok: false, status: 404, message: "Cart Not Found!" }
             // Re-check replay too: the payer we just conflicted with may have
             // recorded THIS very order id — on this same cart, where the unique
@@ -543,7 +548,7 @@ export const createCheckoutOrder: TController = async ( req, res, next ) => {
         const user = req.user as IUserDocument
         const cartId = req.params.cartId
 
-        const cart = await loadOpenCart(cartId)
+        const cart = await loadOpenCart(cartId, req.params.tableId)
         if (!cart) return next(createError(404, "Cart Not Found!"))
 
         const openSplits = callerOpenSplits(cart, user._id)
@@ -589,7 +594,7 @@ export const captureCheckout: TController = async ( req, res, next ) => {
         if (alreadyUsed) return next(createError(402, "This PayPal order has already been used"))
 
         // (b) Load the open cart + the caller's open splits.
-        const cart = await loadOpenCart(cartId)
+        const cart = await loadOpenCart(cartId, req.params.tableId)
         if (!cart) return next(createError(404, "Cart Not Found!"))
 
         const openSplits = callerOpenSplits(cart, user._id)
@@ -646,7 +651,16 @@ export const captureCheckout: TController = async ( req, res, next ) => {
 
         // (f) Settle under optimistic concurrency, re-verifying against our own
         // capture result on any version conflict.
-        const outcome = await settleCheckout(cartId, cart, openSplits, user._id, paypalOrderId, captured)
+        // Any failure from here on happens AFTER the money moved, so it must
+        // reach the refund below: a database error while saving is not an
+        // excuse to keep the buyer's money with nothing recorded.
+        let outcome: SettleOutcome
+        try {
+            outcome = await settleCheckout(cartId, req.params.tableId, cart, openSplits, user._id, paypalOrderId, captured)
+        } catch (settleError) {
+            console.error("Settling a captured PayPal payment failed", { paypalOrderId, error: settleError })
+            outcome = { ok: false, status: 500, message: "The payment could not be recorded" }
+        }
         if (outcome.ok) return res.send(outcome.cart)
 
         // (g) The buyer HAS been charged but the settlement is impossible (a
@@ -663,7 +677,11 @@ export const captureCheckout: TController = async ( req, res, next ) => {
             })
             return next(createError(500, `Payment captured but could not be settled or refunded — please contact staff (order ${paypalOrderId})`))
         }
-        return next(createError(409, "A concurrent payment took these items — your payment was refunded"))
+        // 409 with REFUNDED_MARKER's wording either way: the FE tells the buyer
+        // they've been refunded.
+        return next(createError(409, outcome.status === 500
+            ? "Your payment could not be recorded — your payment was refunded"
+            : "A concurrent payment took these items — your payment was refunded"))
     } catch (error) {
         next(createError(500, error as Error))
     }
