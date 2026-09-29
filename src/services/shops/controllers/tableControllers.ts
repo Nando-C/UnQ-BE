@@ -12,18 +12,20 @@ export const createTable: TController = async ( req, res, next ) => {
         const shopId = req.params.shopId
         const newTable = req.body
 
-        const existingTableName = await ShopModel.findOne( {_id: shopId, "tables.name": newTable.name} )
-         if (existingTableName) return next(createError(400, `Table name: '${newTable.name}' already exist!`))
-
         const _id = new mongoose.Types.ObjectId()
         const Qr_Url = `${env.FRONTEND_ORIGIN}/shops/${shopId}/tables/${_id}`
 
-        const modifiedShop = await ShopModel.findByIdAndUpdate(
-            shopId,
+        // The name check is part of the update, so two requests at once (a
+        // double tap) can't both pass it and add two tables of one name.
+        const modifiedShop = await ShopModel.findOneAndUpdate(
+            { _id: shopId, "tables.name": { $ne: newTable.name } },
             { $push: { tables: { _id, name: newTable.name, Qr_Url } } },
             { runValidators: true }
         )
-        if (!modifiedShop) return next(createError(404, "Shop Not Found!"))
+        if (!modifiedShop) {
+            if (!(await ShopModel.exists({ _id: shopId }))) return next(createError(404, "Shop Not Found!"))
+            return next(createError(400, `Table name: '${newTable.name}' already exist!`))
+        }
 
         res.send({ _id, name: newTable.name, Qr_Url })
     } catch (error) {
@@ -72,18 +74,28 @@ export const editTable: TController = async ( req, res, next ) => {
         const shopId = req.params.shopId
         const tableId = req.params.tableId
         const modification = req.body
+        if (!mongoose.isValidObjectId(tableId)) return next(createError(404, "Table Not Found!"))
+        const tableOid = new mongoose.Types.ObjectId(tableId)
 
         // Same rule as createTable: two tables of one name have QR codes and
-        // status cards that can't be told apart.
-        const sameName = await ShopModel.findOne({ _id: shopId, tables: { $elemMatch: { name: modification.name, _id: { $ne: tableId } } } })
-        if (sameName) return next(createError(400, `Table name: '${modification.name}' already exist!`))
-
+        // status cards that can't be told apart. The check is part of the
+        // update, so a rename racing a create or another rename can't pass it
+        // too. The table is picked by an array filter, not the positional $,
+        // which a second condition on `tables` would make ambiguous.
         const modifiedShop = await ShopModel.findOneAndUpdate(
-            { _id: shopId, tables: { $elemMatch: {_id: tableId} } },
-            { $set: { "tables.$.name": modification.name } },
-            { runValidators: true }
+            {
+                _id: shopId,
+                "tables._id": tableOid,
+                tables: { $not: { $elemMatch: { name: modification.name, _id: { $ne: tableOid } } } },
+            },
+            { $set: { "tables.$[table].name": modification.name } },
+            { runValidators: true, arrayFilters: [{ "table._id": tableOid }] }
         )
-        if (!modifiedShop) return next(createError(404, "Table Not Found!"))
+        if (!modifiedShop) {
+            const tableExists = await ShopModel.exists({ _id: shopId, "tables._id": tableOid })
+            if (!tableExists) return next(createError(404, "Table Not Found!"))
+            return next(createError(400, `Table name: '${modification.name}' already exist!`))
+        }
 
         res.send(modifiedShop.tables)
     } catch (error) {

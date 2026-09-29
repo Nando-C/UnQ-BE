@@ -1,6 +1,6 @@
 import { TController } from "src/typings/controllers"
 import { ICartDocument, IPayment } from "src/typings/cart"
-import CartModel from "./model"
+import CartModel, { tookPart } from "./model"
 import ShopModel from "../shops/model"
 import createError from "http-errors"
 import { closeIfPaidOff, menuRef, removeUnpaidUnits } from "./controllers"
@@ -201,6 +201,17 @@ const units = (qty: number, menuRef: unknown) => `${qty}× ${nameOf(menuRef)}`
 const note = (cart: ICartDocument, message: string, forUserId?: unknown) =>
     cart.notices.push({ at: new Date(), message, ...(forUserId ? { forUserId: forUserId as never } : {}) })
 
+// The diners with an open selection, before an action drops them.
+const openSelectors = (cart: ICartDocument) =>
+    [...new Set(cart.split.filter((s) => s.splitStatus === "open").map((s) => String(s.userId)))]
+
+// Once a cart is closed, its table-wide notices reach only the diners who took
+// part in it (tookPart). One whose only part was a selection the action just
+// dropped would miss them, so they get the note addressed to them.
+const noteDroppedSelectors = (cart: ICartDocument, selectors: string[], message: string) => {
+    for (const id of selectors) if (!tookPart(cart, id)) note(cart, message, id)
+}
+
 const log = (cart: ICartDocument, req: Parameters<TController>[0], action: string, details: string) =>
     cart.managerLog.push({ at: new Date(), byUserId: (req.user as IUserDocument)._id, action, details })
 
@@ -264,8 +275,10 @@ export const releaseSelection: TController = async ( req, res, next ) => {
     }
 }
 
-// POST …/removeItem { menuId }: takes an item's unpaid units out of the cart,
-// by the same rule as the diner's bin; paid units stay as the record.
+// POST …/removeItem { menuId }: takes all of an item's unpaid units out of the
+// cart, diners' selections of it included (the diner's bin leaves others'
+// selections); paid units stay as the record. A cart left with nothing ordered
+// and nothing paid closes, so the table is free again.
 export const removeItem: TController = async ( req, res, next ) => {
     try {
         const cart = await loadManagedCart(req.params as Params)
@@ -277,8 +290,11 @@ export const removeItem: TController = async ( req, res, next ) => {
         if (line.qty <= line.qtyPayed) return next(createError(409, "Nothing unpaid to remove"))
 
         const what = units(line.qty - line.qtyPayed, line.menuId)
+        const selectors = openSelectors(cart)
         removeUnpaidUnits(cart, menuId)
-        note(cart, `The staff removed ${what} from this table's cart.`)
+        const message = `The staff removed ${what} from this table's cart.`
+        note(cart, message)
+        if (cart.status === "closed") noteDroppedSelectors(cart, selectors, message)
         log(cart, req, "removeItem", what)
 
         if (!(await saveChecked(cart))) return next(createError(409, CART_CHANGED))
@@ -304,9 +320,11 @@ export const closeCart: TController = async ( req, res, next ) => {
             return res.send({ deleted: true, dropped })
         }
 
+        const selectors = openSelectors(cart)
         const dropped = dropUnpaid(cart)
         cart.status = "closed"
         note(cart, "The staff closed this table.")
+        noteDroppedSelectors(cart, selectors, "The staff closed this table.")
         log(cart, req, "close", dropped.length
             ? `dropped ${dropped.map((d) => `${d.qty}× ${d.name}`).join(", ")}`
             : "nothing unpaid")

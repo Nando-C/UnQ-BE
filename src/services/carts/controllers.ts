@@ -1,7 +1,7 @@
 import { TController } from "src/typings/controllers"
 import { IUserDocument } from "src/typings/users"
 import { ICartDocument, ISplitItem } from "src/typings/cart"
-import CartModel, { dinerView } from "./model"
+import CartModel, { dinerView, noticesFor, NOTICE_MAX_AGE_MS, tookPart } from "./model"
 import { Request } from "express"
 import createError from "http-errors"
 import mongoose from "mongoose"
@@ -58,6 +58,18 @@ export const getMyCarts: TController = async ( req, res, next) => {
 
 // -------------------------------------------------------------------------
 
+// The recent notices of the table's closed carts for this viewer: all of a
+// cart's they took part in (tookPart), and on any other only those addressed to
+// them (a selection of theirs the close dropped). Someone new gets none.
+const closedCartNotices = async (tableId: string, viewerId: unknown) => {
+    const since = new Date(Date.now() - NOTICE_MAX_AGE_MS)
+    const carts = await CartModel.find({ tableId, status: "closed", "notices.at": { $gte: since } })
+    const viewer = String(viewerId)
+    const theirs = (cart: ICartDocument) =>
+        tookPart(cart, viewer) ? cart.notices : cart.notices.filter((n) => n.forUserId && String(n.forUserId) === viewer)
+    return noticesFor(carts.flatMap(theirs), viewerId)
+}
+
 export const getTableCart: TController = async ( req, res, next ) => {
     try {
         const tableId = req.params.tableId
@@ -69,8 +81,17 @@ export const getTableCart: TController = async ( req, res, next ) => {
             .populate(menuRef("items.menuId"))
             .populate(menuRef("split.menuId"))
 
-        if (!cart) return next(createError(404, `Cart Not Found!`))
-        
+        if (!cart) {
+            // No open cart: none yet, or the table was closed or paid off. A
+            // diner who took part in a cart closed lately still gets its
+            // notices ("The staff closed this table", their refund), which
+            // otherwise nobody would see. Someone new at the table gets none.
+            const viewer = (req.user as IUserDocument | undefined)?._id
+            const notices = viewer ? await closedCartNotices(tableId, viewer) : []
+            res.status(404).json({ message: "Cart Not Found!", notices })
+            return
+        }
+
         res.send(forDiner(cart, req))
     } catch (error) {
         next(createError(500, error as Error))
@@ -264,6 +285,10 @@ export const removeUnpaidUnits = (cart: ICartDocument, menuId: string, dinerId?:
     // includes a cart left with no items beside its payments (refunds take
     // their units out).
     if (cart.items.length > 0 || cart.payments.length > 0) closeIfPaidOff(cart)
+    // Nothing ordered and nothing paid: the table is free again. Left open, it
+    // would still count as having a cart (so it couldn't be deleted), and the
+    // next party would order into it, notices and all.
+    else cart.status = "closed"
     return removed
 }
 
@@ -304,6 +329,20 @@ export const deleteItem: TController = async ( req, res, next ) => {
                 return next(createError(409, "The cart changed, please retry"))
             }
             throw error
+        }
+
+        // Emptied by the bin, with nothing to keep a record of: it goes, as
+        // decreaseItem's emptied cart does (204). One a manager acted on, or
+        // with payments or refunds, stays closed instead.
+        if (cart.status === "closed" && cart.items.length === 0) {
+            const deleted = await CartModel.findOneAndDelete({
+                _id: cart._id, status: "closed", items: [],
+                "payments.0": { $exists: false }, "refunds.0": { $exists: false }, "managerLog.0": { $exists: false },
+            })
+            if (deleted) {
+                res.status(204).send()
+                return
+            }
         }
 
         res.send(forDiner(await cart.populate([menuRef("items.menuId"), menuRef("split.menuId")]), req))

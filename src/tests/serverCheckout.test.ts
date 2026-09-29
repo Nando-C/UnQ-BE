@@ -191,9 +191,9 @@ describe("createCheckoutOrder (POST /carts/tables/:tableId/:cartId/createCheckou
             .post(`/carts/${shopId}/tables/${tableId}/deleteItem`)
             .set("Cookie", customer.cookies)
             .send({ menuId })
-        expect(removed.status).toBe(200)
-        expect(removed.body.items).toHaveLength(0)
-        expect(removed.body.split).toHaveLength(0)
+        // It was the only line and nothing was paid: the emptied cart goes.
+        expect(removed.status).toBe(204)
+        expect(await CartModel.findById(cartId)).toBeNull()
     })
 
     it("says so, as a 502, when PayPal won't create the order", async () => {

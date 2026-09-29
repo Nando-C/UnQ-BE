@@ -481,7 +481,7 @@ These are the available endpoints created for this application. Every mutating r
   baseURL-api/shops/:shopId/tables/:tableId/carts/:cartId/close
   baseURL-api/shops/:shopId/tables/:tableId/carts/:cartId/mergeInto
 
-  Shop managers only; no money moves. `releaseSelection` `{ userId?, menuId? }` frees units held in open selections (everyone's, one diner's or one item's); `userId: null` means the diners whose account no longer exists. `removeItem` `{ menuId }` takes out all of an item's unpaid units, including those in diners' open selections (unlike the diner's bin, which leaves other diners' selections alone). `close` drops every unpaid unit and open selection, keeps the paid ones, and closes the cart (a cart where nothing was ever paid is deleted, unless a payment settled on it meanwhile: then `409`); it answers `{ deleted, dropped, cart? }`. `mergeInto` moves an older duplicate open cart's unpaid units and selections into the table's newest one. Each leaves a note for the diners (`notices` in their cart responses: the table-wide ones and their own, from the last 2 hours) and an entry in the cart's `managerLog`. A concurrent change to the cart answers `409 The cart changed, please retry`. `close` and `mergeInto` answer `409` while a payment on the cart is `pending`. Deleting a table (or a shop) with an open cart is refused with `409` until it's closed.
+  Shop managers only; no money moves. `releaseSelection` `{ userId?, menuId? }` frees units held in open selections (everyone's, one diner's or one item's); `userId: null` means the diners whose account no longer exists. `removeItem` `{ menuId }` takes out all of an item's unpaid units, including those in diners' open selections (unlike the diner's bin, which leaves other diners' selections alone); a cart left with nothing ordered and nothing paid closes, so the table is free again. `close` drops every unpaid unit and open selection, keeps the paid ones, and closes the cart (a cart where nothing was ever paid is deleted, unless a payment settled on it meanwhile: then `409`); it answers `{ deleted, dropped, cart? }`. `mergeInto` moves an older duplicate open cart's unpaid units and selections into the table's newest one. Each leaves a note for the diners (`notices` in their cart responses: the table-wide ones and their own, from the last 2 hours) and an entry in the cart's `managerLog`. A concurrent change to the cart answers `409 The cart changed, please retry`. `close` and `mergeInto` answer `409` while a payment on the cart is `pending`. Deleting a table (or a shop) with an open cart is refused with `409` until it's closed.
 
 - [ 'POST' ]
 
@@ -537,7 +537,7 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/carts/:shopId/tables/:tableId/deleteItem
 
-  Removes the item's **unpaid** units that no other diner has selected to pay for. The paid units stay (the payment record), and so do the units in other diners' open splits, with those splits; the caller's own selection goes with the units. A sold-out or deleted item goes whoever selected it, since nobody can pay for it. `409` (`"Someone at the table is paying for those"`) when there's nothing the caller may remove. If nothing unpaid remains, the cart is closed.
+  Removes the item's **unpaid** units that no other diner has selected to pay for. The paid units stay (the payment record), and so do the units in other diners' open splits, with those splits; the caller's own selection goes with the units. A sold-out or deleted item goes whoever selected it, since nobody can pay for it. `409` (`"Someone at the table is paying for those"`) when there's nothing the caller may remove. If nothing unpaid remains, the cart is closed; if nothing is left at all, it is deleted and the answer is `204` (unless a manager acted on it or it holds payments or refunds: then it stays, closed).
 
 - [ 'POST' ]
 
@@ -569,7 +569,7 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/carts/tables/:tableId
 
-  Public: the table's open cart, for everyone at the table. When the request carries a valid login, the response also includes that diner's own notices; no login gets the public view; an expired or invalid one gets a `401` (refresh it and ask again).
+  Public: the table's open cart, for everyone at the table. When the request carries a valid login, the response also includes that diner's own notices; no login gets the public view; an expired or invalid one gets a `401` (refresh it and ask again). With no open cart it answers `404 { message, notices }`: the recent notices (last 2 hours) of the table's closed carts that the signed-in caller took part in (started, selected on, or paid on), e.g. "The staff closed this table." or their refund; a diner whose only part was a selection the close dropped gets the note addressed to them. Anyone else, and a guest, gets `notices: []`.
 
 - [ 'GET' ]
 

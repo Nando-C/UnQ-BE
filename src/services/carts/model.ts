@@ -216,27 +216,43 @@ CartSchema.pre(["findOneAndUpdate", "updateOne", "updateMany"], function () {
 CartSchema.index({ tableId: 1 }, { unique: true, partialFilterExpression: { status: "open" } })
 
 // Diners see notices from the last 2 hours, at most the 5 newest.
-const NOTICE_MAX_AGE_MS = 2 * 60 * 60 * 1000
+export const NOTICE_MAX_AGE_MS = 2 * 60 * 60 * 1000
 const NOTICE_MAX = 5
 
 // A cart as a diner may see it. The table's cart is public (no login), so the
 // payment and refund records and the manager log never leave the server this way, and of
 // the notices only the table-wide ones do, plus those meant for `viewerId`
 // when the caller is known. Manager endpoints use toObject() instead.
+// The notices a viewer may see: recent ones, for everyone at the table or for
+// them, newest first. Text only.
+export const noticesFor = (notices: INotice[], viewerId?: unknown) => {
+    const since = Date.now() - NOTICE_MAX_AGE_MS
+    const viewer = viewerId ? String(viewerId) : null
+    return notices
+        .filter((n) =>
+            n.at.getTime() >= since && (!n.forUserId || (viewer && String(n.forUserId) === viewer)))
+        .sort((a, b) => b.at.getTime() - a.at.getTime())
+        .slice(0, NOTICE_MAX)
+        .map((n) => ({ _id: n._id, at: n.at, message: n.message }))
+}
+
+// Whether a diner took part in a cart: they started it, have a selection on
+// it, or paid on it. Once the cart is closed, only they see its table-wide
+// notices (a new party at the table doesn't).
+export const tookPart = (cart: ICartDocument, userId: unknown) => {
+    const id = String(userId)
+    return String(cart.userId) === id ||
+        cart.split.some((s) => String(s.userId) === id) ||
+        cart.payments.some((p) => String(p.userId) === id)
+}
+
 export const dinerView = (cart: ICartDocument, viewerId?: unknown) => {
     const view = cart.toObject()
     delete view.__v
     delete view.payments
     delete view.refunds
     delete view.managerLog
-    const since = Date.now() - NOTICE_MAX_AGE_MS
-    const viewer = viewerId ? String(viewerId) : null
-    view.notices = (view.notices ?? [])
-        .filter((n: INotice) =>
-            n.at.getTime() >= since && (!n.forUserId || (viewer && String(n.forUserId) === viewer)))
-        .sort((a: INotice, b: INotice) => b.at.getTime() - a.at.getTime())
-        .slice(0, NOTICE_MAX)
-        .map((n: INotice) => ({ _id: n._id, at: n.at, message: n.message }))
+    view.notices = noticesFor(view.notices ?? [], viewerId)
     return view
 }
 

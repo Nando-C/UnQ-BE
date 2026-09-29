@@ -133,7 +133,16 @@ describe("close", () => {
         expect(stored?.status).toBe("closed")
         expect(stored?.items.map((i) => [String(i.menuId), i.qty, i.qtyPayed])).toEqual([[latte, 1, 1]])
         expect(stored?.split.every((s) => s.splitStatus === "closed")).toBe(true)
-        expect(stored?.notices.map((n) => n.message)).toEqual(["The staff closed this table."])
+        // For everyone who took part, and addressed to Bo, whose only part
+        // was the selection it dropped; each of them sees it once.
+        expect(stored?.notices.map((n) => [n.message, n.forUserId ? String(n.forUserId) : null])).toEqual([
+            ["The staff closed this table.", null],
+            ["The staff closed this table.", String(bo.user._id)],
+        ])
+        for (const who of [ada, bo]) {
+            const seen = await tableCart().set("Cookie", who.cookies)
+            expect(seen.body.notices.map((n: { message: string }) => n.message)).toEqual(["The staff closed this table."])
+        }
 
         expect((await tableCart()).status).toBe(404)
         const next = await add(bo, latte, 1)
