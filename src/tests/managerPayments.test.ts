@@ -98,6 +98,30 @@ describe("a payment PayPal holds as pending at checkout", () => {
         expect(close.status).toBe(409)
         expect(close.body.message).toBe("A payment on this table is still awaiting PayPal: check it first")
     })
+
+    it("keeps the table open when the diner takes off the last unpaid unit", async () => {
+        const { ada, shopId, tableId, latte, cartId } = await paidPending({ extra: 1 })
+
+        const res = await request(app).post(`/carts/${shopId}/tables/${tableId}/removeItem`).set("Cookie", ada.cookies)
+            .send({ menuId: latte, qty: 1 })
+
+        expect(res.status).toBe(200)
+        const cart = await CartModel.findById(cartId)
+        expect(cart!.items[0]).toMatchObject({ qty: 2, qtyPayed: 2 })
+        expect(cart!.status).toBe("open")
+    })
+
+    it("keeps the table open when a manager removes the last unpaid units", async () => {
+        const { owner, shopId, tableId, latte, cartId } = await paidPending({ extra: 1 })
+
+        const res = await request(app).post(`/shops/${shopId}/tables/${tableId}/carts/${cartId}/removeItem`)
+            .set("Cookie", owner.cookies).send({ menuId: latte })
+
+        expect(res.status).toBe(200)
+        const cart = await CartModel.findById(cartId)
+        expect(cart!.items[0]).toMatchObject({ qty: 2, qtyPayed: 2 })
+        expect(cart!.status).toBe("open")
+    })
 })
 
 describe("POST /shops/:shopId/carts/:cartId/payments/:paymentId/check", () => {
@@ -148,6 +172,18 @@ describe("POST /shops/:shopId/carts/:cartId/payments/:paymentId/check", () => {
         const cart = await CartModel.findById(cartId)
         expect(cart!.split).toHaveLength(1)
         expect(cart!.split[0]).toMatchObject({ qty: 3, splitStatus: "open" })
+    })
+
+    it("reopens a cart that had closed when PayPal declined it, so the units can be paid", async () => {
+        const { check, cartId } = await paidPending()
+        await CartModel.updateOne({ _id: cartId }, { $set: { status: "closed" } })
+        mockedGetOrder.mockResolvedValueOnce(orderWith("DECLINED"))
+
+        expect((await check()).status).toBe(200)
+
+        const cart = await CartModel.findById(cartId)
+        expect(cart!.status).toBe("open")
+        expect(cart!.items[0].qtyPayed).toBe(0)
     })
 
     it("changes nothing while PayPal is still processing it", async () => {

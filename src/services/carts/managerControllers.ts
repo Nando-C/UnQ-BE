@@ -613,8 +613,8 @@ export const retryRefund: TController = async ( req, res, next ) => {
 // cart model's `payments.status`). Confirmed: it becomes `completed`, and the
 // cart closes if that was all it was waiting for. Failed: it becomes `failed`
 // and its units are unpaid again, back in the payer's selection so they can
-// pay another way. Still pending: nothing changes (409). Answers
-// { payment, cart }; the payer gets a note.
+// pay another way (the cart reopens if it had closed). Still pending: nothing
+// changes (409). Answers { payment, cart }; the payer gets a note.
 
 // The payment's units back to unpaid: its items' paid count, and the payer's
 // paid selections of it (those paid at its time) reopened, into the payer's
@@ -674,6 +674,10 @@ export const checkPayment: TController = async ( req, res, next ) => {
                 closeIfPaidOff(c)
             } else {
                 unsettle(c, p)
+                // Its units are owed again, so the cart must take payments:
+                // reopened if it had closed (a second open cart on the table
+                // is flagged, for the manager to merge).
+                c.status = "open"
                 note(c, `${providerName(p)} didn't complete your payment of ${amount}, so nothing was taken. Those items are unpaid again.`, p.userId)
                 log(c, req, "checkPayment", `${amount} failed at ${providerName(p)} (payment ${paymentId}): its items are unpaid again`)
             }

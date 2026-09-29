@@ -495,7 +495,7 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/shops/:shopId/carts/:cartId/payments/:paymentId/check
 
-  Shop managers only. Asks the provider about a `pending` payment (one PayPal held for review at checkout). Confirmed: it becomes `completed`, and the cart closes if everything on it is paid. Declined or failed: it becomes `failed` and its units are unpaid again, back in the payer's selection (nothing was taken). Answers `{ payment, cart }` and the payer gets a note; `409` if PayPal is still processing it (nothing changes) or it isn't `pending`, `502` if the provider can't be asked.
+  Shop managers only. Asks the provider about a `pending` payment (one PayPal held for review at checkout). Confirmed: it becomes `completed`, and the cart closes if everything on it is paid. Declined or failed: it becomes `failed` and its units are unpaid again, back in the payer's selection (nothing was taken); the cart reopens if it had closed, and a second open cart on the table is flagged `duplicateCarts` for the manager to merge. A cart with a `pending` payment never closes on its own, even when every unit is paid. Answers `{ payment, cart }` and the payer gets a note; `409` if PayPal is still processing it (nothing changes) or it isn't `pending`, `502` if the provider can't be asked.
 
 - [ 'POST', 'GET' ]
 

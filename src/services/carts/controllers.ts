@@ -207,9 +207,11 @@ export const decreaseItem: TController = async ( req, res, next ) => {
 
 // -------------------------------------------------------------------------
 
-// A cart whose every item is fully paid, as a query condition.
+// A cart whose every item is fully paid and that has no payment still
+// pending (see closeIfPaidOff), as a query condition.
 const allItemsPaid = {
     items: { $ne: [] },
+    payments: { $not: { $elemMatch: { status: "pending" } } },
     $expr: {
         $allElementsTrue: [{
             $map: { input: "$items", in: { $lte: ["$$this.qty", { $ifNull: ["$$this.qtyPayed", 0] }] } },
@@ -242,8 +244,8 @@ export const removeUnpaidUnits = (cart: ICartDocument, menuId: string) => {
     }
     cart.split = cart.split.filter((s) => !(s.splitStatus === "open" && sameItem(s.menuId)))
     // Same rule settleCheckout applies after a payment: nothing left to pay
-    // means the table is finished.
-    if (cart.items.length > 0 && cart.items.every((i) => i.qty <= i.qtyPayed)) cart.status = "closed"
+    // means the table is finished, unless a payment is still pending.
+    if (cart.items.length > 0) closeIfPaidOff(cart)
     return removed
 }
 
