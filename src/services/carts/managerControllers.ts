@@ -218,16 +218,21 @@ const dropUnpaid = (cart: ICartDocument) => {
 
 // POST …/releaseSelection { userId?, menuId? }: frees units held in open
 // selections (all of them, one diner's, or one item's) so others can pay. Each
-// diner affected gets a note of their own.
+// diner affected gets a note of their own. userId null means the diners whose
+// account no longer exists (the manager sees them as "A diner"): leaving it
+// out would release everyone's.
 export const releaseSelection: TController = async ( req, res, next ) => {
     try {
         const cart = await loadManagedCart(req.params as Params)
         if (!cart) return next(createError(404, "Cart Not Found!"))
-        const { userId, menuId } = req.body as { userId?: string; menuId?: string }
+        const { userId, menuId } = req.body as { userId?: string | null; menuId?: string }
 
+        const existing = userId === null
+            ? new Set((await UserModel.find({ _id: { $in: cart.split.map((s) => s.userId) } }).select("_id")).map((u) => String(u._id)))
+            : null
         const released = cart.split.filter((s) =>
             s.splitStatus === "open" &&
-            (!userId || String(s.userId) === userId) &&
+            (userId === undefined || (existing ? !existing.has(String(s.userId)) : String(s.userId) === userId)) &&
             (!menuId || idOf(s.menuId) === menuId))
         if (released.length === 0) return next(createError(404, "No selection to release"))
 

@@ -36,6 +36,9 @@ const googleStrategy = new GoogleStrategy.Strategy(
 // Google's word that the address is the user's own, so only a verified email
 // links; an unverified one that matches an account gets no sign-in (null), as
 // does a profile with no email at all. A new email gets a new account.
+// Linking also removes the account's password: nothing proved whoever set it
+// owned the address (anyone can register with someone else's email and wait
+// for them to sign in with Google), so from now on only Google signs in.
 export const googleUserFor = async (profile: GoogleStrategy.Profile) => {
     const linked = await UserModel.findOne({googleId: profile.id})
     if (linked) return linked
@@ -47,6 +50,7 @@ export const googleUserFor = async (profile: GoogleStrategy.Profile) => {
     if (existing) {
         if (!email.verified) return null
         existing.googleId = profile.id
+        existing.password = undefined
         if (!existing.avatar) existing.avatar = profile.photos?.[0]?.value
         return existing.save()
     }

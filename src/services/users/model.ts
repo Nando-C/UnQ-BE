@@ -14,10 +14,14 @@ const UserSchema = new Schema<IUserDocument, IUserModel>(
             type: String,
             required: true,
         },
+        // Stored lowercase and trimmed, and lookups by email are cast the same
+        // way, so an address matches however it's capitalised.
         email: {
             type: String,
             unique: true,
             required: true,
+            lowercase: true,
+            trim: true,
         },
         password: {
             type: String,
@@ -37,7 +41,7 @@ const UserSchema = new Schema<IUserDocument, IUserModel>(
 
 // Mongoose 9: async middleware signals completion by resolving — there is no `next`.
 UserSchema.pre("save", async function () {
-    if (this.isModified("password")) this.password = await bcrypt.hash(this.password!, 10)
+    if (this.isModified("password") && this.password) this.password = await bcrypt.hash(this.password!, 10)
 })
 
 UserSchema.statics.checkCredentials = async function (email, password) {
@@ -52,6 +56,9 @@ UserSchema.methods.toJSON = function () {
     const user = this.toObject()
     delete user.__v
     delete user.refreshToken
+    // Whether the account can log in with a password (a Google-only one
+    // can't): changing its email or password then asks for it.
+    user.hasPassword = Boolean(user.password)
     delete user.password
     return user
 }

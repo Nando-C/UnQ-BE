@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto"
 import jwt from "jsonwebtoken"
 import { IJWTPayload } from "src/typings/jwt"
 import { IUserDocument } from "src/typings/users"
@@ -17,9 +18,11 @@ const generateJWT = (payload: IJWTPayload) =>
         })
     )
 
+// Each refresh token gets its own id: two issued within the same second would
+// otherwise be identical, and rotation couldn't tell the old one from the new.
 const generateRefreshJWT = (payload: IJWTPayload) =>
     new Promise((resolve, reject)=>
-        jwt.sign(payload, env.JWT_REFRESH_SECRET, { expiresIn: REFRESH_TOKEN_TTL}, (err, token) => {
+        jwt.sign(payload, env.JWT_REFRESH_SECRET, { expiresIn: REFRESH_TOKEN_TTL, jwtid: randomUUID() }, (err, token) => {
             if (err) reject(err)
             resolve(token)
         })

@@ -12,7 +12,8 @@ const objectId = (name: string) =>
     z.string().refine(mongoose.isValidObjectId, { message: `${name} must be a valid Mongo ObjectId` })
 
 // A manager releasing selections: everyone's, one diner's, or one item's.
-export const releaseSelectionSchema = z.object({ userId: objectId("userId").optional(), menuId: objectId("menuId").optional() })
+// userId null: the selections of diners whose account no longer exists.
+export const releaseSelectionSchema = z.object({ userId: objectId("userId").nullable().optional(), menuId: objectId("menuId").optional() })
 
 // A manager refunding units of one payment: each item once, at least one.
 export const refundSchema = z.object({

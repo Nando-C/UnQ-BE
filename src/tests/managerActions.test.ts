@@ -67,6 +67,19 @@ describe("releaseSelection", () => {
         expect((await tableCart()).body).not.toHaveProperty("managerLog")
     })
 
+    it("frees only the selections of diners whose account is gone, for userId null", async () => {
+        const { latte, ada, bo, add, select, action } = await scaffold()
+        const cartId = await add(ada, latte, 3)
+        await select(ada, cartId, latte, 2)
+        await select(bo, cartId, latte, 1)
+        await request(app).delete("/users/me").set("Cookie", ada.cookies)
+
+        const res = await action(cartId, "releaseSelection", { userId: null, menuId: latte })
+        expect(res.status).toBe(200)
+        const open = res.body.split.filter((s: { splitStatus: string }) => s.splitStatus === "open")
+        expect(open.map((s: { userId: { name: string } }) => s.userId.name)).toEqual([bo.user.name])
+    })
+
     it("is 404 when there's nothing to release", async () => {
         const { latte, ada, add, action } = await scaffold()
         const cartId = await add(ada, latte, 1)
