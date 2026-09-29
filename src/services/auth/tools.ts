@@ -31,6 +31,8 @@ const generateRefreshJWT = (payload: IJWTPayload) =>
 
 // -------------------------------------------------------------------------
     
+// A new access + refresh token pair. The refresh token is stored on the user,
+// so it replaces the one any other session holds (see refreshTokens).
 export const getTokens = async (user: IUserDocument) => {
     const accessToken = (await generateJWT({ _id: user._id })) as string
     const refreshToken = (await generateRefreshJWT({ _id: user._id })) as string
@@ -95,7 +97,6 @@ export const refreshTokens = async ( currentRefreshToken: string) => {
     return justRotated ? ("superseded" as const) : null
 }
 
-// -------------------------------------------------------------------------
 // -------------------------------------------------------------------------
 
 // The auth cookies' options. Clearing a cookie needs the options it was set

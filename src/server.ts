@@ -21,6 +21,7 @@ passport.use("google", googleStrategy)
 
 // ===================== MIDDLEWARES ================================
 app.use(express.json())
+// Behind the host's proxy: trust its X-Forwarded-* headers (client IP, https).
 app.set('trust proxy', 1)
 app.use(cors(corsOptions))
 app.use(cookieParser())
@@ -30,6 +31,7 @@ app.use(passport.initialize())
 app.use("/auth", authRouter)
 app.use("/users", userRouter)
 app.use("/shops", shopRouter)
+// Menu routes live under /shops/:shopId/menu, next to the shop routes.
 app.use("/shops", menuRouter)
 app.use("/carts", cartRouter)
 

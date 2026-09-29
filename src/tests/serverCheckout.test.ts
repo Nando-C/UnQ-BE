@@ -604,8 +604,7 @@ describe("payment records", () => {
 })
 
 // --------------------------------------------------------------------------
-// Multi-payer settlement — ported from the retired checkOutSplit's S16 suite,
-// re-targeted at captureCheckout (the surviving money-moving endpoint).
+// Multi-payer settlement: several diners paying for one cart.
 
 describe("multi-payer settlement (via captureCheckout)", () => {
     it("declares paypalOrderIds as a unique, sparse index", () => {

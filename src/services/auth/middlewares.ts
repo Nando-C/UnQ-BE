@@ -35,6 +35,8 @@ export const optionalJWT: TController = async (req, res, next) => {
 
 // -------------------------------------------------------------------------
 
+// For signed-in routes: sets req.user from the access-token cookie, or 401
+// (the FE then refreshes the token and retries).
 export const JWTAuthMiddleware: TController = async (req, res, next) => {
     if (!req.cookies.accessToken) return next(createError(401, "Please provide credentials in cookies!"))
     const token = req.cookies.accessToken
@@ -51,6 +53,7 @@ export const JWTAuthMiddleware: TController = async (req, res, next) => {
 
 // -------------------------------------------------------------------------
 
+// After JWTAuthMiddleware: the user has the shop-manager role (any shop).
 export const adminOnly: TController = async ( req, res, next ) => {
     const user = req.user as IUserDocument
 
@@ -63,6 +66,8 @@ export const adminOnly: TController = async ( req, res, next ) => {
 
 // -------------------------------------------------------------------------
 
+// After JWTAuthMiddleware: the user manages the shop in :shopId (404 if
+// there's no such shop).
 export const isShopManager: TController = async ( req, res, next ) => {
     try {
         const user = req.user as IUserDocument

@@ -9,9 +9,11 @@ import UserModel from "../users/model"
 import { checkProviderPayment, findProviderRefund, providerName, refundPayment, RefundRefused } from "../../lib/payments"
 import { IUserDocument } from "src/typings/users"
 
-// A shop manager's view of the tables' carts (read-only). Both routes run after
-// isShopManager, so the shop exists and the caller manages it. These are the only
-// responses that include payment records (the diner-facing ones strip them).
+// The shop manager's side of the tables' carts: viewing them, fixing them
+// (no money moves), and refunds and payment checks (money moves). Every route
+// runs after isShopManager, so the shop exists and the caller manages it. These
+// are the only responses that include payment records (the diner-facing ones
+// strip them).
 
 // A selection held longer than this is flagged for the manager.
 const STALE_SELECTION_MS = 15 * 60 * 1000
@@ -25,6 +27,11 @@ const round2 = (n: number) => Math.round(n * 100) / 100
 
 // -------------------------------------------------------------------------
 
+// Views (read-only).
+
+// free: nothing ordered; ordering: items, none paid or selected; waitingToPay:
+// someone has a selection open; partlyPaid: some units paid, none selected
+// now.
 type TableState = "free" | "ordering" | "waitingToPay" | "partlyPaid"
 type Attention = "soldOut" | "duplicateCarts" | "staleSelection" | "paymentPending"
 
@@ -370,12 +377,11 @@ export const mergeInto: TController = async ( req, res, next ) => {
     }
 }
 
-
 // -------------------------------------------------------------------------
 // Cancel and refund (money moves). POST /shops/:shopId/carts/:cartId/refunds
 // { paymentId, lines: [{ menuId, qty }] }: refunds those units of one recorded
 // payment, at the prices that payment charged, and takes them out of the cart
-// (user decision: refunded units are cancelled, not made payable again). Works
+// (refunded units are cancelled, not made payable again). Works
 // on open and closed carts of the shop.
 //
 // Money and records must never disagree, so, in this order:

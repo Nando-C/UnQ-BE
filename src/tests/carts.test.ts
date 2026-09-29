@@ -236,9 +236,8 @@ describe("carts", () => {
         expect(contested.status).toBe(409)
     })
 
-    // Concurrent claims. The availability check and the write used to be
-    // separate steps, so requests arriving together all passed the check and
-    // the split grew past the item's quantity.
+    // Concurrent claims: requests arriving together must not grow the split
+    // past the item's quantity.
 
     it("concurrent addSplitItem calls from one diner never claim more units than exist", async () => {
         const { shopId, tableId, menuId, customer } = await scaffold()
@@ -290,7 +289,7 @@ describe("carts", () => {
     })
 
     // ---------------------------------------------------------------------
-    // S21: sold-out items
+    // Sold-out items
 
     it("rejects adding a sold-out item with 409 and leaves no cart behind", async () => {
         const { shopId, tableId, menuId, customer, markSoldOut } = await scaffold()

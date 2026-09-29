@@ -7,10 +7,7 @@ const googleStrategy = new GoogleStrategy.Strategy(
     {
         clientID: env.GOOGLE_CLIENT_ID,
         clientSecret: env.GOOGLE_SECRET,
-        // Where a BROWSER reaches this API, which is not necessarily this server's own
-        // origin: Google redirects the user here, so when the front-end proxies the API
-        // through its own origin this must be that proxied prefix (e.g. https://…/api),
-        // or the auth cookies get set on a domain the front-end can never read.
+        // Google sends the browser back here: see PUBLIC_API_URL in settings/env.ts.
         callbackURL: `${env.PUBLIC_API_URL}/auth/googleRedirect`
     },
 
@@ -31,11 +28,11 @@ const googleStrategy = new GoogleStrategy.Strategy(
 
 // The account a Google sign-in belongs to. Already linked: found by googleId.
 // Otherwise an account with the same email (registered with a password) is
-// linked to this Google account rather than duplicated: creating a second user
-// hit the unique email index and the sign-in failed with a 500. Linking trusts
-// Google's word that the address is the user's own, so only a verified email
-// links; an unverified one that matches an account gets no sign-in (null), as
-// does a profile with no email at all. A new email gets a new account.
+// linked to this Google account rather than duplicated (emails are unique).
+// Linking trusts Google's word that the address is the user's own, so only a
+// verified email links; an unverified one that matches an account gets no
+// sign-in (null), as does a profile with no email at all. A new email gets a
+// new account.
 // Linking also removes the account's password: nothing proved whoever set it
 // owned the address (anyone can register with someone else's email and wait
 // for them to sign in with Google), so from now on only Google signs in.

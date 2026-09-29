@@ -6,7 +6,7 @@ import { spawnSync } from "child_process"
 process.env.JWT_SECRET = process.env.JWT_SECRET || "test-access-secret"
 process.env.JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "test-refresh-secret"
 process.env.FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000"
-// Also needed by the schema's second refinement: the CORS whitelist is built from
+// Also needed by settings/env.ts's front-end rules: the CORS whitelist is built from
 // FRONTEND_DEV_URL/FRONTEND_PROD_URL, so FRONTEND_URL alone does not satisfy it.
 process.env.FRONTEND_DEV_URL = process.env.FRONTEND_DEV_URL || "http://localhost:3000"
 
@@ -16,7 +16,7 @@ process.env.GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "test-google-clie
 process.env.GOOGLE_SECRET = process.env.GOOGLE_SECRET || "test-google-secret"
 process.env.PUBLIC_API_URL = process.env.PUBLIC_API_URL || "http://localhost:3001"
 
-// Since S20 the app validates its whole configuration at import time (settings/env.ts),
+// The app validates its whole configuration at import time (settings/env.ts),
 // so every required variable must exist here or importing the app aborts the run.
 // These are never dialled: setup.ts connects its own mongodb-memory-server, and the
 // Cloudinary and PayPal clients are mocked at the module boundary in their suites.

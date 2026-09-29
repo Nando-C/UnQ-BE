@@ -133,7 +133,7 @@ describe("auth", () => {
             expect(newRefresh).toBeDefined()
             expect(newRefresh).not.toBe(oldRefresh)
 
-            // Regression for S1: the freshly-issued refresh cookie must work.
+            // The freshly-issued refresh cookie must work.
             const secondRefresh = await request(app)
                 .post("/auth/refreshToken")
                 .set("Cookie", rotatedCookies)

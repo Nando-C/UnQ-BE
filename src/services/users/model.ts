@@ -24,16 +24,19 @@ const UserSchema = new Schema<IUserDocument, IUserModel>(
             lowercase: true,
             trim: true,
         },
+        // Hashed on save. None for an account that only signs in with Google.
         password: {
             type: String,
-            // required: true,
         },
         avatar: String,
+        // "shopMg" (shop manager) can create and run shops; set in the database,
+        // never through the API.
         role: {
             type: String,
             enum: ["customer", "shopMg"],
             default: "customer"
         },
+        // The one refresh token currently valid for this user (see auth/tools.ts).
         refreshToken: String,
         googleId: String,
     },

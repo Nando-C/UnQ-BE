@@ -14,7 +14,7 @@ export const cookiesFrom = (res: Response): string[] => {
 
 export const agent = () => request(app)
 
-// Create a user directly (bypassing the /register whitelist) so tests can mint a
+// Create a user directly (/register can't set a role) so tests can mint a
 // `shopMg`. The pre-save hook hashes `password`, so the same value logs in.
 export const createUser = async (overrides: Partial<{
     name: string

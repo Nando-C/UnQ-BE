@@ -3,6 +3,16 @@ import { ICartDocument, INotice } from "src/typings/cart"
 
 const { Schema, model } = mongoose
 
+// A table's order. Each table has at most one OPEN cart, shared by everyone
+// sitting there: whoever orders first creates it, the others add to it.
+// - items: what the table ordered, one line per menu item (qty ordered, qtyPayed
+//   paid for).
+// - split: who pays for what. A diner selects units of a line to pay for (an
+//   "open" split); checkout pays for all of their open splits at once and marks
+//   them "closed". Units in someone's open split are held for them.
+// - payments / refunds / managerLog: manager-only records (see dinerView).
+// The cart closes once every unit is paid, or when a manager closes it; the
+// next party at the table then starts a new one.
 const CartSchema = new Schema<ICartDocument>(
     {
         userId: {
@@ -12,13 +22,13 @@ const CartSchema = new Schema<ICartDocument>(
         },
         shopId: {
             type: Schema.Types.ObjectId,
-            // required: true,
             ref: "Shop",
         },
         tableId: {
             type: String,
             required: true,
         },
+        // "splitted" is a legacy value: nothing sets it any more.
         status: {
             type: String,
             enum: ["open", "splitted", "closed"],
@@ -39,7 +49,6 @@ const CartSchema = new Schema<ICartDocument>(
                     type: Number,
                     default: 0,
                 },
-                // PriceItems: Number,
             }
         ],
         // Legacy scalar: the single PayPal order that settled this cart. Kept so
@@ -50,9 +59,9 @@ const CartSchema = new Schema<ICartDocument>(
         },
         // Every PayPal order that has settled part of this cart — one per payer.
         // The unique+sparse multikey index enforces cross-document uniqueness, so
-        // an order id can never be replayed to settle a second checkout (S15's
-        // 11000 backstop, now per-payer). Within-document duplicates are prevented
-        // by the controller's replay pre-check.
+        // an order id can never be replayed to settle a second checkout (the
+        // save fails with 11000). Within-document duplicates are prevented by
+        // the controller's replay pre-check.
         //
         // `default: undefined` is REQUIRED: a mongoose array otherwise defaults to
         // `[]`, and an empty array is indexed as the key `undefined` which a sparse
@@ -246,9 +255,9 @@ export const tookPart = (cart: ICartDocument, userId: unknown) => {
 }
 
 // A cart as a diner may see it. The table's cart is public (no login), so the
-// payment and refund records and the manager log never leave the server this way, and of
-// the notices only the table-wide ones do, plus those meant for `viewerId`
-// when the caller is known. Manager endpoints use toObject() instead.
+// payment and refund records and the manager log never leave the server this
+// way, and of the notices only the table-wide ones do, plus those meant for
+// `viewerId` when the caller is known. Manager endpoints use toObject() instead.
 export const dinerView = (cart: ICartDocument, viewerId?: unknown) => {
     const view = cart.toObject()
     delete view.__v

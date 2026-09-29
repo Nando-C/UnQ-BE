@@ -10,6 +10,10 @@ import MenuModel from "../menus/model"
 import ShopModel from "../shops/model"
 import { isDuplicateKey, isVersionConflict, saveChecked } from "../../lib/mongo"
 
+// The diner's side of a table's cart: ordering, selecting what to pay for, and
+// paying (checkout). See the cart model for how items and splits work. The
+// manager's side is in managerControllers.ts.
+
 // Menu fields every cart response populates. `available` is included so the FE
 // can flag items that sold out after being added, and the checkout guards read
 // it from the populated splits.
@@ -36,14 +40,15 @@ export const CART_MENUS = [menuRef("items.menuId"), menuRef("split.menuId")]
 const forDiner = (cart: ICartDocument | null, req: Request) =>
     cart && dinerView(cart, (req.user as IUserDocument | undefined)?._id)
 
-// Sold-out rule (S21, user decision 2026-09-22): the kitchen only acts on PAID
-// orders, so an unavailable item can't be added, newly split, or paid for.
+// Sold-out rule: the kitchen only acts on PAID orders, so an unavailable item
+// can't be added, newly split, or paid for.
 // Nothing is removed from carts automatically, and paid units are never touched.
 const SOLD_OUT = "This item is sold out"
 const SOLD_OUT_CHECKOUT = "Some items you selected are sold out — remove them to pay for the rest"
 
 // -------------------------------------------------------------------------
 
+// The open cart the caller started.
 export const getMyCarts: TController = async ( req, res, next) => {
     try {
         const user = req.user as IUserDocument
@@ -77,8 +82,8 @@ export const getTableCart: TController = async ( req, res, next ) => {
     try {
         const tableId = req.params.tableId
 
-        // Newest first: legacy data may hold more than one open cart per table
-        // (addItem used to key carts per-user), so resolve to the latest one.
+        // Newest first: data from before the one-open-cart index may hold more
+        // than one open cart per table; diners see the latest.
         const cart = await CartModel.findOne({$and: [{ tableId: tableId}, {status: "open"}]})
             .sort({ createdAt: -1 })
             .populate(CART_MENUS)
@@ -102,6 +107,7 @@ export const getTableCart: TController = async ( req, res, next ) => {
 
 // -------------------------------------------------------------------------
 
+// A cart the caller started or has a selection on, open or closed.
 export const getSingleCart: TController = async ( req, res, next ) => {
     try {
         const user = req.user as IUserDocument
@@ -147,9 +153,7 @@ export const addItem: TController = async ( req, res, next ) => {
         if (!menuItem.available) return next(createError(409, SOLD_OUT))
 
         // A table has ONE shared open cart: whoever orders first creates it,
-        // everyone else at the table adds to it (the split array tracks who
-        // pays for what). Keying by userId here used to spawn a duplicate cart
-        // per user, which getTableCart could not disambiguate.
+        // everyone else at the table adds to it.
         //
         // Each step is one atomic update: add to the item's line if the open
         // cart has one; else add the line to the open cart, creating the cart
@@ -176,6 +180,8 @@ export const addItem: TController = async ( req, res, next ) => {
 
 // -------------------------------------------------------------------------
 
+// The diner's "−": takes `qty` units off an item's line, dropping the line at
+// 0. Answers the cart, or 204 when the cart was emptied and deleted.
 export const decreaseItem: TController = async ( req, res, next ) => {
     try {
         const tableId = req.params.tableId
@@ -192,7 +198,7 @@ export const decreaseItem: TController = async ( req, res, next ) => {
         // Never decrease into units that are paid for (erasing the payment
         // record) or held in someone's open split (stranding their checkout).
         // Only enforced when such units exist, so an unpaid, unclaimed line
-        // can still be decreased away entirely as before. A pre-check: the
+        // can still be decreased away entirely. A pre-check: the
         // window before the $inc is accepted, like addItem's.
         const floor = lockedUnits(isItemThere, item.menuId)
         const line = isItemThere.items.find((i) => i.menuId.toString() === item.menuId.toString())
@@ -315,7 +321,7 @@ export const deleteItem: TController = async ( req, res, next ) => {
         }
 
         // A sold-out or deleted item can't be paid for, so others' selections
-        // of it would only be stranded: it goes entirely, as before.
+        // of it would only be stranded: it goes entirely.
         const payable = !!menuItem?.available
         const dinerId = payable ? (req.user as IUserDocument)._id : undefined
         if (removeUnpaidUnits(cart, menuId, dinerId) === 0) {
@@ -350,10 +356,10 @@ export const deleteItem: TController = async ( req, res, next ) => {
 // split already holds for this item, plus the request, plus the paid units, must
 // fit in the item's quantity. It goes in the FILTER of the update, so checking
 // and claiming are one atomic step on the cart document: of two requests racing
-// for the last unit, the second no longer matches and claims nothing. (Checked
-// on a separate read first, concurrent requests all passed and the split grew
-// past the item — one diner tapping + fast, or two diners at once.) $expr isn't
-// cast by Mongoose, so ids come in as ObjectIds.
+// for the last unit, the second no longer matches and claims nothing. (A
+// separate read first would let concurrent requests all pass and grow the
+// split past the item — one diner tapping + fast, or two diners at once.)
+// $expr isn't cast by Mongoose, so ids come in as ObjectIds.
 const fitsInItem = (menuId: mongoose.Types.ObjectId, qty: number) => ({
     $expr: {
         $let: {
@@ -393,6 +399,7 @@ const fitsInItem = (menuId: mongoose.Types.ObjectId, qty: number) => ({
     },
 })
 
+// The diner selects `qty` more units of an item to pay for.
 export const addSplitItem: TController = async ( req, res, next ) => {
     try {
         const user = req.user as IUserDocument
@@ -478,13 +485,18 @@ export const removeSplitItem = changeMySplit(() => ({ $set: { "split.$.qty": 0 }
 
 // -------------------------------------------------------------------------
 
-// Verified split checkout: settles the requesting user's open split items only
-// after confirming, server-side, that the referenced PayPal order was actually
-// paid for the exact amount due (computed from DB prices, never from the client).
-// A cart is shared by many payers, so each settlement is recorded in
-// `paypalOrderIds`; a given order id can only ever settle one checkout across all
-// carts (replay protection), and optimistic concurrency serialises simultaneous
-// payers so no unit is double-settled and no recorded order id is lost.
+// -------------------------------------------------------------------------
+// Checkout: a diner pays for all of their open splits at once, in two calls
+// around the PayPal popup:
+//   1. createCheckoutOrder: the PayPal order for the exact amount due.
+//   2. (the diner approves it in the popup)
+//   3. captureCheckout: checks again, takes the money, marks the splits paid.
+// Amounts always come from DB prices, never from the client. Each settlement
+// records its order id in `paypalOrderIds`, so an order id can only ever settle
+// one checkout across all carts (replay protection), and optimistic concurrency
+// serialises simultaneous payers so no unit is double-settled.
+
+// A split's or item's menuId once populated (CART_MENUS).
 type PopulatedMenuRef = { _id: mongoose.Types.ObjectId; name: string; price: number; available?: boolean }
 
 // The cart must be the one of the table in the URL: a cart id is otherwise
@@ -494,6 +506,7 @@ const loadOpenCart = (cartId: string, tableId: string) =>
     CartModel.findOne({ _id: cartId, tableId, status: "open" })
         .populate(CART_MENUS)
 
+// The caller's selections, i.e. what their checkout pays for.
 const callerOpenSplits = (cart: ICartDocument, userId: mongoose.Types.ObjectId): ISplitItem[] =>
     cart.split.filter((s) => s.userId.toString() === userId.toString() && s.splitStatus === "open")
 

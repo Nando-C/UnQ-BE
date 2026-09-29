@@ -3,14 +3,12 @@ import multer, { StorageEngine } from "multer"
 import createError from "http-errors"
 import { Request, RequestHandler } from "express"
 
-// cloudinary v2 auto-configures from the CLOUDINARY_URL env var, exactly like v1.
+// The SDK configures itself from CLOUDINARY_URL (checked in settings/env.ts).
 
 // -------------------------------------------------------------------------
 
-// A small multer StorageEngine that streams the uploaded file straight to
-// Cloudinary. It replaces `multer-storage-cloudinary` (which pinned cloudinary
-// v1). Controllers only ever read `req.file?.path`, and the previous library set
-// `path` to the secure URL — so we do the same here to keep behavior identical.
+// A multer StorageEngine that streams the uploaded file straight to
+// Cloudinary. Controllers read the image's URL from `req.file.path`;
 // `filename` is the Cloudinary public id, which discardUpload deletes by.
 const cloudinaryStorage = (folder: string): StorageEngine => ({
     _handleFile(req, file, cb) {

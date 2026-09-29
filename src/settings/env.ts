@@ -2,8 +2,8 @@ import { z } from "zod"
 
 // Single source of truth for configuration. Parsed once, at import time, so a missing
 // or empty variable stops the process here instead of surfacing later as a quietly
-// broken feature — an unset PUBLIC_API_URL used to make the Google callback the literal
-// string "undefined/auth/googleRedirect" while the server booted perfectly.
+// broken feature (e.g. a Google callback URL of "undefined/auth/googleRedirect").
+// Read config from here, never from process.env.
 //
 // Unknown keys are stripped rather than rejected (no .strict()): process.env always
 // carries unrelated entries — PATH, HOME, whatever the host injects, MONGOMS_SYSTEM_BINARY
@@ -91,11 +91,11 @@ export const env = Object.freeze({
     ...data,
 
     // The front-end origin used for OAuth redirects and generated table QR URLs.
-    // The first refinement guarantees one of the two is present.
+    // The first front-end rule above guarantees one of the two is present.
     FRONTEND_ORIGIN: (data.FRONTEND_URL ?? data.FRONTEND_DEV_URL) as string,
 
     // The CORS whitelist is exactly the dev + prod front-end origins. The second
-    // refinement guarantees at least one survives the filter.
+    // front-end rule above guarantees at least one survives the filter.
     CORS_WHITELIST: [data.FRONTEND_DEV_URL, data.FRONTEND_PROD_URL].filter(
         (origin): origin is string => Boolean(origin)
     ),

@@ -45,14 +45,14 @@ export interface IManagerLogEntry {
     details?: string
 }
 
-// One settled checkout: what a payer paid, when, and at what prices. Written in
-// the same save that settles it. Payments made before these records existed
-// have none (their closed splits have no unitPrice either). Provider-neutral:
-// only `provider` says whose ids the two provider* fields are.
 export type PaymentProvider = "paypal"
 // See the model: pending until the provider confirms it.
 export type PaymentStatus = "completed" | "pending" | "failed"
 
+// One settled checkout: what a payer paid, when, and at what prices. Written in
+// the same save that settles it. Payments made before these records existed
+// have none (their closed splits have no unitPrice either). Provider-neutral:
+// only `provider` says whose ids the two provider* fields are.
 export interface IPayment {
     _id?: Types.ObjectId // set by Mongoose on push
     provider: PaymentProvider
@@ -74,12 +74,15 @@ export interface IPaymentLine {
     refundedQty: number
 }
 
+// A line of the table's order: `qty` units of a menu item, `qtyPayed` of them
+// paid for. (The spelling is part of the API.)
 export interface IItem {
     menuId: Types.ObjectId
     qty: number
     qtyPayed: number
 }
 
+// A diner's share of a line: "open" while selected to pay, "closed" once paid.
 export interface ISplitItem {
     userId: Types.ObjectId
     menuId: Types.ObjectId

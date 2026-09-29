@@ -1,6 +1,7 @@
-// Minimal, dependency-free PayPal Orders v2 client used to verify that a split
-// checkout was actually paid. Uses the native `fetch` (Node >= 20). Credentials
-// come from the environment and are never logged.
+// Minimal, dependency-free PayPal REST client: create, look up and capture
+// orders (Orders v2), and refund captures. Uses the native `fetch` (Node >= 20).
+// Credentials come from the environment and are never logged. Routes go
+// through lib/payments.ts for refunds and payment checks.
 
 import env from "../settings/env"
 
