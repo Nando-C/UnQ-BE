@@ -1,7 +1,5 @@
 import { z } from "zod"
-
-// Trimmed and lowercased before it's checked, as the user model stores it.
-const email = z.string().trim().toLowerCase().pipe(z.email())
+import { email } from "../auth/schemas"
 
 export const editMeSchema = z.object({
     name: z.string().min(1).optional(),

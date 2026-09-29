@@ -1,9 +1,10 @@
 import { TController } from "src/typings/controllers"
 import { ICartDocument, IPayment } from "src/typings/cart"
-import CartModel, { tookPart } from "./model"
+import CartModel, { refId, tookPart } from "./model"
 import ShopModel from "../shops/model"
 import createError from "http-errors"
-import { closeIfPaidOff, menuRef, removeUnpaidUnits } from "./controllers"
+import { CART_MENUS, closeIfPaidOff, hasPendingPayment, removeUnpaidUnits } from "./controllers"
+import { saveChecked } from "../../lib/mongo"
 import UserModel from "../users/model"
 import { checkProviderPayment, findProviderRefund, providerName, refundPayment, RefundRefused } from "../../lib/payments"
 import { IUserDocument } from "src/typings/users"
@@ -40,7 +41,7 @@ const tableSummary = (carts: ICartDocument[], now: number) => {
     const attention = new Set<Attention>()
 
     if (carts.length > 1) attention.add("duplicateCarts")
-    if (carts.some((c) => c.payments.some((p) => p.status === "pending"))) attention.add("paymentPending")
+    if (carts.some(hasPendingPayment)) attention.add("paymentPending")
 
     for (const cart of carts) {
         for (const item of cart.items) {
@@ -65,13 +66,7 @@ const tableSummary = (carts: ICartDocument[], now: number) => {
     }
 
     const selecting = carts.some((c) => c.split.some((s) => s.splitStatus === "open"))
-    const state: TableState = !anyItems && !selecting
-        ? "free"
-        : selecting
-            ? "waitingToPay"
-            : anyPaid
-                ? "partlyPaid"
-                : "ordering"
+    const state: TableState = selecting ? "waitingToPay" : !anyItems ? "free" : anyPaid ? "partlyPaid" : "ordering"
 
     return { state, owed: round2(owed), paid: round2(paid), heldSince, attention: [...attention] }
 }
@@ -85,8 +80,7 @@ export const getTablesStatus: TController = async ( req, res, next ) => {
         const tableIds = shop.tables.map((t) => String(t._id))
         const openCarts = await CartModel.find({ tableId: { $in: tableIds }, status: "open" })
             .sort({ createdAt: -1 })
-            .populate(menuRef("items.menuId"))
-            .populate(menuRef("split.menuId"))
+            .populate(CART_MENUS)
 
         const now = Date.now()
         res.send(shop.tables.map((table) => {
@@ -122,7 +116,7 @@ const plain = (cart: ICartDocument) => {
 
 // A cart as the manager views it, after an action: menus and names filled in.
 const managerView = async (cart: ICartDocument) =>
-    plain(await cart.populate([menuRef("items.menuId"), menuRef("split.menuId"), ...DINER_NAMES]))
+    plain(await cart.populate([...CART_MENUS, ...DINER_NAMES]))
 
 // GET /shops/:shopId/tables/:tableId/carts — the table's open cart(s) and those
 // closed in the last 24 hours, newest first, with payment records. Diners (in
@@ -139,8 +133,7 @@ export const getTableCarts: TController = async ( req, res, next ) => {
             $or: [{ status: "open" }, { status: "closed", updatedAt: { $gte: since } }],
         })
             .sort({ createdAt: -1 })
-            .populate(menuRef("items.menuId"))
-            .populate(menuRef("split.menuId"))
+            .populate(CART_MENUS)
             .populate(DINER_NAMES)
 
         res.send({
@@ -163,7 +156,6 @@ const CART_CHANGED = "The cart changed, please retry"
 // Closing or merging would take a pending payment's units off the open table
 // before anyone knows whether they were paid.
 const PAYMENT_PENDING = "A payment on this table is still awaiting PayPal: check it first"
-const hasPendingPayment = (cart: ICartDocument) => cart.payments.some((p) => p.status === "pending")
 
 type Params = { shopId: string; tableId: string; cartId: string }
 
@@ -172,20 +164,7 @@ type Params = { shopId: string; tableId: string; cartId: string }
 const loadManagedCart = async ({ shopId, tableId, cartId }: Params) => {
     const onShop = await ShopModel.exists({ _id: shopId, "tables._id": tableId })
     if (!onShop) return null
-    return CartModel.findOne({ _id: cartId, tableId, status: "open" })
-        .populate(menuRef("items.menuId"))
-        .populate(menuRef("split.menuId"))
-}
-
-// false on a version conflict.
-const saveChecked = async (cart: ICartDocument) => {
-    try {
-        await cart.save()
-        return true
-    } catch (error) {
-        if ((error as { name?: string }).name === "VersionError") return false
-        throw error
-    }
+    return CartModel.findOne({ _id: cartId, tableId, status: "open" }).populate(CART_MENUS)
 }
 
 // Deletes a cart that neverPaid() said could go, only if it's unchanged since it
@@ -194,7 +173,6 @@ const saveChecked = async (cart: ICartDocument) => {
 const deleteIfUnchanged = async (cart: ICartDocument) =>
     (await CartModel.deleteOne({ _id: cart._id, __v: cart.get("__v"), "payments.0": { $exists: false } })).deletedCount === 1
 
-const idOf = (ref: unknown) => String((ref as { _id?: unknown } | null)?._id ?? ref)
 const nameOf = (ref: unknown) => (ref as { name?: string } | null)?.name ?? "item"
 const units = (qty: number, menuRef: unknown) => `${qty}× ${nameOf(menuRef)}`
 
@@ -226,7 +204,7 @@ const neverPaid = (cart: ICartDocument) =>
 const dropUnpaid = (cart: ICartDocument) => {
     const dropped = cart.items
         .filter((i) => i.qty > i.qtyPayed)
-        .map((i) => ({ menuId: idOf(i.menuId), name: nameOf(i.menuId), qty: i.qty - i.qtyPayed }))
+        .map((i) => ({ menuId: refId(i.menuId), name: nameOf(i.menuId), qty: i.qty - i.qtyPayed }))
     for (const line of cart.items) line.qty = line.qtyPayed
     cart.items = cart.items.filter((i) => i.qty > 0)
     cart.split = cart.split.filter((s) => s.splitStatus !== "open")
@@ -244,13 +222,17 @@ export const releaseSelection: TController = async ( req, res, next ) => {
         if (!cart) return next(createError(404, "Cart Not Found!"))
         const { userId, menuId } = req.body as { userId?: string | null; menuId?: string }
 
-        const existing = userId === null
-            ? new Set((await UserModel.find({ _id: { $in: cart.split.map((s) => s.userId) } }).select("_id")).map((u) => String(u._id)))
-            : null
+        // The names of the diners with a selection, for the log; one missing
+        // from it has no account any more.
+        const names = new Map(
+            (await UserModel.find({ _id: { $in: cart.split.map((s) => s.userId) } }).select("name"))
+                .map((u) => [String(u._id), u.name])
+        )
+        const existing = userId === null ? names : null
         const released = cart.split.filter((s) =>
             s.splitStatus === "open" &&
             (userId === undefined || (existing ? !existing.has(String(s.userId)) : String(s.userId) === userId)) &&
-            (!menuId || idOf(s.menuId) === menuId))
+            (!menuId || refId(s.menuId) === menuId))
         if (released.length === 0) return next(createError(404, "No selection to release"))
 
         cart.split = cart.split.filter((s) => !released.includes(s))
@@ -258,10 +240,6 @@ export const releaseSelection: TController = async ( req, res, next ) => {
         for (const s of released) {
             byDiner.set(String(s.userId), [...(byDiner.get(String(s.userId)) ?? []), units(s.qty, s.menuId)])
         }
-        const names = new Map(
-            (await UserModel.find({ _id: { $in: [...byDiner.keys()] } }).select("name"))
-                .map((u) => [String(u._id), u.name])
-        )
         for (const [diner, what] of byDiner) {
             note(cart, `The staff released your selection of ${what.join(", ")}.`, diner)
         }
@@ -285,7 +263,7 @@ export const removeItem: TController = async ( req, res, next ) => {
         if (!cart) return next(createError(404, "Cart Not Found!"))
         const { menuId } = req.body as { menuId: string }
 
-        const line = cart.items.find((i) => idOf(i.menuId) === menuId)
+        const line = cart.items.find((i) => refId(i.menuId) === menuId)
         if (!line) return next(createError(404, "Item Not Found in Cart!"))
         if (line.qty <= line.qtyPayed) return next(createError(409, "Nothing unpaid to remove"))
 
@@ -360,16 +338,16 @@ export const mergeInto: TController = async ( req, res, next ) => {
         for (const line of source.items) {
             const unpaid = line.qty - line.qtyPayed
             if (unpaid <= 0) continue
-            const into = target.items.find((i) => idOf(i.menuId) === idOf(line.menuId))
+            const into = target.items.find((i) => refId(i.menuId) === refId(line.menuId))
             if (into) into.qty += unpaid
-            else target.items.push({ menuId: idOf(line.menuId) as never, qty: unpaid, qtyPayed: 0 })
+            else target.items.push({ menuId: refId(line.menuId) as never, qty: unpaid, qtyPayed: 0 })
             moved.push(units(unpaid, line.menuId))
         }
         for (const sel of source.split.filter((s) => s.splitStatus === "open")) {
             const into = target.split.find((s) =>
-                s.splitStatus === "open" && String(s.userId) === String(sel.userId) && idOf(s.menuId) === idOf(sel.menuId))
+                s.splitStatus === "open" && String(s.userId) === String(sel.userId) && refId(s.menuId) === refId(sel.menuId))
             if (into) into.qty += sel.qty
-            else target.split.push({ userId: sel.userId, menuId: idOf(sel.menuId) as never, qty: sel.qty, splitStatus: "open", claimedAt: sel.claimedAt })
+            else target.split.push({ userId: sel.userId, menuId: refId(sel.menuId) as never, qty: sel.qty, splitStatus: "open", claimedAt: sel.claimedAt })
         }
         const details = `from cart ${source._id}: ${moved.join(", ") || "nothing unpaid"}`
         log(target, req, "mergeInto", details)
@@ -415,15 +393,15 @@ const money = (amount: number, currency: string) =>
     new Intl.NumberFormat("en-GB", { style: "currency", currency }).format(amount)
 
 // Reloads the cart and applies `change` to it, saving version-checked, a few
-// times if other writes keep landing. False if it never saved.
+// times if other writes keep landing. The saved cart, or null if it never saved.
 const withFreshCart = async (cartId: unknown, change: (cart: ICartDocument) => void) => {
     for (let attempt = 0; attempt < 3; attempt++) {
         const cart = await CartModel.findById(cartId)
-        if (!cart) return false
+        if (!cart) return null
         change(cart)
-        if (await saveChecked(cart)) return true
+        if (await saveChecked(cart)) return cart
     }
-    return false
+    return null
 }
 
 const findById = <T extends { _id?: unknown }>(list: T[], id: unknown) =>
@@ -505,16 +483,15 @@ const recordRefund = async (
     req: Req, res: Res, next: Next,
     cartId: unknown, payment: IPayment, refundId: unknown, providerRefundId: string | undefined
 ) => {
-    const completed = await withFreshCart(cartId, (c) => completeRefund(c, refundId, providerRefundId, req))
-    if (!completed) {
+    const cart = await withFreshCart(cartId, (c) => completeRefund(c, refundId, providerRefundId, req))
+    if (!cart) {
         console.error("Refund went through but couldn't be recorded", { cartId, refundId, providerRefundId })
         return next(createError(500,
             `The refund went through at ${providerName(payment)} but couldn't be recorded here. It shows as in progress: retry it to record it.`,
             { expose: true }))
     }
 
-    const fresh = await CartModel.findById(cartId).populate(menuRef("items.menuId")).populate(menuRef("split.menuId"))
-    res.send({ refund: findById(fresh!.refunds, refundId), cart: await managerView(fresh!) })
+    res.send({ refund: findById(cart.refunds, refundId), cart: await managerView(cart) })
 }
 
 // (b) then (c) for the pending refund `refundId`. Its id is the provider's
@@ -585,7 +562,7 @@ export const refundItems: TController = async ( req, res, next ) => {
             }
             refundLines.push({ menuId: paid.menuId, name: paid.name, qty, unitPrice: paid.unitPrice })
         }
-        const amount = Math.round(refundLines.reduce((sum, l) => sum + l.qty * l.unitPrice, 0) * 100) / 100
+        const amount = round2(refundLines.reduce((sum, l) => sum + l.qty * l.unitPrice, 0))
 
         // (a)
         cart.refunds.push({
@@ -700,7 +677,7 @@ export const checkPayment: TController = async ( req, res, next ) => {
         }
 
         const amount = money(payment.amount, payment.currency)
-        const recorded = await withFreshCart(cartId, (c) => {
+        const saved = await withFreshCart(cartId, (c) => {
             const p = findById(c.payments, paymentId)
             if (p?.status !== "pending") return
             p.status = status
@@ -718,10 +695,9 @@ export const checkPayment: TController = async ( req, res, next ) => {
                 log(c, req, "checkPayment", `${amount} failed at ${providerName(p)} (payment ${paymentId}): its items are unpaid again`)
             }
         })
-        if (!recorded) return next(createError(409, CART_CHANGED))
+        if (!saved) return next(createError(409, CART_CHANGED))
 
-        const fresh = await CartModel.findById(cartId).populate(menuRef("items.menuId")).populate(menuRef("split.menuId"))
-        res.send({ payment: findById(fresh!.payments, paymentId), cart: await managerView(fresh!) })
+        res.send({ payment: findById(saved.payments, paymentId), cart: await managerView(saved) })
     } catch (error) {
         next(createError(500, error as Error))
     }

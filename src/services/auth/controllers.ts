@@ -1,19 +1,10 @@
 import { TController } from "src/typings/controllers"
 import UserModel from "../users/model"
-import { getTokens, refreshTokens } from "./tools"
+import { clearAuthCookies, getTokens, refreshTokens, setAuthCookies } from "./tools"
 import createError from "http-errors"
 import { IGoogleUser, IUserDocument } from "src/typings/users"
 import env from "../../settings/env"
-
-// Clearing a cookie needs the options it was set with: a cross-site response
-// can only touch a SameSite=None; Secure cookie with those attributes.
-const clearAuthCookies = (res: Parameters<TController>[1]) => {
-    const options = { httpOnly: true, secure: true, sameSite: "none" } as const
-    res.clearCookie("accessToken", options)
-    res.clearCookie("refreshToken", options)
-}
-
-// -------------------------------------------------------------------------
+import { isDuplicateKey } from "../../lib/mongo"
 
 export const registerUser: TController = async (req, res, next) => {
     const { name, surname, email, password } = req.body
@@ -22,22 +13,10 @@ export const registerUser: TController = async (req, res, next) => {
     try {
         newUser.avatar = `https://ui-avatars.com/api/?name=${req.body.name}+${req.body.surname}`
         const user = await new UserModel(newUser).save()
-        const { accessToken, refreshToken } = await getTokens(user)
-
-        res.cookie("accessToken", accessToken, {
-            httpOnly: true,
-            secure: true,
-            sameSite: "none",
-        })
-        res.cookie("refreshToken", refreshToken, {
-            httpOnly: true,
-            secure: true,
-            sameSite: "none",
-        })
+        setAuthCookies(res, await getTokens(user))
         res.status(201).send(user)
     } catch (error) {
-        const mongoError = error as { code?: number; cause?: { code?: number } }
-        if (mongoError.code === 11000 || mongoError.cause?.code === 11000) {
+        if (isDuplicateKey(error)) {
             return next(createError(409, "Email already registered"))
         }
         next(createError(400, (error as Error).message))
@@ -53,18 +32,7 @@ export const loginUser: TController = async ( req, res, next ) => {
         const user = await UserModel.checkCredentials(email, password)
         if (!user) return next(createError(401, "Invalid credentials"))
 
-        const { accessToken, refreshToken } = await getTokens(user)
-
-        res.cookie("accessToken", accessToken, {
-            httpOnly: true,
-            secure: true,
-            sameSite: "none",
-        })
-        res.cookie("refreshToken", refreshToken, {
-            httpOnly: true,
-            secure: true,
-            sameSite: "none",
-        })
+        setAuthCookies(res, await getTokens(user))
         res.send(user)
     } catch (error) {
         next(createError(500, error as Error))
@@ -89,16 +57,7 @@ export const tokenRefresh: TController = async (req, res, next) => {
         // cookies it just got.
         if (tokens === "superseded") return next(createError(401, "Invalid token"))
 
-        res.cookie("accessToken", tokens.accessToken, {
-            httpOnly: true,
-            secure: true,
-            sameSite: "none",
-        })
-        res.cookie("refreshToken", tokens.refreshToken, {
-            httpOnly: true,
-            secure: true,
-            sameSite: "none",
-        })
+        setAuthCookies(res, tokens)
         res.status(200).send()
     } catch (error) {
         next(createError(500, error as Error))
@@ -110,18 +69,7 @@ export const tokenRefresh: TController = async (req, res, next) => {
 export const googleRedirect: TController =  async (req, res, next) => {
     try {
         const user = req.user as IGoogleUser
-        const { accessToken, refreshToken } = user.tokens
-
-        res.cookie("accessToken", accessToken, {
-            httpOnly: true,
-            secure: true,
-            sameSite: "none",
-        })
-        res.cookie("refreshToken", refreshToken, {
-            httpOnly: true,
-            secure: true,
-            sameSite: "none",
-        })
+        setAuthCookies(res, user.tokens)
 
         res.redirect(env.FRONTEND_ORIGIN)
     } catch (error) {

@@ -1,7 +1,7 @@
 import { z } from "zod"
 
 // Trimmed and lowercased before it's checked, as the user model stores it.
-const email = z.string().trim().toLowerCase().pipe(z.email())
+export const email = z.string().trim().toLowerCase().pipe(z.email())
 
 export const registerSchema = z.object({
     name: z.string().min(1),

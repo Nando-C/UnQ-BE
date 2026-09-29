@@ -3,7 +3,8 @@ import { IUserDocument } from "src/typings/users"
 import createError from "http-errors"
 import * as bcrypt from "bcrypt"
 import { destroyReplacedImage, discardUpload } from "../../settings/cloudinary"
-import { getTokens } from "../auth/tools"
+import { getTokens, setAuthCookies } from "../auth/tools"
+import { isDuplicateKey } from "../../lib/mongo"
 
 // -------------------------------------------------------------------------
 
@@ -51,14 +52,11 @@ export const editMe: TController = async ( req, res, next) => {
 
         await me.save()
         if (password !== undefined) {
-            const { accessToken, refreshToken } = await getTokens(me)
-            res.cookie("accessToken", accessToken, { httpOnly: true, secure: true, sameSite: "none" })
-            res.cookie("refreshToken", refreshToken, { httpOnly: true, secure: true, sameSite: "none" })
+            setAuthCookies(res, await getTokens(me))
         }
         res.send(me)
     } catch (error) {
-        const mongoError = error as { code?: number; cause?: { code?: number } }
-        if (mongoError.code === 11000 || mongoError.cause?.code === 11000) {
+        if (isDuplicateKey(error)) {
             return next(createError(409, "Email already registered"))
         }
         next(createError(500, "An Error ocurred while updating the user"))

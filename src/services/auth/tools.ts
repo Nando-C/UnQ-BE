@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto"
+import { Response } from "express"
 import jwt from "jsonwebtoken"
 import { IJWTPayload } from "src/typings/jwt"
 import { IUserDocument } from "src/typings/users"
@@ -95,3 +96,19 @@ export const refreshTokens = async ( currentRefreshToken: string) => {
 }
 
 // -------------------------------------------------------------------------
+// -------------------------------------------------------------------------
+
+// The auth cookies' options. Clearing a cookie needs the options it was set
+// with: a cross-site response can only touch a SameSite=None; Secure cookie
+// with those attributes, so both go through these.
+const AUTH_COOKIE = { httpOnly: true, secure: true, sameSite: "none" } as const
+
+export const setAuthCookies = (res: Response, tokens: { accessToken: string; refreshToken: string }) => {
+    res.cookie("accessToken", tokens.accessToken, AUTH_COOKIE)
+    res.cookie("refreshToken", tokens.refreshToken, AUTH_COOKIE)
+}
+
+export const clearAuthCookies = (res: Response) => {
+    res.clearCookie("accessToken", AUTH_COOKIE)
+    res.clearCookie("refreshToken", AUTH_COOKIE)
+}

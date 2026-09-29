@@ -219,10 +219,6 @@ CartSchema.index({ tableId: 1 }, { unique: true, partialFilterExpression: { stat
 export const NOTICE_MAX_AGE_MS = 2 * 60 * 60 * 1000
 const NOTICE_MAX = 5
 
-// A cart as a diner may see it. The table's cart is public (no login), so the
-// payment and refund records and the manager log never leave the server this way, and of
-// the notices only the table-wide ones do, plus those meant for `viewerId`
-// when the caller is known. Manager endpoints use toObject() instead.
 // The notices a viewer may see: recent ones, for everyone at the table or for
 // them, newest first. Text only.
 export const noticesFor = (notices: INotice[], viewerId?: unknown) => {
@@ -236,6 +232,9 @@ export const noticesFor = (notices: INotice[], viewerId?: unknown) => {
         .map((n) => ({ _id: n._id, at: n.at, message: n.message }))
 }
 
+// The id of a reference, populated (then the referenced document) or not.
+export const refId = (ref: unknown) => String((ref as { _id?: unknown } | null)?._id ?? ref)
+
 // Whether a diner took part in a cart: they started it, have a selection on
 // it, or paid on it. Once the cart is closed, only they see its table-wide
 // notices (a new party at the table doesn't).
@@ -246,6 +245,10 @@ export const tookPart = (cart: ICartDocument, userId: unknown) => {
         cart.payments.some((p) => String(p.userId) === id)
 }
 
+// A cart as a diner may see it. The table's cart is public (no login), so the
+// payment and refund records and the manager log never leave the server this way, and of
+// the notices only the table-wide ones do, plus those meant for `viewerId`
+// when the caller is known. Manager endpoints use toObject() instead.
 export const dinerView = (cart: ICartDocument, viewerId?: unknown) => {
     const view = cart.toObject()
     delete view.__v
