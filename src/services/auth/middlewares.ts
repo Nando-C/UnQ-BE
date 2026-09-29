@@ -10,20 +10,27 @@ import { IUserDocument } from "src/typings/users"
 // -------------------------------------------------------------------------
 
 // For routes open to everyone that show more to a signed-in user: sets req.user
-// when the access token is valid, and otherwise carries on as a guest. Never
-// refuses a request (an expired token just means the guest view).
+// when the access token is valid, and carries on as a guest without one (or
+// when its user is gone). An expired or invalid token gets a 401, like on the
+// signed-in routes, so the FE refreshes it and asks again rather than quietly
+// showing a signed-in diner the guest view. A failed refresh clears the cookies,
+// so the request after it is a guest's.
 export const optionalJWT: TController = async (req, res, next) => {
     const token = req.cookies.accessToken
-    if (token) {
-        try {
-            const decodedToken = (await verifyJWT(token)) as JwtPayload
-            const user = await UserModel.findById(decodedToken._id)
-            if (user) req.user = user
-        } catch {
-            // Guest view.
-        }
+    if (!token) return next()
+    let decodedToken: JwtPayload
+    try {
+        decodedToken = (await verifyJWT(token)) as JwtPayload
+    } catch {
+        return next(createError(401, "Invalid token"))
     }
-    next()
+    try {
+        const user = await UserModel.findById(decodedToken._id)
+        if (user) req.user = user
+        next()
+    } catch (error) {
+        next(createError(500, error as Error))
+    }
 }
 
 // -------------------------------------------------------------------------

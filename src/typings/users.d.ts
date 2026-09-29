@@ -2,7 +2,7 @@ import { Document, Model } from "mongoose"
 
 export interface IUser {
     name: string
-    surname: string
+    surname?: string
     email: string
     password?: string
     avatar?: string

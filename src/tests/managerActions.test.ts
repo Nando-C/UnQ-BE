@@ -56,14 +56,12 @@ describe("releaseSelection", () => {
         const forBo = await select(bo, cartId, latte, 0 + 1) // any of Bo's own calls
         expect(forBo.body.notices).toEqual([])
         expect((await tableCart()).body.notices).toEqual([])
-        // The table's cart page (public) gives a signed-in diner their own notes,
-        // and a stale login just the public view.
+        // The table's cart page (public) gives a signed-in diner their own notes;
+        // a stale login gets a 401 to refresh it rather than the public view.
         const adaAtTable = await tableCart().set("Cookie", ada.cookies)
         expect(adaAtTable.body.notices.map((n: { message: string }) => n.message)).toEqual(["The staff released your selection of 2× Latte."])
         expect((await tableCart().set("Cookie", bo.cookies)).body.notices).toEqual([])
-        const stale = await tableCart().set("Cookie", ["accessToken=not-a-jwt"])
-        expect(stale.status).toBe(200)
-        expect(stale.body.notices).toEqual([])
+        expect((await tableCart().set("Cookie", ["accessToken=not-a-jwt"])).status).toBe(401)
         expect((await tableCart()).body).not.toHaveProperty("managerLog")
     })
 

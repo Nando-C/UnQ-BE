@@ -455,11 +455,15 @@ const completeRefund = (
     log(cart, req, "refund", `${money(refund.amount, refund.currency)} for ${what} (payment ${refund.paymentId})`)
 }
 
-// A cart of one of the shop's tables, open or closed.
+// A cart of the shop, open or closed. By the shop the cart records, so its
+// payments stay reachable after its table is deleted; older carts without one
+// by their table.
 const loadShopCart = async (shopId: string, cartId: string) => {
     const cart = await CartModel.findById(cartId)
+    if (!cart) return null
+    if (cart.shopId) return String(cart.shopId) === shopId ? cart : null
     const shop = await ShopModel.findById(shopId).select("tables")
-    return cart && shop?.tables.some((t) => String(t._id) === cart.tableId) ? cart : null
+    return shop?.tables.some((t) => String(t._id) === cart.tableId) ? cart : null
 }
 
 type Req = Parameters<TController>[0]

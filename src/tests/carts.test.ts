@@ -114,6 +114,17 @@ describe("carts", () => {
         expect(read.body._id).toBe(first.body._id)
     })
 
+    it("answers an expired or invalid token with 401 (for the FE to refresh), not the guest view", async () => {
+        const { shopId, tableId, menuId, customer } = await scaffold()
+        await request(app).post(`/carts/${shopId}/tables/${tableId}/addItem`)
+            .set("Cookie", customer.cookies).send({ menuId, qty: 1 })
+
+        const stale = await request(app).get(`/carts/tables/${tableId}`).set("Cookie", ["accessToken=not-a-jwt"])
+        expect(stale.status).toBe(401)
+        // Without a token it's still the guest view.
+        expect((await request(app).get(`/carts/tables/${tableId}`)).status).toBe(200)
+    })
+
     it("forbids reading another user's cart (S5 authorization)", async () => {
         const { shopId, tableId, menuId, customer } = await scaffold()
 

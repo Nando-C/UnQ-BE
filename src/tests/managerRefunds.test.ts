@@ -114,6 +114,17 @@ describe("POST /shops/:shopId/carts/:cartId/refunds", () => {
         expect(cart!.split).toEqual([])
     })
 
+    it("still works once the closed cart's table is deleted", async () => {
+        const { owner, shopId, tableId, latte, cartId, refund } = await scaffold()
+        await CartModel.updateOne({ _id: cartId }, { status: "closed" })
+        expect((await request(app).delete(`/shops/${shopId}/tables/${tableId}`).set("Cookie", owner.cookies)).status).toBe(204)
+
+        const res = await refund([{ menuId: latte, qty: 1 }])
+
+        expect(res.status).toBe(200)
+        expect(res.body.refund.status).toBe("completed")
+    })
+
     it("never refunds more than was paid and not yet refunded", async () => {
         const { latte, muffin, refund } = await scaffold()
 

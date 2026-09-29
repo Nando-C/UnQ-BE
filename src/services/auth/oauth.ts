@@ -55,9 +55,12 @@ export const googleUserFor = async (profile: GoogleStrategy.Profile) => {
         return existing.save()
     }
 
+    // Google may have no family name (or given name) for the account: the
+    // name falls back to the display name or the email's local part, and the
+    // surname is left out (only required of accounts that registered).
     return new UserModel({
-        name: profile.name?.givenName,
-        surname: profile.name?.familyName,
+        name: profile.name?.givenName || profile.displayName || email.value.split("@")[0],
+        surname: profile.name?.familyName || undefined,
         email: email.value,
         avatar: profile.photos?.[0]?.value,
         googleId: profile.id,

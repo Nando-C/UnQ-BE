@@ -10,9 +10,10 @@ const UserSchema = new Schema<IUserDocument, IUserModel>(
             type: String,
             required: true,
         },
+        // Google may not give one, so a Google account can be without it.
         surname: {
             type: String,
-            required: true,
+            required: function (this: IUserDocument) { return !this.googleId },
         },
         // Stored lowercase and trimmed, and lookups by email are cast the same
         // way, so an address matches however it's capitalised.

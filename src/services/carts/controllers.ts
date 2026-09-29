@@ -580,25 +580,41 @@ type SettleOutcome =
     | { ok: true; cart: ICartDocument }
     | { ok: false; status: number; message: string }
 
-// Apply + persist the settlement under optimistic concurrency. A concurrent
-// payer's save bumps __v and makes ours throw VersionError; on that, reload,
-// re-derive everything from the fresh doc, re-check replay/availability, re-verify
-// against the already-known (immutable) `order`, and retry a bounded number of
-// times. `order` is captureCheckout's own capture result.
+// Apply + persist the settlement under optimistic concurrency. The cart is
+// loaded afresh for every attempt, the first one too: the one captureCheckout
+// loaded is from before the PayPal round trips, and any other diner's tap since
+// would make saving it conflict. Each attempt re-derives everything from the
+// fresh doc, re-checks replay/availability and re-verifies against the
+// already-known (immutable) `order`; a concurrent write's VersionError means
+// another attempt, a bounded number of times (running out refunds the payer, so
+// there are enough for a busy table). `order` is captureCheckout's own capture
+// result.
 const settleCheckout = async (
     cartId: string,
     tableId: string,
-    initialCart: ICartDocument,
-    initialSplits: ISplitItem[],
     userId: mongoose.Types.ObjectId,
     paypalOrderId: string,
     order: PayPalOrder
 ): Promise<SettleOutcome> => {
-    let cart = initialCart
-    let openSplits = initialSplits
-
-    const MAX_ATTEMPTS = 3
+    const MAX_ATTEMPTS = 5
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        const cart = await loadOpenCart(cartId, tableId)
+        if (!cart) return { ok: false, status: 404, message: "Cart Not Found!" }
+        // Re-check replay too: a payer we conflicted with may have recorded
+        // THIS very order id — on this same cart, where the unique index can't
+        // help (duplicates within one document's array don't violate a
+        // multikey unique index).
+        const replayed = await CartModel.findOne({
+            $or: [{ paypalOrderIds: paypalOrderId }, { paypalOrderId }],
+        })
+        if (replayed) return { ok: false, status: 402, message: "This PayPal order has already been used" }
+        const openSplits = callerOpenSplits(cart, userId)
+        if (openSplits.length === 0) return { ok: false, status: 404, message: "No open split items to pay!" }
+        const availError = availabilityError(cart, openSplits)
+        if (availError) return { ok: false, status: 409, message: availError }
+        const verifyError = orderVerificationError(order, expectedTotalFor(openSplits))
+        if (verifyError) return { ok: false, status: 402, message: verifyError }
+
         applyCheckout(cart, openSplits, userId, paypalOrderId, order)
         try {
             await cart.save()
@@ -609,33 +625,9 @@ const settleCheckout = async (
                 return { ok: false, status: 402, message: "This PayPal order has already been used" }
             }
             if (err.name !== "VersionError") throw error
-            if (attempt === MAX_ATTEMPTS) {
-                return { ok: false, status: 409, message: "Checkout conflicted with a concurrent payment, please retry" }
-            }
-
-            // Reload and re-derive from the fresh doc before the next attempt.
-            const reloaded = await loadOpenCart(cartId, tableId)
-            if (!reloaded) return { ok: false, status: 404, message: "Cart Not Found!" }
-            // Re-check replay too: the payer we just conflicted with may have
-            // recorded THIS very order id — on this same cart, where the unique
-            // index can't help (duplicates within one document's array don't
-            // violate a multikey unique index).
-            const replayed = await CartModel.findOne({
-                $or: [{ paypalOrderIds: paypalOrderId }, { paypalOrderId }],
-            })
-            if (replayed) return { ok: false, status: 402, message: "This PayPal order has already been used" }
-            cart = reloaded
-            openSplits = callerOpenSplits(cart, userId)
-            if (openSplits.length === 0) return { ok: false, status: 404, message: "No open split items to pay!" }
-            const reAvailError = availabilityError(cart, openSplits)
-            if (reAvailError) return { ok: false, status: 409, message: reAvailError }
-            const reVerifyError = orderVerificationError(order, expectedTotalFor(openSplits))
-            if (reVerifyError) return { ok: false, status: 402, message: reVerifyError }
         }
     }
-
-    // Unreachable: every loop iteration returns or throws. Kept as a safety net.
-    return { ok: false, status: 409, message: "Checkout could not be completed" }
+    return { ok: false, status: 409, message: "Checkout conflicted with a concurrent payment, please retry" }
 }
 
 // Server-side checkout, step 1 of 2: create the PayPal order for the exact
@@ -767,7 +759,7 @@ export const captureCheckout: TController = async ( req, res, next ) => {
         // excuse to keep the buyer's money with nothing recorded.
         let outcome: SettleOutcome
         try {
-            outcome = await settleCheckout(cartId, req.params.tableId, cart, openSplits, user._id, paypalOrderId, captured)
+            outcome = await settleCheckout(cartId, req.params.tableId, user._id, paypalOrderId, captured)
         } catch (settleError) {
             console.error("Settling a captured PayPal payment failed", { paypalOrderId, error: settleError })
             outcome = { ok: false, status: 500, message: "The payment could not be recorded" }

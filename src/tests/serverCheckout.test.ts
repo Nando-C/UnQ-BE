@@ -697,6 +697,30 @@ describe("multi-payer settlement (via captureCheckout)", () => {
         ])
     })
 
+    it("settles on a busy table, where other diners' taps keep changing the cart while it saves", async () => {
+        const { tableId, cartId, customer, addSplit } = await scaffold()
+        await addSplit(customer.cookies, 1)
+        mockedGetOrder.mockResolvedValue(approvedOrder("3.00", `${cartId}:${customer.user._id}`))
+        mockedCaptureOrder.mockResolvedValue(capturedOrder("3.00"))
+        // Another write lands just before each of the first four saves.
+        const realSave = CartModel.prototype.save
+        let taps = 4
+        const save = jest.spyOn(CartModel.prototype, "save").mockImplementation(async function (this: InstanceType<typeof CartModel>, ...args: unknown[]) {
+            if (taps-- > 0) await CartModel.updateOne({ _id: this._id }, { $set: { updatedAt: new Date() } })
+            return (realSave as (...a: unknown[]) => Promise<unknown>).apply(this, args)
+        } as never)
+
+        const res = await request(app)
+            .post(`/carts/tables/${tableId}/${cartId}/captureCheckout`)
+            .set("Cookie", customer.cookies)
+            .send({ paypalOrderId: "ORDER-1" })
+        save.mockRestore()
+
+        expect(res.status).toBe(200)
+        expect(mockedRefundCapture).not.toHaveBeenCalled()
+        expect((await CartModel.findById(cartId))!.items[0].qtyPayed).toBe(1)
+    })
+
     it("settles the payer's own selection when another diner unticks theirs during the capture", async () => {
         const { shopId, tableId, cartId, customer, addSplit } = await scaffold() // item qty 2
         const other = await authFor("customer")

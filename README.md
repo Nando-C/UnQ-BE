@@ -168,7 +168,7 @@ src/
 └── tests/                  # Jest integration suite
 ```
 
-**Auth flow:** login/register/Google OAuth all issue the same pair of `httpOnly` cookies — a 15-minute access token and a 4-week refresh token. `POST /auth/refreshToken` verifies the refresh token against the one stored on the user document and rotates both cookies; a stale or already-used refresh token is rejected. Google OAuth runs through Passport with `session: false` — no server-side session, just the same JWT cookie pair on redirect. A Google sign-in whose verified email matches an existing account links to it and removes that account's password (nothing proved whoever set it owned the address), so from then on it signs in with Google. Emails are stored trimmed and lowercase, and match however they're capitalised.
+**Auth flow:** login/register/Google OAuth all issue the same pair of `httpOnly` cookies — a 15-minute access token and a 4-week refresh token. `POST /auth/refreshToken` verifies the refresh token against the one stored on the user document and rotates both cookies; a stale or already-used refresh token is rejected (`401`, and both cookies are cleared). Google OAuth runs through Passport with `session: false` — no server-side session, just the same JWT cookie pair on redirect. A Google sign-in whose verified email matches an existing account links to it and removes that account's password (nothing proved whoever set it owned the address), so from then on it signs in with Google. A new Google account takes its name from Google and has no surname when Google gives no family name. Emails are stored trimmed and lowercase, and match however they're capitalised.
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -243,7 +243,7 @@ I have used MongoDB with Mongoose to model the data for this application, creati
 User Model:
     {
         name: string,
-        surname: string,
+        surname: string, // may be absent on a Google account
         email: string,
         password: string,
         avatar: string,
@@ -567,7 +567,7 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/carts/tables/:tableId
 
-  Public: the table's open cart, for everyone at the table. When the request carries a valid login, the response also includes that diner's own notices; an expired or missing login gets the public view, never a 401.
+  Public: the table's open cart, for everyone at the table. When the request carries a valid login, the response also includes that diner's own notices; no login gets the public view; an expired or invalid one gets a `401` (refresh it and ask again).
 
 - [ 'GET' ]
 

@@ -5,6 +5,14 @@ import createError from "http-errors"
 import { IGoogleUser, IUserDocument } from "src/typings/users"
 import env from "../../settings/env"
 
+// Clearing a cookie needs the options it was set with: a cross-site response
+// can only touch a SameSite=None; Secure cookie with those attributes.
+const clearAuthCookies = (res: Parameters<TController>[1]) => {
+    const options = { httpOnly: true, secure: true, sameSite: "none" } as const
+    res.clearCookie("accessToken", options)
+    res.clearCookie("refreshToken", options)
+}
+
 // -------------------------------------------------------------------------
 
 export const registerUser: TController = async (req, res, next) => {
@@ -71,7 +79,12 @@ export const tokenRefresh: TController = async (req, res, next) => {
 
     try {
         const tokens = await refreshTokens(refreshToken)
-        if(!tokens) return next(createError(401, "Invalid token"))
+        if (!tokens) {
+            // The session is over: the cookies go, so the diner's next request
+            // is a guest's instead of another 401 (see optionalJWT).
+            clearAuthCookies(res)
+            return next(createError(401, "Invalid token"))
+        }
 
         res.cookie("accessToken", tokens.accessToken, {
             httpOnly: true,
@@ -121,8 +134,7 @@ export const logoutUser: TController = async (req, res, next) => {
         const user = req.user as IUserDocument
         await user.updateOne({ refreshToken: "" })
         
-        res.clearCookie("accessToken")
-        res.clearCookie("refreshToken")
+        clearAuthCookies(res)
         res.status(204).send()
     } catch (error) {
         console.log(error)

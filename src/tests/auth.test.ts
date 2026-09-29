@@ -165,6 +165,10 @@ describe("auth", () => {
                 .post("/auth/refreshToken")
                 .set("Cookie", ["refreshToken=not-a-jwt"])
             expect(res.status).toBe(401)
+            // The session is over, so the cookies are cleared, cross-site too.
+            const setCookie = (res.headers["set-cookie"] as unknown as string[] | undefined) || []
+            expect(setCookie).toHaveLength(2)
+            for (const c of setCookie) expect(c).toMatch(/Expires=Thu, 01 Jan 1970.*Secure.*SameSite=None/)
         })
 
         it("returns 400 when no refresh token is provided", async () => {
@@ -244,6 +248,17 @@ describe("Google sign-in (googleUserFor)", () => {
         expect(user?.email).toBe("new@example.com")
         expect(user?.googleId).toBe("google-42")
         expect(await UserModel.countDocuments({ email: "new@example.com" })).toBe(1)
+    })
+
+    it("creates an account when Google gives no family name, or no name at all", async () => {
+        const noSurname = googleProfile("cher@example.com")
+        noSurname.name = { givenName: "Cher" } as GoogleStrategy.Profile["name"]
+        const user = await googleUserFor(noSurname)
+        expect(user).toMatchObject({ name: "Cher", email: "cher@example.com" })
+        expect(user?.surname).toBeUndefined()
+
+        const noName = { ...googleProfile("prince@example.com"), id: "google-43", name: undefined }
+        expect((await googleUserFor(noName))?.name).toBe("prince")
     })
 })
 
