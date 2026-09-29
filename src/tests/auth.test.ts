@@ -1,4 +1,4 @@
-import { describe, it, expect } from "@jest/globals"
+import { describe, it, expect, jest } from "@jest/globals"
 import request from "supertest"
 import "./setup"
 import app from "../server"
@@ -166,6 +166,50 @@ describe("auth", () => {
                 .post("/auth/refreshToken")
                 .set("Cookie", cookiesFrom(firstRefresh))
             expect(winner.status).toBe(200)
+        })
+
+        it("ends an older device's session once another device has signed in", async () => {
+            const registerRes = await request(app).post("/auth/register").send(validUser)
+            const phone = cookiesFrom(registerRes)
+            await new Promise((r) => setTimeout(r, 1100))
+            const laptop = await request(app)
+                .post("/auth/login")
+                .send({ email: validUser.email, password: validUser.password })
+            expect(laptop.status).toBe(200)
+
+            // The phone's 15-minute access token runs out well after the laptop
+            // signed in: its refresh clears both cookies, so its next request is
+            // a guest's instead of the same stale login again.
+            const later = Date.now() + 15 * 60 * 1000
+            const clock = jest.spyOn(Date, "now").mockReturnValue(later)
+            try {
+                const res = await request(app).post("/auth/refreshToken").set("Cookie", phone)
+                expect(res.status).toBe(401)
+                const setCookie = (res.headers["set-cookie"] as unknown as string[] | undefined) || []
+                expect(setCookie).toHaveLength(2)
+                for (const c of setCookie) expect(c).toMatch(/Expires=Thu, 01 Jan 1970/)
+
+                // The laptop is unaffected.
+                const laptopRefresh = await request(app)
+                    .post("/auth/refreshToken")
+                    .set("Cookie", cookiesFrom(laptop))
+                expect(laptopRefresh.status).toBe(200)
+            } finally {
+                clock.mockRestore()
+            }
+        })
+
+        it("ends the session of a device whose user logged out elsewhere", async () => {
+            const registerRes = await request(app).post("/auth/register").send(validUser)
+            const phone = cookiesFrom(registerRes)
+            const laptop = await request(app)
+                .post("/auth/login")
+                .send({ email: validUser.email, password: validUser.password })
+            await request(app).get("/auth/logout").set("Cookie", cookiesFrom(laptop))
+
+            const res = await request(app).post("/auth/refreshToken").set("Cookie", phone)
+            expect(res.status).toBe(401)
+            expect((res.headers["set-cookie"] as unknown as string[] | undefined) || []).toHaveLength(2)
         })
 
         it("returns 401 (not 500) for an invalid or expired refresh token", async () => {

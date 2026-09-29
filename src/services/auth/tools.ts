@@ -63,11 +63,17 @@ export const verifyRefreshJWT = (token: string) =>
 
 // -------------------------------------------------------------------------
 
+// How recently the user's token must have been rotated for an older one to
+// count as another tab's race (see refreshTokens).
+const RACE_WINDOW_SECONDS = 60
+
 // New tokens for a valid refresh token. Otherwise null when the session is
-// over (the token is expired, malformed or signed with another key, or its user
-// is gone), or "superseded" when it was already rotated: another tab may have
-// just refreshed, and its new cookies are still good. The route answers both
-// with a 401 — not a server fault. Database errors still throw (a 500).
+// over: the token is expired, malformed or signed with another key, its user is
+// gone, or it was replaced a while ago (a sign-in on another device, a
+// logout, a password change). Or "superseded" when it was replaced moments ago:
+// another tab in the same browser just refreshed, and the cookies it got are
+// still good. The route answers both with a 401 — not a server fault — and
+// only null clears the cookies. Database errors still throw (a 500).
 export const refreshTokens = async ( currentRefreshToken: string) => {
     let decoded: jwt.JwtPayload
     try {
@@ -82,7 +88,10 @@ export const refreshTokens = async ( currentRefreshToken: string) => {
     if (currentRefreshToken === user.refreshToken) {
         const { accessToken, refreshToken } = await getTokens(user)
         return { accessToken, refreshToken }
-    } else return "superseded" as const
+    }
+    const current = jwt.decode(user.refreshToken ?? "") as jwt.JwtPayload | null
+    const justRotated = !!current?.iat && Date.now() / 1000 - current.iat < RACE_WINDOW_SECONDS
+    return justRotated ? ("superseded" as const) : null
 }
 
 // -------------------------------------------------------------------------

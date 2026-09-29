@@ -3,7 +3,7 @@ import mongoose from "mongoose"
 import request from "supertest"
 import "./setup"
 import app from "../server"
-import { authFor } from "./helpers"
+import { authFor, cookiesFrom, loginCookies } from "./helpers"
 import CartModel from "../services/carts/model"
 
 // Build a shop + table + menu item owned by a shopMg, plus a customer to order.
@@ -123,6 +123,34 @@ describe("carts", () => {
         expect(stale.status).toBe(401)
         // Without a token it's still the guest view.
         expect((await request(app).get(`/carts/tables/${tableId}`)).status).toBe(200)
+    })
+
+    it("shows the guest view to a diner whose account then signed in on another device", async () => {
+        const { tableId, shopId, menuId, customer } = await scaffold()
+        await request(app).post(`/carts/${shopId}/tables/${tableId}/addItem`)
+            .set("Cookie", customer.cookies).send({ menuId, qty: 1 })
+        await new Promise((r) => setTimeout(r, 1100))
+        await loginCookies(customer.email, customer.password) // the other device
+
+        // Once the phone's 15-minute access token has run out, it goes through
+        // the FE's steps: its read gets a 401, the refresh fails, and the read is
+        // asked again with whatever cookies are left.
+        const clock = jest.spyOn(Date, "now").mockReturnValue(Date.now() + 16 * 60 * 1000)
+        try {
+            let jar = customer.cookies
+            expect((await request(app).get(`/carts/tables/${tableId}`).set("Cookie", jar)).status).toBe(401)
+
+            const refresh = await request(app).post("/auth/refreshToken").set("Cookie", jar)
+            expect(refresh.status).toBe(401)
+            const cleared = cookiesFrom(refresh).map((c) => c.split("=")[0])
+            jar = jar.filter((c) => !cleared.includes(c.split("=")[0]))
+
+            const again = await request(app).get(`/carts/tables/${tableId}`).set("Cookie", jar)
+            expect(again.status).toBe(200)
+            expect(again.body.items).toHaveLength(1)
+        } finally {
+            clock.mockRestore()
+        }
     })
 
     it("forbids reading another user's cart (S5 authorization)", async () => {
