@@ -73,6 +73,11 @@ export const editTable: TController = async ( req, res, next ) => {
         const tableId = req.params.tableId
         const modification = req.body
 
+        // Same rule as createTable: two tables of one name have QR codes and
+        // status cards that can't be told apart.
+        const sameName = await ShopModel.findOne({ _id: shopId, tables: { $elemMatch: { name: modification.name, _id: { $ne: tableId } } } })
+        if (sameName) return next(createError(400, `Table name: '${modification.name}' already exist!`))
+
         const modifiedShop = await ShopModel.findOneAndUpdate(
             { _id: shopId, tables: { $elemMatch: {_id: tableId} } },
             { $set: { "tables.$.name": modification.name } },

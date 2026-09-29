@@ -404,6 +404,33 @@ describe("carts", () => {
         expect(res.body.status).toBe("closed")
     })
 
+    it("deleteItem keeps the units other diners are paying for, and removes the caller's own selection", async () => {
+        const { shopId, tableId, menuId, customer } = await scaffold()
+        const cartId = (
+            await request(app).post(`/carts/${shopId}/tables/${tableId}/addItem`)
+                .set("Cookie", customer.cookies).send({ menuId, qty: 4 })
+        ).body._id
+        const ana = await authFor("customer")
+        const split = (cookies: string[], qty: number) =>
+            request(app).post(`/carts/${shopId}/tables/${tableId}/${cartId}/addSplitItem`).set("Cookie", cookies).send({ menuId, qty })
+        await split(ana.cookies, 1)
+        await split(customer.cookies, 1)
+
+        const bin = () => request(app).post(`/carts/${shopId}/tables/${tableId}/deleteItem`)
+            .set("Cookie", customer.cookies).send({ menuId })
+        const res = await bin()
+        expect(res.status).toBe(200)
+        expect(res.body.items[0].qty).toBe(1)
+        const cart = await CartModel.findById(cartId)
+        expect(cart!.split.map((s) => [String(s.userId), s.qty])).toEqual([[String(ana.user._id), 1]])
+        expect(cart!.status).toBe("open")
+
+        // Only Ana's unit is left: nothing more for this diner to remove.
+        const again = await bin()
+        expect(again.status).toBe(409)
+        expect(again.body.message).toBe("Someone at the table is paying for those")
+    })
+
     it("deleteItem drops an unpaid line entirely and leaves the rest of the cart open", async () => {
         const { owner, shopId, tableId, menuId, customer } = await scaffold()
         const second = (

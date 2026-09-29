@@ -128,6 +128,22 @@ describe("shops", () => {
         expect(renamedTable.Qr_Url).toContain(String(tableId))
     })
 
+    it("won't rename a table to another table's name, but keeps its own", async () => {
+        const owner = await authFor("shopMg")
+        const shopId = (await request(app).post("/shops").set("Cookie", owner.cookies).send({ name: "Twin Cafe" })).body._id
+        const create = (name: string) =>
+            request(app).post(`/shops/${shopId}/tables`).set("Cookie", owner.cookies).send({ name })
+        await create("Window")
+        const tableId = (await create("Patio")).body._id
+        const rename = (name: string) =>
+            request(app).put(`/shops/${shopId}/tables/${tableId}`).set("Cookie", owner.cookies).send({ name })
+
+        const clash = await rename("Window")
+        expect(clash.status).toBe(400)
+        expect(clash.body.message).toBe("Table name: 'Window' already exist!")
+        expect((await rename("Patio")).status).toBe(200)
+    })
+
     describe("menu CRUD through /shops/:shopId/menu", () => {
         it("won't read, edit or delete another shop's item through your own shop", async () => {
             const victim = await authFor("shopMg")

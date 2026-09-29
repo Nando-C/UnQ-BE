@@ -238,18 +238,27 @@ const lockedUnits = (cart: ICartDocument, menuId: string): number => {
 
 // Removes an item's unpaid units from a loaded cart, in memory (the caller
 // saves): the rule of the diner's bin (deleteItem) and the manager's removeItem.
-// Returns how many units went. See deleteItem for the rule.
-export const removeUnpaidUnits = (cart: ICartDocument, menuId: string) => {
+// Returns how many units went. See deleteItem for the rule. With a diner's id
+// (the bin), the units other diners have selected to pay for stay, with their
+// selections: a diner can't take away what someone else is paying for. The
+// manager's removeItem passes none and removes them all.
+export const removeUnpaidUnits = (cart: ICartDocument, menuId: string, dinerId?: unknown) => {
     // Works on a populated cart too (menuId is then the menu document).
     const sameItem = (id: unknown) => String((id as { _id?: unknown } | null)?._id ?? id) === String(menuId)
+    const keptSplit = (s: ICartDocument["split"][number]) =>
+        dinerId !== undefined && String(s.userId) !== String(dinerId)
     const line = cart.items.find((i) => sameItem(i.menuId))
-    const removed = line ? line.qty - line.qtyPayed : 0
-    if (line && line.qtyPayed > 0) {
-        line.qty = line.qtyPayed
+    const othersHold = cart.split
+        .filter((s) => s.splitStatus === "open" && sameItem(s.menuId) && keptSplit(s))
+        .reduce((sum, s) => sum + s.qty, 0)
+    const keep = line ? line.qtyPayed + othersHold : 0
+    const removed = line ? line.qty - keep : 0
+    if (line && keep > 0) {
+        line.qty = keep
     } else {
         cart.items = cart.items.filter((i) => !sameItem(i.menuId))
     }
-    cart.split = cart.split.filter((s) => !(s.splitStatus === "open" && sameItem(s.menuId)))
+    cart.split = cart.split.filter((s) => !(s.splitStatus === "open" && sameItem(s.menuId) && !keptSplit(s)))
     // Same rule settleCheckout applies after a payment: nothing left to pay
     // means the table is finished, unless a payment is still pending. That
     // includes a cart left with no items beside its payments (refunds take
@@ -258,10 +267,13 @@ export const removeUnpaidUnits = (cart: ICartDocument, menuId: string) => {
     return removed
 }
 
-// Removes only the UNPAID units of an item. A partly-paid line is kept with
-// qty === qtyPayed as the record of what was paid; an unpaid line is dropped.
-// Every diner's open split on it goes too — those units no longer exist. This is
-// how a sold-out item leaves a cart (nothing removes it automatically).
+// Removes the UNPAID units of an item that no other diner has selected to pay
+// for. What stays: the paid units (the record of what was paid) and the units
+// in other diners' open splits, with those splits; a line with neither is
+// dropped. The caller's own selection goes with the units. 409 when there's
+// nothing the caller may remove. A sold-out or deleted item goes whoever
+// selected it (nobody can pay for it): this is how it leaves a cart (nothing
+// removes it automatically).
 // Version-checked save() (optimisticConcurrency on the schema), so a payment
 // settling at the same moment conflicts loudly instead of being overwritten;
 // settleCheckout's own retry then re-reads the cart and sees the removal.
@@ -276,7 +288,14 @@ export const deleteItem: TController = async ( req, res, next ) => {
             return
         }
 
-        removeUnpaidUnits(cart, menuId)
+        // A sold-out or deleted item can't be paid for, so others' selections
+        // of it would only be stranded: it goes entirely, as before.
+        const menuItem = await MenuModel.findById(menuId).select("available")
+        const payable = !!menuItem?.available
+        const dinerId = payable ? (req.user as IUserDocument)._id : undefined
+        if (removeUnpaidUnits(cart, menuId, dinerId) === 0) {
+            return next(createError(409, "Someone at the table is paying for those"))
+        }
 
         try {
             await cart.save()
