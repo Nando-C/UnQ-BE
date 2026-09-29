@@ -13,21 +13,36 @@ export const getMe: TController = async ( req, res) => {
 
 // -------------------------------------------------------------------------
 
+// Why the account's current password doesn't allow `what`, or null when it
+// does (or the account has none). 403, not 401, for a wrong one: a 401 would
+// send the FE to refresh the session.
+const currentPasswordRefusal = async (me: IUserDocument, currentPassword: unknown, what: string) => {
+    if (!me.password) return null
+    if (typeof currentPassword !== "string" || !currentPassword) {
+        return createError(400, `Enter your current password to ${what}`)
+    }
+    if (!(await bcrypt.compare(currentPassword, me.password))) return createError(403, "Your current password is incorrect")
+    return null
+}
+
 // Changing the email or password of an account that has a password needs the
 // current one (`currentPassword`): a stolen access token alone can't take the
-// account over. A new password ends the account's other sessions: new tokens
-// for this one, and the stored refresh token everyone else holds is replaced.
+// account over. A Google-only account can't get a password at all: there's
+// nothing to confirm it with, so a stolen token could set one and keep the
+// account for good. A new password ends the account's other sessions: new
+// tokens for this one, and the stored refresh token everyone else holds is
+// replaced.
 export const editMe: TController = async ( req, res, next) => {
     const me = req.user as IUserDocument
     try {
         const { name, surname, email, password, currentPassword } = req.body
+        if (password !== undefined && !me.password) {
+            return next(createError(403, "This account signs in with Google, so it can't have a password"))
+        }
         const emailChanges = email !== undefined && email.trim().toLowerCase() !== me.email
-        if ((emailChanges || password !== undefined) && me.password) {
-            if (!currentPassword) return next(createError(400, "Enter your current password to change your email or password"))
-            if (!(await bcrypt.compare(currentPassword, me.password))) {
-                // 403, not 401: a 401 would send the FE to refresh the session.
-                return next(createError(403, "Your current password is incorrect"))
-            }
+        if (emailChanges || password !== undefined) {
+            const refusal = await currentPasswordRefusal(me, currentPassword, "change your email or password")
+            if (refusal) return next(refusal)
         }
         if (name !== undefined) me.name = name
         if (surname !== undefined) me.surname = surname
@@ -68,9 +83,13 @@ export const editMyAvatar: TController = async ( req, res, next) => {
 
 // -------------------------------------------------------------------------
 
+// Deleting an account that has a password needs it (`currentPassword`), as
+// changing its email does: a stolen access token alone can't delete it.
 export const deleteMe: TController = async ( req, res, next ) => {
     const me = req.user as IUserDocument
     try {
+        const refusal = await currentPasswordRefusal(me, req.body?.currentPassword, "delete your account")
+        if (refusal) return next(refusal)
         await me.deleteOne()
         res.status(204).send()
     } catch {

@@ -176,13 +176,20 @@ export const decreaseItem: TController = async ( req, res, next ) => {
 
             const removedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: { $lte: 0 } }}}, { sort: { createdAt: -1 } }).populate(menuRef("items.menuId"))
 
-            const deleteCart = await CartModel.findOneAndDelete({tableId: tableId, status: "open", items: []}, { sort: { createdAt: -1 } }).populate(menuRef("items.menuId"))
+            // An emptied cart goes, unless it holds payment or refund records
+            // (a refund takes its units out of the cart): those must stay, so
+            // it closes below instead.
+            const deleteCart = await CartModel.findOneAndDelete({
+                _id: isItemThere._id, status: "open", items: [],
+                "payments.0": { $exists: false }, "refunds.0": { $exists: false },
+            }).populate(menuRef("items.menuId"))
 
             // Taking off the last unpaid units can leave everything paid: then
             // the table is finished, the same rule deleteItem and a checkout
             // apply. Left open, the next party at the table would inherit it.
+            // By id: the decreased line may be gone from the cart by now.
             const closedCart = deleteCart ? null : await CartModel.findOneAndUpdate(
-                { tableId: tableId, status: "open", "items.menuId": item.menuId, ...allItemsPaid },
+                { _id: isItemThere._id, status: "open", ...allItemsPaid },
                 { $set: { status: "closed" } },
                 { sort: { createdAt: -1 } }
             ).populate(menuRef("items.menuId"))
@@ -207,10 +214,10 @@ export const decreaseItem: TController = async ( req, res, next ) => {
 
 // -------------------------------------------------------------------------
 
-// A cart whose every item is fully paid and that has no payment still
-// pending (see closeIfPaidOff), as a query condition.
+// A cart with nothing left to pay (every item fully paid, or no items left
+// beside its payment records) and no payment still pending (see
+// closeIfPaidOff), as a query condition.
 const allItemsPaid = {
-    items: { $ne: [] },
     payments: { $not: { $elemMatch: { status: "pending" } } },
     $expr: {
         $allElementsTrue: [{
@@ -244,8 +251,10 @@ export const removeUnpaidUnits = (cart: ICartDocument, menuId: string) => {
     }
     cart.split = cart.split.filter((s) => !(s.splitStatus === "open" && sameItem(s.menuId)))
     // Same rule settleCheckout applies after a payment: nothing left to pay
-    // means the table is finished, unless a payment is still pending.
-    if (cart.items.length > 0) closeIfPaidOff(cart)
+    // means the table is finished, unless a payment is still pending. That
+    // includes a cart left with no items beside its payments (refunds take
+    // their units out).
+    if (cart.items.length > 0 || cart.payments.length > 0) closeIfPaidOff(cart)
     return removed
 }
 

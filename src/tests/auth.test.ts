@@ -330,17 +330,34 @@ describe("PUT /users/me", () => {
         expect((await request(app).post("/auth/login").send({ email: validUser.email, password: "newpassword1" })).status).toBe(200)
     })
 
-    it("sets a password on a Google-only account without asking for one", async () => {
+    it("won't give a Google-only account a password", async () => {
         await googleUserFor(googleProfile("g@example.com"))
         const user = await UserModel.findOne({ email: "g@example.com" })
         const { getTokens } = await import("../services/auth/tools")
         const { accessToken } = await getTokens(user!)
+        const cookies = [`accessToken=${accessToken}`]
 
-        const me = await request(app).get("/users/me").set("Cookie", [`accessToken=${accessToken}`])
+        const me = await request(app).get("/users/me").set("Cookie", cookies)
         expect(me.body.hasPassword).toBe(false)
-        const res = await request(app).put("/users/me").set("Cookie", [`accessToken=${accessToken}`])
-            .send({ password: "newpassword1" })
-        expect(res.status).toBe(200)
-        expect((await request(app).post("/auth/login").send({ email: "g@example.com", password: "newpassword1" })).status).toBe(200)
+        const res = await request(app).put("/users/me").set("Cookie", cookies).send({ password: "newpassword1" })
+        expect(res.status).toBe(403)
+        expect(res.body.message).toBe("This account signs in with Google, so it can't have a password")
+        expect((await request(app).post("/auth/login").send({ email: "g@example.com", password: "newpassword1" })).status).toBe(401)
+        // It can still change its name.
+        expect((await request(app).put("/users/me").set("Cookie", cookies).send({ name: "Augusta" })).status).toBe(200)
+    })
+})
+
+describe("DELETE /users/me", () => {
+    it("needs the current password of an account that has one", async () => {
+        const cookies = cookiesFrom(await request(app).post("/auth/register").send(validUser))
+
+        expect((await request(app).delete("/users/me").set("Cookie", cookies)).status).toBe(400)
+        expect((await request(app).delete("/users/me").set("Cookie", cookies).send({ currentPassword: "nope" })).status).toBe(403)
+        expect(await UserModel.countDocuments({ email: validUser.email })).toBe(1)
+
+        const res = await request(app).delete("/users/me").set("Cookie", cookies).send({ currentPassword: validUser.password })
+        expect(res.status).toBe(204)
+        expect(await UserModel.countDocuments({ email: validUser.email })).toBe(0)
     })
 })

@@ -188,6 +188,12 @@ const saveChecked = async (cart: ICartDocument) => {
     }
 }
 
+// Deletes a cart that neverPaid() said could go, only if it's unchanged since it
+// was loaded and still has no payment: a diner's payment settling in between
+// must never be deleted with it. False when it wasn't deleted.
+const deleteIfUnchanged = async (cart: ICartDocument) =>
+    (await CartModel.deleteOne({ _id: cart._id, __v: cart.get("__v"), "payments.0": { $exists: false } })).deletedCount === 1
+
 const idOf = (ref: unknown) => String((ref as { _id?: unknown } | null)?._id ?? ref)
 const nameOf = (ref: unknown) => (ref as { name?: string } | null)?.name ?? "item"
 const units = (qty: number, menuRef: unknown) => `${qty}× ${nameOf(menuRef)}`
@@ -294,7 +300,7 @@ export const closeCart: TController = async ( req, res, next ) => {
 
         if (neverPaid(cart)) {
             const dropped = dropUnpaid(cart)
-            await CartModel.deleteOne({ _id: cart._id })
+            if (!(await deleteIfUnchanged(cart))) return next(createError(409, CART_CHANGED))
             return res.send({ deleted: true, dropped })
         }
 
@@ -317,7 +323,8 @@ export const closeCart: TController = async ( req, res, next ) => {
 // selections into the newest one, which is the one diners see. Its paid units
 // stay on it as the record, and it closes (or is deleted, if nothing on it was
 // ever paid). Two documents with no transaction: the newest is saved first, so
-// a failure in between can at worst leave units in both, never lose them.
+// a failure in between (or the older cart changing meanwhile) can at worst
+// leave units in both, never lose them or a payment.
 export const mergeInto: TController = async ( req, res, next ) => {
     try {
         const source = await loadManagedCart(req.params as Params)
@@ -353,7 +360,9 @@ export const mergeInto: TController = async ( req, res, next ) => {
         const removeSource = neverPaid(source)
         dropUnpaid(source)
         if (removeSource) {
-            await CartModel.deleteOne({ _id: source._id })
+            // Changed since it was loaded (a payment may have settled on it):
+            // kept, and its units are then in both carts, as documented above.
+            if (!(await deleteIfUnchanged(source))) return next(createError(409, CART_CHANGED))
         } else {
             source.status = "closed"
             log(source, req, "mergeInto", `moved to cart ${target._id}: ${moved.join(", ") || "nothing unpaid"}`)

@@ -477,6 +477,50 @@ describe("carts", () => {
         expect(fresh.body._id).not.toBe(cartId)
     })
 
+    it("decreaseItem closes the cart when it takes away the last unpaid line entirely", async () => {
+        const { owner, shopId, tableId, menuId, customer } = await scaffold()
+        const muffin = (await request(app).post(`/shops/${shopId}/menu`).set("Cookie", owner.cookies)
+            .send({ name: "Muffin", short_description: "x", price: 2, category: "food" })).body._id
+        const add = (id: string) => request(app).post(`/carts/${shopId}/tables/${tableId}/addItem`)
+            .set("Cookie", customer.cookies).send({ menuId: id, qty: 1 })
+        const cartId = (await add(menuId)).body._id
+        await add(muffin)
+        await CartModel.updateOne({ _id: cartId, "items.menuId": menuId }, { $set: { "items.$.qtyPayed": 1 } })
+
+        // The Muffin line goes altogether; the paid Latte is all that's left.
+        const res = await request(app).post(`/carts/${shopId}/tables/${tableId}/removeItem`)
+            .set("Cookie", customer.cookies).send({ menuId: muffin, qty: 1 })
+        expect(res.status).toBe(200)
+        expect(res.body.status).toBe("closed")
+        expect(res.body.items).toHaveLength(1)
+    })
+
+    it("decreaseItem keeps (and closes) an emptied cart that holds payment and refund records", async () => {
+        const { shopId, tableId, menuId, customer } = await scaffold()
+        const cartId = (await request(app).post(`/carts/${shopId}/tables/${tableId}/addItem`)
+            .set("Cookie", customer.cookies).send({ menuId, qty: 1 })).body._id
+        // A paid line refunded since: the refund took its units out of the
+        // cart, leaving its payment and refund records.
+        const paymentId = new mongoose.Types.ObjectId()
+        await CartModel.updateOne({ _id: cartId }, { $push: {
+            payments: {
+                _id: paymentId, provider: "paypal", providerCheckoutId: "ORDER-1", providerPaymentId: "CAP-1", currency: "GBP",
+                userId: customer.user._id, paidAt: new Date(), amount: 2,
+                lines: [{ menuId: new mongoose.Types.ObjectId(), name: "Muffin", qty: 1, unitPrice: 2, refundedQty: 1 }],
+            },
+            refunds: { paymentId, lines: [{ menuId: new mongoose.Types.ObjectId(), name: "Muffin", qty: 1 }], amount: 2, currency: "GBP", status: "completed", at: new Date() },
+        } })
+
+        const res = await request(app).post(`/carts/${shopId}/tables/${tableId}/removeItem`)
+            .set("Cookie", customer.cookies).send({ menuId, qty: 1 })
+        expect(res.status).toBe(200)
+        const cart = await CartModel.findById(cartId)
+        expect(cart).not.toBeNull()
+        expect(cart!.status).toBe("closed")
+        expect(cart!.payments).toHaveLength(1)
+        expect(cart!.refunds).toHaveLength(1)
+    })
+
     it("the database refuses a second open cart for a table, but not once the first is closed", async () => {
         await CartModel.init() // builds the one-open-cart-per-table index
         const cart = (tableId: string, status = "open") =>

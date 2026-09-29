@@ -186,6 +186,12 @@ describe("shops", () => {
             expect(editRes.status).toBe(200)
             expect(editRes.body.price).toBe(3.75)
 
+            // prices are whole pence
+            expect((await request(app).put(`/shops/${shopId}/menu/${itemId}`).set("Cookie", owner.cookies)
+                .send({ price: 2.345 })).status).toBe(400)
+            expect((await request(app).post(`/shops/${shopId}/menu`).set("Cookie", owner.cookies)
+                .send({ ...menuItem, price: 1.006 })).status).toBe(400)
+
             // delete
             const delRes = await request(app)
                 .delete(`/shops/${shopId}/menu/${itemId}`)

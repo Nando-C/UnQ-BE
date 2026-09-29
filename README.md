@@ -426,7 +426,7 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/users/me
 
-  The user carries `hasPassword` (false for a Google-only account). `PUT` body: any of `{ name, surname, email, password, currentPassword }`. Changing the email or password of an account that has a password needs `currentPassword` (`400` without it, `403` when it's wrong); a new password ends the account's other sessions and sets fresh cookies for this one. `409` for an email another account has.
+  The user carries `hasPassword` (false for a Google-only account). `PUT` body: any of `{ name, surname, email, password, currentPassword }`. Changing the email or password of an account that has a password needs `currentPassword` (`400` without it, `403` when it's wrong), and so does `DELETE` (body `{ currentPassword }`). A Google-only account can't be given a password (`403`). A new password ends the account's other sessions and sets fresh cookies for this one. `409` for an email another account has.
 
 - [ 'PUT' ]
 
@@ -479,7 +479,7 @@ These are the available endpoints created for this application. Every mutating r
   baseURL-api/shops/:shopId/tables/:tableId/carts/:cartId/close
   baseURL-api/shops/:shopId/tables/:tableId/carts/:cartId/mergeInto
 
-  Shop managers only; no money moves. `releaseSelection` `{ userId?, menuId? }` frees units held in open selections (everyone's, one diner's or one item's); `userId: null` means the diners whose account no longer exists. `removeItem` `{ menuId }` takes out an item's unpaid units by the same rule as the diner's bin. `close` drops every unpaid unit and open selection, keeps the paid ones, and closes the cart (a cart where nothing was ever paid is deleted); it answers `{ deleted, dropped, cart? }`. `mergeInto` moves an older duplicate open cart's unpaid units and selections into the table's newest one. Each leaves a note for the diners (`notices` in their cart responses: the table-wide ones and their own, from the last 2 hours) and an entry in the cart's `managerLog`. A concurrent change to the cart answers `409 The cart changed, please retry`. `close` and `mergeInto` answer `409` while a payment on the cart is `pending`. Deleting a table (or a shop) with an open cart is refused with `409` until it's closed.
+  Shop managers only; no money moves. `releaseSelection` `{ userId?, menuId? }` frees units held in open selections (everyone's, one diner's or one item's); `userId: null` means the diners whose account no longer exists. `removeItem` `{ menuId }` takes out an item's unpaid units by the same rule as the diner's bin. `close` drops every unpaid unit and open selection, keeps the paid ones, and closes the cart (a cart where nothing was ever paid is deleted, unless a payment settled on it meanwhile: then `409`); it answers `{ deleted, dropped, cart? }`. `mergeInto` moves an older duplicate open cart's unpaid units and selections into the table's newest one. Each leaves a note for the diners (`notices` in their cart responses: the table-wide ones and their own, from the last 2 hours) and an entry in the cart's `managerLog`. A concurrent change to the cart answers `409 The cart changed, please retry`. `close` and `mergeInto` answer `409` while a payment on the cart is `pending`. Deleting a table (or a shop) with an open cart is refused with `409` until it's closed.
 
 - [ 'POST' ]
 
@@ -506,6 +506,8 @@ These are the available endpoints created for this application. Every mutating r
 - [ 'GET', 'PUT', 'DELETE' ]
 
   baseURL-api/shops/:shopId/menu/:itemId
+
+  A menu item's `price` is in whole pence (at most 2 decimals; `400` otherwise).
 
 - [ 'PUT' ]
 

@@ -72,7 +72,7 @@ describe("releaseSelection", () => {
         const cartId = await add(ada, latte, 3)
         await select(ada, cartId, latte, 2)
         await select(bo, cartId, latte, 1)
-        await request(app).delete("/users/me").set("Cookie", ada.cookies)
+        await request(app).delete("/users/me").set("Cookie", ada.cookies).send({ currentPassword: ada.password })
 
         const res = await action(cartId, "releaseSelection", { userId: null, menuId: latte })
         expect(res.status).toBe(200)
@@ -150,6 +150,25 @@ describe("close", () => {
         expect(res.body).toEqual({ deleted: true, dropped: [{ menuId: latte, name: "Latte", qty: 2 }] })
         expect(await CartModel.findById(cartId)).toBeNull()
         expect((await tableCart()).status).toBe(404)
+    })
+
+    it("won't delete a never-paid cart a payment settled on meanwhile", async () => {
+        const { latte, ada, add, action } = await scaffold()
+        const cartId = await add(ada, latte, 2)
+        // The payment lands between the manager's read and the delete.
+        const deleteOne = CartModel.deleteOne.bind(CartModel)
+        const spy = jest.spyOn(CartModel, "deleteOne").mockImplementationOnce(((filter: object) =>
+            CartModel.updateOne({ _id: cartId }, { $set: { "items.0.qtyPayed": 2 }, $push: { payments: {
+                provider: "paypal", providerCheckoutId: "ORDER-1", providerPaymentId: "CAP-1", currency: "GBP",
+                userId: ada.user._id, paidAt: new Date(), amount: 6,
+                lines: [{ menuId: latte, name: "Latte", qty: 2, unitPrice: 3 }],
+            } } }).then(() => deleteOne(filter))) as never)
+
+        const res = await action(cartId, "close")
+        spy.mockRestore()
+        expect(res.status).toBe(409)
+        const cart = await CartModel.findById(cartId)
+        expect(cart?.payments).toHaveLength(1)
     })
 
     it("fails with 409, changing nothing, when the cart changed underneath (e.g. a payment settling)", async () => {
