@@ -404,6 +404,32 @@ describe("carts", () => {
         expect(res.body.status).toBe("closed")
     })
 
+    it("addItem and removeItem answer with the diners' selections filled in, as every cart answer does", async () => {
+        const { shopId, tableId, menuId, customer } = await scaffold()
+        const cartId = (
+            await request(app).post(`/carts/${shopId}/tables/${tableId}/addItem`)
+                .set("Cookie", customer.cookies).send({ menuId, qty: 3 })
+        ).body._id
+        const ana = await authFor("customer")
+        await request(app).post(`/carts/${shopId}/tables/${tableId}/${cartId}/addSplitItem`)
+            .set("Cookie", ana.cookies).send({ menuId, qty: 1 })
+
+        const filledIn = (body: { split: { menuId: { _id?: string; price?: number } }[] }) => {
+            expect(body.split).toHaveLength(1)
+            expect(body.split[0].menuId._id).toBe(menuId)
+            expect(typeof body.split[0].menuId.price).toBe("number")
+        }
+        const add = await request(app).post(`/carts/${shopId}/tables/${tableId}/addItem`)
+            .set("Cookie", customer.cookies).send({ menuId, qty: 1 })
+        expect(add.status).toBe(200)
+        filledIn(add.body)
+
+        const less = await request(app).post(`/carts/${shopId}/tables/${tableId}/removeItem`)
+            .set("Cookie", customer.cookies).send({ menuId, qty: 1 })
+        expect(less.status).toBe(200)
+        filledIn(less.body)
+    })
+
     it("deleteItem keeps the units other diners are paying for, and removes the caller's own selection", async () => {
         const { shopId, tableId, menuId, customer } = await scaffold()
         const cartId = (

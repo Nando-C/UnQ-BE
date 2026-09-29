@@ -134,11 +134,11 @@ export const addItem: TController = async ( req, res, next ) => {
         // one-open-cart-per-table index (11000) and the pair is tried again,
         // now landing on the first step.
         for (let attempt = 0; attempt < 3; attempt++) {
-            const updatedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": req.body.qty }}, { sort: { createdAt: -1 } }).populate(menuRef("items.menuId"))
+            const updatedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": req.body.qty }}, { sort: { createdAt: -1 } }).populate(menuRef("items.menuId")).populate(menuRef("split.menuId"))
             if (updatedItem) return res.send(forDiner(updatedItem, req))
 
             try {
-                const addedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": { $ne: item.menuId }}, { $push: { items: item }, $setOnInsert: { userId: user._id, shopId: req.params.shopId }}, { upsert: true, sort: { createdAt: -1 } }).populate(menuRef("items.menuId"))
+                const addedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": { $ne: item.menuId }}, { $push: { items: item }, $setOnInsert: { userId: user._id, shopId: req.params.shopId }}, { upsert: true, sort: { createdAt: -1 } }).populate(menuRef("items.menuId")).populate(menuRef("split.menuId"))
                 return res.send(forDiner(addedItem, req))
             } catch (error) {
                 const err = error as { code?: number; cause?: { code?: number } }
@@ -172,9 +172,9 @@ export const decreaseItem: TController = async ( req, res, next ) => {
                 return next(createError(409, "Those units are already paid for or selected for payment"))
             }
 
-            const decreasedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": -(req.body.qty) }}, { sort: { createdAt: -1 } }).populate(menuRef("items.menuId"))
+            const decreasedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": -(req.body.qty) }}, { sort: { createdAt: -1 } }).populate(menuRef("items.menuId")).populate(menuRef("split.menuId"))
 
-            const removedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: { $lte: 0 } }}}, { sort: { createdAt: -1 } }).populate(menuRef("items.menuId"))
+            const removedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $pull: { items: { qty: { $lte: 0 } }}}, { sort: { createdAt: -1 } }).populate(menuRef("items.menuId")).populate(menuRef("split.menuId"))
 
             // An emptied cart goes, unless it holds payment or refund records
             // (a refund takes its units out of the cart): those must stay, so
@@ -192,7 +192,7 @@ export const decreaseItem: TController = async ( req, res, next ) => {
                 { _id: isItemThere._id, status: "open", ...allItemsPaid },
                 { $set: { status: "closed" } },
                 { sort: { createdAt: -1 } }
-            ).populate(menuRef("items.menuId"))
+            ).populate(menuRef("items.menuId")).populate(menuRef("split.menuId"))
 
             if (deleteCart) {
                 res.status(204).send()
