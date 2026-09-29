@@ -158,6 +158,14 @@ describe("auth", () => {
                 .post("/auth/refreshToken")
                 .set("Cookie", firstCookies)
             expect(reuse.status).toBe(401)
+            // ...without clearing the cookies: another tab that lost the race
+            // would otherwise wipe the ones the winner just got.
+            expect(reuse.headers["set-cookie"]).toBeUndefined()
+
+            const winner = await request(app)
+                .post("/auth/refreshToken")
+                .set("Cookie", cookiesFrom(firstRefresh))
+            expect(winner.status).toBe(200)
         })
 
         it("returns 401 (not 500) for an invalid or expired refresh token", async () => {

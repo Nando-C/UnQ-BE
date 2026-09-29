@@ -85,6 +85,8 @@ export const tokenRefresh: TController = async (req, res, next) => {
             clearAuthCookies(res)
             return next(createError(401, "Invalid token"))
         }
+        // Another tab refreshed first; clearing here would wipe its new cookies.
+        if (tokens === "superseded") return next(createError(401, "Invalid token"))
 
         res.cookie("accessToken", tokens.accessToken, {
             httpOnly: true,

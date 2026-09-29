@@ -63,10 +63,11 @@ export const verifyRefreshJWT = (token: string) =>
 
 // -------------------------------------------------------------------------
 
-// New tokens for a valid refresh token, or null when there's no session to
-// refresh: the token is expired, malformed or signed with another key, its user
-// is gone, or it was already rotated. The route answers null with a 401 — an
-// ended session is not a server fault. Database errors still throw (a 500).
+// New tokens for a valid refresh token. Otherwise null when the session is
+// over (the token is expired, malformed or signed with another key, or its user
+// is gone), or "superseded" when it was already rotated: another tab may have
+// just refreshed, and its new cookies are still good. The route answers both
+// with a 401 — not a server fault. Database errors still throw (a 500).
 export const refreshTokens = async ( currentRefreshToken: string) => {
     let decoded: jwt.JwtPayload
     try {
@@ -81,7 +82,7 @@ export const refreshTokens = async ( currentRefreshToken: string) => {
     if (currentRefreshToken === user.refreshToken) {
         const { accessToken, refreshToken } = await getTokens(user)
         return { accessToken, refreshToken }
-    } else return null
+    } else return "superseded" as const
 }
 
 // -------------------------------------------------------------------------
