@@ -19,8 +19,9 @@ import { isDuplicateKey, isVersionConflict, saveChecked } from "../../lib/mongo"
 // it from the populated splits.
 const MENU_FIELDS = "name short_description image price available"
 
-// A cart keeps referencing a menu item after the manager deletes it, and a plain
-// populate turns that reference into null: the item's id is lost, so nothing
+// A deleted menu item is kept (unavailable) for the carts that hold it, but one
+// deleted before items were kept is gone, and a plain populate turns its
+// reference into null: the item's id is lost, so nothing
 // could match, remove or un-select the line, and code reading `menuId._id`
 // crashed. Such an item is shown instead as a sold-out stand-in carrying its
 // id. Sold out means it can't be claimed or paid for, and the existing

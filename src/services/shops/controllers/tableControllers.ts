@@ -115,9 +115,25 @@ export const deleteTable: TController = async ( req, res, next ) => {
         if (await CartModel.exists({ tableId, status: "open" })) {
             return next(createError(409, "This table has an open cart — close it first"))
         }
+        if (!mongoose.isValidObjectId(tableId)) return next(createError(404, "Table Not Found!"))
 
-        const modifiedShop = await ShopModel.findByIdAndUpdate(shopId, { $pull: { tables: { _id: tableId} } })
-        if (!modifiedShop) return next(createError(404, "Table Not Found!"))
+        const shop = await ShopModel.findById(shopId, { tables: { $elemMatch: { _id: tableId } } })
+        if (!shop) return next(createError(404, "Table Not Found!"))
+        // Already deleted (a second tap): nothing left to do.
+        const table = shop.tables[0]
+        if (!table) return res.status(204).send()
+
+        // Moved to the shop's deleted tables rather than dropped: it takes no
+        // orders and diners don't see it, but the manager can still open its
+        // recent carts, to refund them. Only as it was read (not renamed since).
+        const moved = await ShopModel.updateOne(
+            { _id: shopId, tables: { $elemMatch: { _id: table._id, name: table.name } } },
+            {
+                $pull: { tables: { _id: table._id } },
+                $push: { deletedTables: { _id: table._id, name: table.name, deletedAt: new Date() } },
+            }
+        )
+        if (moved.modifiedCount !== 1) return next(createError(409, "The table changed, please try again"))
 
         res.status(204).send()
     } catch (error) {

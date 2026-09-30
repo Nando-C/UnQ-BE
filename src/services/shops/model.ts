@@ -46,6 +46,20 @@ const ShopSchema = new Schema<IShopDocument> (
                 Qr_Url: String,
             },
         ],
+        // Tables the manager deleted, kept (by their ids) so the carts closed at
+        // them stay reachable from the manager's page; they take no orders.
+        deletedTables: [
+            {
+                name: {
+                    type: String,
+                    required: true,
+                },
+                deletedAt: {
+                    type: Date,
+                    required: true,
+                },
+            },
+        ],
         menu:
             {
                 type: [Schema.Types.ObjectId],

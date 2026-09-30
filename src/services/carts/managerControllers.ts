@@ -128,10 +128,11 @@ const managerView = async (cart: ICartDocument) =>
 // GET /shops/:shopId/tables/:tableId/carts — the table's open cart(s) and those
 // closed in the last 24 hours, newest first, with payment records. Diners (in
 // selections and payments) are shown by first name only, never their email.
+// A deleted table's too, so its last carts can still be refunded.
 export const getTableCarts: TController = async ( req, res, next ) => {
     try {
         const { shopId, tableId } = req.params
-        const onShop = await ShopModel.exists({ _id: shopId, "tables._id": tableId })
+        const onShop = await ShopModel.exists({ _id: shopId, $or: [{ "tables._id": tableId }, { "deletedTables._id": tableId }] })
         if (!onShop) return next(createError(404, "Table Not Found!"))
 
         const since = new Date(Date.now() - RECENTLY_CLOSED_MS)

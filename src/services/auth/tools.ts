@@ -31,17 +31,23 @@ const generateRefreshJWT = (payload: IJWTPayload) =>
 
 // -------------------------------------------------------------------------
     
+// A new access + refresh token pair, not yet stored.
+const signTokens = async (user: IUserDocument) => {
+    const accessToken = (await generateJWT({ _id: user._id })) as string
+    const refreshToken = (await generateRefreshJWT({ _id: user._id })) as string
+    return { accessToken, refreshToken }
+}
+
 // A new access + refresh token pair. The refresh token is stored on the user,
 // so it replaces the one any other session holds (see refreshTokens).
 export const getTokens = async (user: IUserDocument) => {
-    const accessToken = (await generateJWT({ _id: user._id })) as string
-    const refreshToken = (await generateRefreshJWT({ _id: user._id })) as string
+    const tokens = await signTokens(user)
 
-    user.refreshToken = refreshToken
+    user.refreshToken = tokens.refreshToken
 
     await user.save()
 
-    return { accessToken, refreshToken}
+    return tokens
 }
 
 // -------------------------------------------------------------------------
@@ -89,8 +95,16 @@ export const refreshTokens = async ( currentRefreshToken: string) => {
     if (!user) return null
 
     if (currentRefreshToken === user.refreshToken) {
-        const { accessToken, refreshToken } = await getTokens(user)
-        return { accessToken, refreshToken }
+        // Stored only if the token is still the current one, in one step: of two
+        // refreshes racing with it (two tabs), one gets the new pair and the
+        // other is told it was superseded, so the browser can't be left holding
+        // a pair the database no longer has.
+        const tokens = await signTokens(user)
+        const swapped = await UserModel.updateOne(
+            { _id: user._id, refreshToken: currentRefreshToken },
+            { refreshToken: tokens.refreshToken }
+        )
+        return swapped.modifiedCount === 1 ? tokens : ("superseded" as const)
     }
     const current = jwt.decode(user.refreshToken ?? "") as jwt.JwtPayload | null
     const justRotated = !!current?.iat && Date.now() / 1000 - current.iat < RACE_WINDOW_SECONDS

@@ -114,11 +114,13 @@ export const deleteItem: TController = async ( req, res, next ) => {
         const shopId = req.params.shopId
         const itemId = req.params.itemId
 
-        // Only pulls (and then deletes) an item that is on this shop's menu.
+        // Only takes off an item that is on this shop's menu.
         const updatedShopMenu = await ShopModel.findOneAndUpdate({ _id: shopId, menu: itemId }, { $pull: {menu: itemId}}, { runValidators: true})
         if (!updatedShopMenu) return next(createError(404, "Menu Item Not Found!"))
 
-        const deletedItem = await MenuModel.findByIdAndDelete(itemId)
+        // Kept, unavailable, so the carts that hold it still name it (and treat
+        // it as sold out); it goes for good with the shop (deleteMyShop).
+        const deletedItem = await MenuModel.findByIdAndUpdate(itemId, { deletedFrom: shopId, available: false })
         if (!deletedItem) return next(createError(404, "Menu Item Not Found!"))
 
         res.status(204).send()
