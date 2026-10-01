@@ -225,6 +225,11 @@ CartSchema.pre(["findOneAndUpdate", "updateOne", "updateMany"], function () {
 CartSchema.index({ tableId: 1 }, { unique: true, partialFilterExpression: { status: "open" } })
 
 // Diners see notices from the last 2 hours, at most the 5 newest.
+// Carts with money PayPal hasn't confirmed: a payment it holds for review or a
+// refund it didn't clearly answer. Only a manager can settle them (checkPayment,
+// retryRefund), so they stay in reach and hold back deleting their table or shop.
+export const AWAITING_PAYPAL = { $or: [{ "payments.status": "pending" as const }, { "refunds.status": "pending" as const }] }
+
 export const NOTICE_MAX_AGE_MS = 2 * 60 * 60 * 1000
 const NOTICE_MAX = 5
 

@@ -1,4 +1,16 @@
-import { describe, it, expect } from "@jest/globals"
+import { jest, describe, it, expect } from "@jest/globals"
+
+// PayPal mocked at the module boundary, before the app is imported.
+jest.mock("../lib/paypal", () => ({
+    getOrder: jest.fn(),
+    createOrder: jest.fn(),
+    captureOrder: jest.fn(),
+    refundCapture: jest.fn(),
+    findRefund: jest.fn(),
+    PayPalRefundRefused: jest.requireActual<typeof import("../lib/paypal")>("../lib/paypal").PayPalRefundRefused,
+    PayPalCaptureRefused: jest.requireActual<typeof import("../lib/paypal")>("../lib/paypal").PayPalCaptureRefused,
+}))
+
 import request from "supertest"
 import "./setup"
 import app from "../server"
@@ -8,6 +20,7 @@ import MenuModel from "../services/menus/model"
 import ShopModel from "../services/shops/model"
 import UserModel from "../services/users/model"
 import { refreshTokens } from "../services/auth/tools"
+import { refundCapture } from "../lib/paypal"
 
 // A shop with a £3 Latte and a £2 Muffin, one table, and Ada's cart at it
 // holding a Latte.
@@ -153,7 +166,7 @@ describe("deleting a shop", () => {
         const res = await request(app).delete(`/shops/${shopId}`).set("Cookie", owner.cookies)
 
         expect(res.status).toBe(409)
-        expect(res.body.message).toBe("A payment or refund in this shop is still awaiting PayPal — check it first")
+        expect(res.body.message).toBe("A payment or refund at table T1 is still awaiting PayPal — check it there first")
         expect(await ShopModel.exists({ _id: shopId })).not.toBeNull()
         expect(await CartModel.countDocuments({ _id: cartId })).toBe(1)
     })
@@ -170,6 +183,91 @@ describe("deleting a shop", () => {
         await closePaid(cartId, ada.user._id, latte, { refund: "completed" })
 
         expect((await request(app).delete(`/shops/${shopId}`).set("Cookie", owner.cookies)).status).toBe(204)
+    })
+})
+
+const daysAgo = (d: number) => new Date(Date.now() - d * 24 * 3600_000)
+
+describe("money still waiting on PayPal, and deleted tables", () => {
+    it("refunds an older cart (from before carts recorded their shop) at a deleted table", async () => {
+        jest.mocked(refundCapture).mockResolvedValue("REF-1")
+        const { owner, shopId, tableId, latte, ada, cartId } = await scaffold()
+        await closePaid(cartId, ada.user._id, latte)
+        await CartModel.collection.updateOne({ _id: (await CartModel.findById(cartId))!._id }, { $unset: { shopId: "" } })
+        await request(app).delete(`/shops/${shopId}/tables/${tableId}`).set("Cookie", owner.cookies)
+        const paymentId = String((await CartModel.findById(cartId))!.payments[0]._id)
+
+        const res = await request(app).post(`/shops/${shopId}/carts/${cartId}/refunds`).set("Cookie", owner.cookies)
+            .send({ paymentId, lines: [{ menuId: latte, qty: 1 }] })
+
+        expect(res.status).toBe(200)
+    })
+
+    it("keeps a table whose cart opened while it was being deleted", async () => {
+        const { owner, shopId, tableId, latte, ada, cartId } = await scaffold()
+        await closePaid(cartId, ada.user._id, latte)
+        // A diner's order lands just after the check for an open cart.
+        const move = ShopModel.updateOne.bind(ShopModel)
+        const spy = jest.spyOn(ShopModel, "updateOne").mockImplementationOnce(((...args: Parameters<typeof move>) =>
+            move(...args).then(async (result) => {
+                await CartModel.updateOne({ _id: cartId }, { status: "open" })
+                return result
+            })) as never)
+
+        const res = await request(app).delete(`/shops/${shopId}/tables/${tableId}`).set("Cookie", owner.cookies)
+        spy.mockRestore()
+
+        expect(res.status).toBe(409)
+        const shop = (await ShopModel.findById(shopId))!
+        expect(shop.tables.map((t) => String(t._id))).toEqual([tableId])
+        expect(shop.deletedTables).toHaveLength(0)
+    })
+
+    it("lets the manager close an open cart left at a deleted table", async () => {
+        const { owner, shopId, tableId, latte, ada, cartId } = await scaffold()
+        await closePaid(cartId, ada.user._id, latte)
+        await request(app).delete(`/shops/${shopId}/tables/${tableId}`).set("Cookie", owner.cookies)
+        await CartModel.updateOne({ _id: cartId }, { status: "open" })
+
+        const close = await request(app).post(`/shops/${shopId}/tables/${tableId}/carts/${cartId}/close`).set("Cookie", owner.cookies)
+
+        expect(close.status).toBe(200)
+        expect((await request(app).delete(`/shops/${shopId}`).set("Cookie", owner.cookies)).status).toBe(204)
+    })
+
+    it("refuses to delete a table while its money is still waiting on PayPal", async () => {
+        const { owner, shopId, tableId, latte, ada, cartId } = await scaffold()
+        await closePaid(cartId, ada.user._id, latte, { refund: "pending" })
+
+        const res = await request(app).delete(`/shops/${shopId}/tables/${tableId}`).set("Cookie", owner.cookies)
+
+        expect(res.status).toBe(409)
+        expect(res.body.message).toBe("A payment or refund at this table is still awaiting PayPal — check it first")
+    })
+
+    it("keeps showing an older cart whose refund is still waiting, and flags its deleted table", async () => {
+        const { owner, shopId, tableId, latte, ada, cartId } = await scaffold()
+        await closePaid(cartId, ada.user._id, latte)
+        await request(app).delete(`/shops/${shopId}/tables/${tableId}`).set("Cookie", owner.cookies)
+        // Refunded from the deleted table's sheet; PayPal never answered. Days later:
+        await closePaid(cartId, ada.user._id, latte, { refund: "pending" })
+        const oid = (await CartModel.findById(cartId))!._id
+        await CartModel.collection.updateOne({ _id: oid }, { $set: { updatedAt: daysAgo(3) } })
+        await ShopModel.updateOne({ _id: shopId }, { $set: { "deletedTables.0.deletedAt": daysAgo(3) } })
+
+        const carts = await request(app).get(`/shops/${shopId}/tables/${tableId}/carts`).set("Cookie", owner.cookies)
+        expect(carts.body.recentlyClosed.map((c: { _id: string }) => c._id)).toEqual([cartId])
+        const mine = (await request(app).get("/shops/me").set("Cookie", owner.cookies)).body[0]
+        expect(mine.deletedTables[0]).toMatchObject({ _id: tableId, needsAttention: true })
+    })
+
+    it("doesn't flag a deleted table with nothing left to do", async () => {
+        const { owner, shopId, tableId, latte, ada, cartId } = await scaffold()
+        await closePaid(cartId, ada.user._id, latte)
+        await request(app).delete(`/shops/${shopId}/tables/${tableId}`).set("Cookie", owner.cookies)
+
+        const mine = (await request(app).get("/shops/me").set("Cookie", owner.cookies)).body[0]
+        expect(mine.deletedTables[0]).not.toHaveProperty("needsAttention")
     })
 })
 

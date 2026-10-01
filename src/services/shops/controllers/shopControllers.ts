@@ -1,8 +1,9 @@
 import { TController } from "../../../typings/controllers"
 import { IUserDocument } from "src/typings/users"
+import { IDeletedTable } from "src/typings/shop"
 import ShopModel from "../model"
 import createError from "http-errors"
-import CartModel from "../../carts/model"
+import CartModel, { AWAITING_PAYPAL } from "../../carts/model"
 import MenuModel from "../../menus/model"
 import { destroyReplacedImage, discardUpload } from "../../../settings/cloudinary"
 
@@ -33,7 +34,23 @@ export const getMyShops: TController = async ( req, res, next) => {
         const myShops = await ShopModel.find({ shopMg: user._id }).populate("menu")
         if (!myShops) return next(createError(404, "Shops Not Found!"))
 
-        res.send(myShops)
+        // A deleted table with something left to do (an open cart, or money
+        // PayPal hasn't confirmed) is flagged `needsAttention`, so the manager's
+        // page keeps listing it until that's done.
+        const deletedIds = myShops.flatMap((shop) => shop.deletedTables.map((t) => String(t._id)))
+        const needing = new Set(
+            deletedIds.length === 0
+                ? []
+                : await CartModel.distinct("tableId", { tableId: { $in: deletedIds }, $or: [{ status: "open" }, AWAITING_PAYPAL] })
+        )
+        res.send(myShops.map((shop) => {
+            const json = shop.toJSON()
+            return {
+                ...json,
+                deletedTables: json.deletedTables.map((t: IDeletedTable) =>
+                    needing.has(String(t._id)) ? { ...t, needsAttention: true } : t),
+            }
+        }))
     } catch (error) {
         next(createError(500, error as Error))
     }
@@ -107,8 +124,10 @@ export const deleteMyShop: TController = async ( req, res, next ) => {
         if (itsCarts && await CartModel.exists({ $and: [itsCarts, { status: "open" }] })) {
             return next(createError(409, "A table in this shop has an open cart — close it first"))
         }
-        if (itsCarts && await CartModel.exists({ $and: [itsCarts, { $or: [{ "payments.status": "pending" }, { "refunds.status": "pending" }] }] })) {
-            return next(createError(409, "A payment or refund in this shop is still awaiting PayPal — check it first"))
+        const awaiting = itsCarts && await CartModel.findOne({ $and: [itsCarts, AWAITING_PAYPAL] }).select("tableId")
+        if (shop && awaiting) {
+            const table = [...shop.tables, ...shop.deletedTables].find((t) => String(t._id) === awaiting.tableId)
+            return next(createError(409, `A payment or refund at table ${table?.name ?? "(unknown)"} is still awaiting PayPal — check it there first`))
         }
 
         const deletedShop = await ShopModel.findOneAndDelete({_id: shopId, shopMg: user._id })

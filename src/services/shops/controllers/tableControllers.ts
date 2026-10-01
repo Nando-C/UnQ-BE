@@ -2,7 +2,7 @@ import mongoose from "mongoose"
 import { TController } from "../../../typings/controllers"
 import ShopModel from "../model"
 import createError from "http-errors"
-import CartModel from "../../carts/model"
+import CartModel, { AWAITING_PAYPAL } from "../../carts/model"
 import env from "../../../settings/env"
 
 // -------------------------------------------------------------------------
@@ -112,8 +112,11 @@ export const deleteTable: TController = async ( req, res, next ) => {
 
         // A table with an open cart would leave that cart unreachable: the
         // manager closes it first (POST …/carts/:cartId/close).
-        if (await CartModel.exists({ tableId, status: "open" })) {
-            return next(createError(409, "This table has an open cart — close it first"))
+        const OPEN_CART = "This table has an open cart — close it first"
+        if (await CartModel.exists({ tableId, status: "open" })) return next(createError(409, OPEN_CART))
+        // Nor while PayPal still owes one of its carts an answer (as for a shop).
+        if (await CartModel.exists({ tableId, ...AWAITING_PAYPAL })) {
+            return next(createError(409, "A payment or refund at this table is still awaiting PayPal — check it first"))
         }
         if (!mongoose.isValidObjectId(tableId)) return next(createError(404, "Table Not Found!"))
 
@@ -134,6 +137,16 @@ export const deleteTable: TController = async ( req, res, next ) => {
             }
         )
         if (moved.modifiedCount !== 1) return next(createError(409, "The table changed, please try again"))
+
+        // A diner's order that landed between the check above and the move
+        // opened a cart here: the table comes back, to be closed first.
+        if (await CartModel.exists({ tableId, status: "open" })) {
+            await ShopModel.updateOne(
+                { _id: shopId, "deletedTables._id": table._id },
+                { $pull: { deletedTables: { _id: table._id } }, $push: { tables: table } }
+            )
+            return next(createError(409, OPEN_CART))
+        }
 
         res.status(204).send()
     } catch (error) {

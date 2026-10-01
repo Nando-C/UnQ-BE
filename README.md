@@ -444,13 +444,13 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/shops/me
 
-  The manager's shops. Each also carries `deletedTables: [{ _id, name, deletedAt }]`, the tables they deleted; the public shop routes leave it out.
+  The manager's shops. Each also carries `deletedTables: [{ _id, name, deletedAt, needsAttention? }]`, the tables they deleted; `needsAttention: true` while one still has an open cart or a payment or refund `pending` at PayPal. The public shop routes leave it out.
 
 - [ 'GET', 'PUT', 'DELETE' ]
 
   baseURL-api/shops/:shopId
 
-  `DELETE` deletes the shop with its menu items and its carts. `409` while a table has an open cart, or while a payment or refund of the shop is still `pending` at PayPal (check it first).
+  `DELETE` deletes the shop with its menu items and its carts. `409` while a table has an open cart, or while a payment or refund of the shop is still `pending` at PayPal (the message names the table to check it at).
 
 - [ 'PUT' ]
 
@@ -464,7 +464,7 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/shops/:shopId/tables/:tableId
 
-  `PUT` `{ name }` renames the table, keeping its QR code; `400` if another of the shop's tables has that name, as on create. `DELETE` moves the table to the shop's `deletedTables`: its QR code takes no more orders and diners no longer see it, but its carts stay reachable through the carts route below. Its name can be used again.
+  `PUT` `{ name }` renames the table, keeping its QR code; `400` if another of the shop's tables has that name, as on create. `DELETE` moves the table to the shop's `deletedTables`: its QR code takes no more orders and diners no longer see it, but its carts stay reachable through the carts route below. Its name can be used again. `409` while it has an open cart, or a payment or refund `pending` at PayPal.
 
 - [ 'GET' ]
 
@@ -476,7 +476,7 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/shops/:shopId/tables/:tableId/carts
 
-  Shop managers only. `{ open, recentlyClosed }`: the table's open cart(s) and the carts closed in the last 24 hours, newest first, each with its payment records. Diners in selections and payments are shown as `{ _id, name }` (first name only). Works for a deleted table too.
+  Shop managers only. `{ open, recentlyClosed }`: the table's open cart(s) and the carts closed in the last 24 hours, newest first, each with its payment records. Diners in selections and payments are shown as `{ _id, name }` (first name only). Works for a deleted table too, and also lists older closed carts with a payment or refund still `pending` at PayPal, to be checked.
 
 - [ 'POST' ]
 

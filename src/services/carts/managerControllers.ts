@@ -1,6 +1,6 @@
 import { TController } from "src/typings/controllers"
 import { ICartDocument, IPayment } from "src/typings/cart"
-import CartModel, { refId, tookPart } from "./model"
+import CartModel, { AWAITING_PAYPAL, refId, tookPart } from "./model"
 import ShopModel from "../shops/model"
 import createError from "http-errors"
 import { CART_MENUS, closeIfPaidOff, hasPendingPayment, removeUnpaidUnits } from "./controllers"
@@ -20,6 +20,9 @@ const STALE_SELECTION_MS = 15 * 60 * 1000
 // Closed carts are listed for this long, since refunds usually come after a
 // table has finished.
 const RECENTLY_CLOSED_MS = 24 * 60 * 60 * 1000
+
+// A shop filter: the table is one of its tables, current or deleted.
+const ofTable = (tableId: string) => ({ $or: [{ "tables._id": tableId }, { "deletedTables._id": tableId }] })
 
 type Menu = { price?: number; available?: boolean } | null
 const menuOf = (ref: unknown) => ref as Menu
@@ -128,17 +131,22 @@ const managerView = async (cart: ICartDocument) =>
 // GET /shops/:shopId/tables/:tableId/carts — the table's open cart(s) and those
 // closed in the last 24 hours, newest first, with payment records. Diners (in
 // selections and payments) are shown by first name only, never their email.
-// A deleted table's too, so its last carts can still be refunded.
+// A deleted table's too, so its last carts can still be refunded. An older
+// closed cart is included while PayPal still owes it an answer, to be checked.
 export const getTableCarts: TController = async ( req, res, next ) => {
     try {
         const { shopId, tableId } = req.params
-        const onShop = await ShopModel.exists({ _id: shopId, $or: [{ "tables._id": tableId }, { "deletedTables._id": tableId }] })
+        const onShop = await ShopModel.exists({ _id: shopId, ...ofTable(tableId) })
         if (!onShop) return next(createError(404, "Table Not Found!"))
 
         const since = new Date(Date.now() - RECENTLY_CLOSED_MS)
         const carts = await CartModel.find({
             tableId,
-            $or: [{ status: "open" }, { status: "closed", updatedAt: { $gte: since } }],
+            $or: [
+                { status: "open" },
+                { status: "closed", updatedAt: { $gte: since } },
+                { status: "closed", ...AWAITING_PAYPAL },
+            ],
         })
             .sort({ createdAt: -1 })
             .populate(CART_MENUS)
@@ -168,9 +176,10 @@ const PAYMENT_PENDING = "A payment on this table is still awaiting PayPal: check
 type Params = { shopId: string; tableId: string; cartId: string }
 
 // The open cart :cartId of table :tableId in shop :shopId, menus populated (for
-// the names in notes), or null.
+// the names in notes), or null. A deleted table's too: an order that landed as
+// it was deleted leaves one there, to be closed.
 const loadManagedCart = async ({ shopId, tableId, cartId }: Params) => {
-    const onShop = await ShopModel.exists({ _id: shopId, "tables._id": tableId })
+    const onShop = await ShopModel.exists({ _id: shopId, ...ofTable(tableId) })
     if (!onShop) return null
     return CartModel.findOne({ _id: cartId, tableId, status: "open" }).populate(CART_MENUS)
 }
@@ -465,8 +474,7 @@ const loadShopCart = async (shopId: string, cartId: string) => {
     const cart = await CartModel.findById(cartId)
     if (!cart) return null
     if (cart.shopId) return String(cart.shopId) === shopId ? cart : null
-    const shop = await ShopModel.findById(shopId).select("tables")
-    return shop?.tables.some((t) => String(t._id) === cart.tableId) ? cart : null
+    return (await ShopModel.exists({ _id: shopId, ...ofTable(cart.tableId) })) ? cart : null
 }
 
 type Req = Parameters<TController>[0]
