@@ -211,11 +211,12 @@ export const decreaseItem: TController = async ( req, res, next ) => {
         const removedItem = await CartModel.findOneAndUpdate(theLine(), { $pull: { items: { qty: { $lte: 0 } }}}, newest)
 
         // An emptied cart goes, unless it holds payment or refund records
-        // (a refund takes its units out of the cart): those must stay, so
-        // it closes below instead.
+        // (a refund takes its units out of the cart) or a manager acted on it
+        // (its log, and the notes to its diners): those must stay, so it
+        // closes below instead, as deleteItem's does.
         const deleteCart = await CartModel.findOneAndDelete({
             _id: isItemThere._id, status: "open", items: [],
-            "payments.0": { $exists: false }, "refunds.0": { $exists: false },
+            "payments.0": { $exists: false }, "refunds.0": { $exists: false }, "managerLog.0": { $exists: false },
         })
         if (deleteCart) {
             res.status(204).send()

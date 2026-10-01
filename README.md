@@ -168,7 +168,7 @@ src/
 └── tests/                  # Jest integration suite
 ```
 
-**Auth flow:** login/register/Google OAuth all issue the same pair of `httpOnly` cookies — a 15-minute access token and a 4-week refresh token. `POST /auth/refreshToken` verifies the refresh token against the one stored on the user document and rotates both cookies; a refresh token that's expired, invalid, or was replaced a while ago (a sign-in on another device, a logout, a password change) is rejected with a `401` and both cookies are cleared, so that device carries on as a guest. One replaced within the last minute gets a `401` with the cookies left alone: another tab in the same browser has just refreshed, and they're its new ones. Each account holds one refresh token, so signing in on one device ends the session on the others. Google OAuth runs through Passport with `session: false` — no server-side session, just the same JWT cookie pair on redirect. A Google sign-in whose verified email matches an existing account links to it and removes that account's password (nothing proved whoever set it owned the address), so from then on it signs in with Google. A new Google account takes its name from Google and has no surname when Google gives no family name. Emails are stored trimmed and lowercase, and match however they're capitalised.
+**Auth flow:** login/register/Google OAuth all issue the same pair of `httpOnly` cookies — a 15-minute access token and a 4-week refresh token. `POST /auth/refreshToken` verifies the refresh token against the one stored on the user document and rotates both cookies; a refresh token that's expired, invalid, or was replaced a while ago (a sign-in on another device, a logout, a password change) is rejected with a `401` and both cookies are cleared, so that device carries on as a guest. One replaced within the last minute gets a `401` with the cookies left alone and `reason: "superseded"` in the body: another tab in the same browser has just refreshed, and they're its new ones, so the request that needed the refresh can be sent again. Each account holds one refresh token, so signing in on one device ends the session on the others. Google OAuth runs through Passport with `session: false` — no server-side session, just the same JWT cookie pair on redirect. A Google sign-in whose verified email matches an existing account links to it and removes that account's password (nothing proved whoever set it owned the address), so from then on it signs in with Google. A new Google account takes its name from Google and has no surname when Google gives no family name. Emails are stored trimmed and lowercase, and match however they're capitalised.
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -426,7 +426,7 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/users/me
 
-  The user carries `hasPassword` (false for a Google-only account). `PUT` body: any of `{ name, surname, email, password, currentPassword }`. Changing the email or password of an account that has a password needs `currentPassword` (`400` without it, `403` when it's wrong), and so does `DELETE` (body `{ currentPassword }`). A Google-only account can't be given a password (`403`). A new password ends the account's other sessions and sets fresh cookies for this one. `409` for an email another account has.
+  The user carries `hasPassword` (false for a Google-only account). `PUT` body: any of `{ name, surname, email, password, currentPassword }`. Changing the email or password of an account that has a password needs `currentPassword` (`400` without it, `403` when it's wrong), and so does `DELETE` (body `{ currentPassword }`), which also ends the session (the cookies are cleared) and is refused with `409` while the user still manages a shop (delete the shops first). A Google-only account can't be given a password (`403`). A new password ends the account's other sessions and sets fresh cookies for this one. `409` for an email another account has.
 
 - [ 'PUT' ]
 
@@ -444,13 +444,13 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/shops/me
 
-  The manager's shops. Each also carries `deletedTables: [{ _id, name, deletedAt, needsAttention? }]`, the tables they deleted; `needsAttention: true` while one still has an open cart or a payment or refund `pending` at PayPal. The public shop routes leave it out.
+  The manager's shops. Each also carries `deletedTables: [{ _id, name, deletedAt, needsAttention?, recentCartsUntil? }]`, the tables they deleted; `needsAttention: true` while one still has an open cart or a payment or refund `pending` at PayPal, and `recentCartsUntil` (a date) while its carts route still lists a closed cart there: a day after the latest one last changed. The public shop routes leave it out.
 
 - [ 'GET', 'PUT', 'DELETE' ]
 
   baseURL-api/shops/:shopId
 
-  `DELETE` deletes the shop with its menu items and its carts. `409` while a table has an open cart, or while a payment or refund of the shop is still `pending` at PayPal (the message names the table to check it at).
+  `DELETE` deletes the shop with its menu items and its carts. `409` while a table has an open cart, while a payment or refund of the shop is still `pending` at PayPal (the message names the table to check it at), or while a payment with its PayPal capture id and something left to refund is on a closed cart changed in the last 24 hours (it's still on its table's carts, to be refunded).
 
 - [ 'PUT' ]
 
@@ -535,7 +535,7 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/carts/:shopId/tables/:tableId/removeItem
 
-  Rejects with `409` a decrease that would eat into units already paid for or held in an open split.
+  Rejects with `409` a decrease that would eat into units already paid for or held in an open split. A cart left with nothing is deleted (`204`), unless a manager acted on it or it holds payments or refunds: then it stays, closed.
 
 - [ 'POST' ]
 

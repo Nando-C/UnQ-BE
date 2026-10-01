@@ -40,34 +40,45 @@ const scaffold = async () => {
     return { owner, shopId, tableId, latte, muffin, ada, add, cartId }
 }
 
+const daysAgo = (d: number) => new Date(Date.now() - d * 24 * 3600_000)
+
 // Closes the cart as paid by Ada, the payment and (optionally) a refund of it
 // in the given states.
 const closePaid = async (
     cartId: string,
     dinerId: unknown,
     latte: string,
-    { payment = "completed", refund }: { payment?: "completed" | "pending"; refund?: "pending" | "completed" } = {}
+    { payment = "completed", refund, paidAt = new Date(), closedAt }:
+        { payment?: "completed" | "pending" | "failed"; refund?: "pending" | "completed"; paidAt?: Date; closedAt?: Date } = {}
 ) => {
     await CartModel.updateOne({ _id: cartId }, {
         $set: { status: "closed", "items.0.qtyPayed": 1 },
         $push: {
             payments: {
                 provider: "paypal", status: payment, providerCheckoutId: "ORDER-1", providerPaymentId: "CAP-1", currency: "GBP",
-                userId: dinerId, paidAt: new Date(), amount: 3,
+                userId: dinerId, paidAt, amount: 3,
                 lines: [{ menuId: latte, name: "Latte", qty: 1, unitPrice: 3 }],
             },
         },
     })
-    if (!refund) return
-    const paymentId = (await CartModel.findById(cartId))!.payments[0]._id
-    await CartModel.updateOne({ _id: cartId }, {
-        $push: {
-            refunds: {
-                paymentId, lines: [{ menuId: latte, name: "Latte", qty: 1 }], amount: 3, currency: "GBP",
-                status: refund, byUserId: dinerId, at: new Date(),
+    if (refund) {
+        const paymentId = (await CartModel.findById(cartId))!.payments[0]._id
+        await CartModel.updateOne({ _id: cartId }, {
+            $push: {
+                refunds: {
+                    paymentId, lines: [{ menuId: latte, name: "Latte", qty: 1 }], amount: 3, currency: "GBP",
+                    status: refund, byUserId: dinerId, at: new Date(),
+                },
             },
-        },
-    })
+        })
+    }
+    if (closedAt) await ageCart(cartId, closedAt)
+}
+
+// Dates the cart's last change, as if it closed then.
+const ageCart = async (cartId: string, at: Date) => {
+    const oid = (await CartModel.findById(cartId))!._id
+    await CartModel.collection.updateOne({ _id: oid }, { $set: { updatedAt: at } })
 }
 
 describe("deleting a menu item", () => {
@@ -136,7 +147,7 @@ describe("deleting a table", () => {
 describe("deleting a shop", () => {
     it("deletes its menu items, deleted ones too, and its carts", async () => {
         const { owner, shopId, tableId, latte, muffin, ada, cartId } = await scaffold()
-        await closePaid(cartId, ada.user._id, latte)
+        await closePaid(cartId, ada.user._id, latte, { paidAt: daysAgo(2), closedAt: daysAgo(2) })
         await request(app).delete(`/shops/${shopId}/menu/${muffin}`).set("Cookie", owner.cookies)
         await request(app).delete(`/shops/${shopId}/tables/${tableId}`).set("Cookie", owner.cookies)
 
@@ -178,15 +189,65 @@ describe("deleting a shop", () => {
         expect((await request(app).delete(`/shops/${shopId}`).set("Cookie", owner.cookies)).status).toBe(409)
     })
 
-    it("goes ahead once the refund has settled", async () => {
+    it("is refused for a day after a paid cart closes, so it can still be refunded", async () => {
+        const { owner, shopId, latte, ada, cartId } = await scaffold()
+        await closePaid(cartId, ada.user._id, latte, { paidAt: daysAgo(0.5) })
+
+        const res = await request(app).delete(`/shops/${shopId}`).set("Cookie", owner.cookies)
+
+        expect(res.status).toBe(409)
+        expect(res.body.message).toBe(
+            "A payment at table T1 can still be refunded from its sheet: the shop can be deleted once no paid cart has changed for a day"
+        )
+        expect(await CartModel.countDocuments({ _id: cartId })).toBe(1)
+    })
+
+    it("is refused while a cart paid earlier closed in the last 24 hours (it's still on its table's sheet)", async () => {
+        const { owner, shopId, latte, ada, cartId } = await scaffold()
+        await closePaid(cartId, ada.user._id, latte, { paidAt: daysAgo(2) })
+
+        expect((await request(app).delete(`/shops/${shopId}`).set("Cookie", owner.cookies)).status).toBe(409)
+    })
+
+    it("isn't held back by a payment already refunded in full", async () => {
         const { owner, shopId, latte, ada, cartId } = await scaffold()
         await closePaid(cartId, ada.user._id, latte, { refund: "completed" })
+        await CartModel.updateOne({ _id: cartId }, { $set: { "payments.0.lines.0.refundedQty": 1 } })
+
+        expect((await request(app).delete(`/shops/${shopId}`).set("Cookie", owner.cookies)).status).toBe(204)
+    })
+
+    it("is held back by a payment recorded before payments had a status", async () => {
+        const { owner, shopId, latte, ada, cartId } = await scaffold()
+        await closePaid(cartId, ada.user._id, latte)
+        const oid = (await CartModel.findById(cartId))!._id
+        await CartModel.collection.updateOne({ _id: oid }, { $unset: { "payments.0.status": "" } })
+
+        expect((await request(app).delete(`/shops/${shopId}`).set("Cookie", owner.cookies)).status).toBe(409)
+    })
+
+    it("isn't held back by a payment with no capture id (only PayPal can refund it)", async () => {
+        const { owner, shopId, latte, ada, cartId } = await scaffold()
+        await closePaid(cartId, ada.user._id, latte)
+        await CartModel.updateOne({ _id: cartId }, { $unset: { "payments.0.providerPaymentId": "" } })
+
+        expect((await request(app).delete(`/shops/${shopId}`).set("Cookie", owner.cookies)).status).toBe(204)
+    })
+
+    it("isn't held back by a payment that failed (nothing to refund)", async () => {
+        const { owner, shopId, latte, ada, cartId } = await scaffold()
+        await closePaid(cartId, ada.user._id, latte, { payment: "failed" })
+
+        expect((await request(app).delete(`/shops/${shopId}`).set("Cookie", owner.cookies)).status).toBe(204)
+    })
+
+    it("goes ahead once the refund has settled", async () => {
+        const { owner, shopId, latte, ada, cartId } = await scaffold()
+        await closePaid(cartId, ada.user._id, latte, { refund: "completed", paidAt: daysAgo(2), closedAt: daysAgo(2) })
 
         expect((await request(app).delete(`/shops/${shopId}`).set("Cookie", owner.cookies)).status).toBe(204)
     })
 })
-
-const daysAgo = (d: number) => new Date(Date.now() - d * 24 * 3600_000)
 
 describe("money still waiting on PayPal, and deleted tables", () => {
     it("refunds an older cart (from before carts recorded their shop) at a deleted table", async () => {
@@ -225,13 +286,16 @@ describe("money still waiting on PayPal, and deleted tables", () => {
 
     it("lets the manager close an open cart left at a deleted table", async () => {
         const { owner, shopId, tableId, latte, ada, cartId } = await scaffold()
-        await closePaid(cartId, ada.user._id, latte)
+        await closePaid(cartId, ada.user._id, latte, { paidAt: daysAgo(2) })
         await request(app).delete(`/shops/${shopId}/tables/${tableId}`).set("Cookie", owner.cookies)
         await CartModel.updateOne({ _id: cartId }, { status: "open" })
 
         const close = await request(app).post(`/shops/${shopId}/tables/${tableId}/carts/${cartId}/close`).set("Cookie", owner.cookies)
 
         expect(close.status).toBe(200)
+        // Its payment stays refundable for a day after it closed.
+        expect((await request(app).delete(`/shops/${shopId}`).set("Cookie", owner.cookies)).status).toBe(409)
+        await ageCart(cartId, daysAgo(2))
         expect((await request(app).delete(`/shops/${shopId}`).set("Cookie", owner.cookies)).status).toBe(204)
     })
 
@@ -284,5 +348,59 @@ describe("refreshing one session from two tabs at once", () => {
         expect(results).toContain("superseded")
         const stored = (await UserModel.findOne({ email }))!.refreshToken
         expect(stored).toBe(issued[0].refreshToken)
+    })
+})
+
+describe("which deleted tables still have carts to show", () => {
+    it("flags one whose cart closed in the last 24 hours, and not once that's older", async () => {
+        const { owner, shopId, tableId, latte, ada, cartId } = await scaffold()
+        await closePaid(cartId, ada.user._id, latte)
+        await request(app).delete(`/shops/${shopId}/tables/${tableId}`).set("Cookie", owner.cookies)
+        const deleted = async () => (await request(app).get("/shops/me").set("Cookie", owner.cookies)).body[0].deletedTables[0]
+
+        // Until a day after the cart's last change, when it leaves the sheet.
+        const closed = (await CartModel.findById(cartId))!.get("updatedAt") as Date
+        const listed = await deleted()
+        expect(listed._id).toBe(tableId)
+        expect(Date.parse(listed.recentCartsUntil)).toBe(closed.getTime() + 24 * 3600_000)
+
+        await ageCart(cartId, daysAgo(2))
+        expect(await deleted()).not.toHaveProperty("recentCartsUntil")
+    })
+})
+
+describe("taking the last unit off a cart a manager acted on", () => {
+    it("keeps the cart, closed, with the manager's log", async () => {
+        const { shopId, tableId, latte, ada, cartId } = await scaffold()
+        await CartModel.updateOne({ _id: cartId }, {
+            $push: { managerLog: { at: new Date(), byUserId: ada.user._id, action: "release", details: "x" } },
+        })
+
+        const res = await request(app).post(`/carts/${shopId}/tables/${tableId}/removeItem`).set("Cookie", ada.cookies)
+            .send({ menuId: latte, qty: 1 })
+
+        expect(res.status).toBe(200)
+        const cart = await CartModel.findById(cartId)
+        expect(cart?.status).toBe("closed")
+        expect(cart?.managerLog).toHaveLength(1)
+    })
+})
+
+describe("deleting a manager's account", () => {
+    it("is refused while they still have shops, and ends the session once it goes", async () => {
+        const { owner, shopId } = await scaffold()
+        const remove = () => request(app).delete("/users/me").set("Cookie", owner.cookies).send({ currentPassword: owner.password })
+
+        const refused = await remove()
+        expect(refused.status).toBe(409)
+        expect(refused.body.message).toBe("Delete your shops first")
+        expect(await UserModel.exists({ _id: owner.user._id })).not.toBeNull()
+
+        await CartModel.deleteMany({})
+        expect((await request(app).delete(`/shops/${shopId}`).set("Cookie", owner.cookies)).status).toBe(204)
+        const done = await remove()
+        expect(done.status).toBe(204)
+        const cleared = (done.headers["set-cookie"] as unknown as string[]).map((c) => c.split("=")[0])
+        expect(cleared).toEqual(expect.arrayContaining(["accessToken", "refreshToken"]))
     })
 })

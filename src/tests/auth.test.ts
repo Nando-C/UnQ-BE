@@ -159,8 +159,10 @@ describe("auth", () => {
                 .set("Cookie", firstCookies)
             expect(reuse.status).toBe(401)
             // ...without clearing the cookies: another tab that lost the race
-            // would otherwise wipe the ones the winner just got.
+            // would otherwise wipe the ones the winner just got. It says why,
+            // so that tab can send its request again with them.
             expect(reuse.headers["set-cookie"]).toBeUndefined()
+            expect(reuse.body).toEqual({ message: "Invalid token", reason: "superseded" })
 
             const winner = await request(app)
                 .post("/auth/refreshToken")
@@ -221,6 +223,7 @@ describe("auth", () => {
             const setCookie = (res.headers["set-cookie"] as unknown as string[] | undefined) || []
             expect(setCookie).toHaveLength(2)
             for (const c of setCookie) expect(c).toMatch(/Expires=Thu, 01 Jan 1970.*Secure.*SameSite=None/)
+            expect(res.body).toEqual({ message: "Invalid token" })
         })
 
         it("returns 400 when no refresh token is provided", async () => {

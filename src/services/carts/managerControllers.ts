@@ -1,6 +1,6 @@
 import { TController } from "src/typings/controllers"
 import { ICartDocument, IPayment } from "src/typings/cart"
-import CartModel, { AWAITING_PAYPAL, refId, tookPart } from "./model"
+import CartModel, { AWAITING_PAYPAL, RECENTLY_CLOSED_MS, refId, tookPart } from "./model"
 import ShopModel from "../shops/model"
 import createError from "http-errors"
 import { CART_MENUS, closeIfPaidOff, hasPendingPayment, removeUnpaidUnits } from "./controllers"
@@ -17,9 +17,6 @@ import { IUserDocument } from "src/typings/users"
 
 // A selection held longer than this is flagged for the manager.
 const STALE_SELECTION_MS = 15 * 60 * 1000
-// Closed carts are listed for this long, since refunds usually come after a
-// table has finished.
-const RECENTLY_CLOSED_MS = 24 * 60 * 60 * 1000
 
 // A shop filter: the table is one of its tables, current or deleted.
 const ofTable = (tableId: string) => ({ $or: [{ "tables._id": tableId }, { "deletedTables._id": tableId }] })

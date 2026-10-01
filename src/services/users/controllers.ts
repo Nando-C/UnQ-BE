@@ -3,7 +3,8 @@ import { IUserDocument } from "src/typings/users"
 import createError from "http-errors"
 import * as bcrypt from "bcrypt"
 import { destroyReplacedImage, discardUpload } from "../../settings/cloudinary"
-import { getTokens, setAuthCookies } from "../auth/tools"
+import { clearAuthCookies, getTokens, setAuthCookies } from "../auth/tools"
+import ShopModel from "../shops/model"
 import { isDuplicateKey } from "../../lib/mongo"
 
 // -------------------------------------------------------------------------
@@ -88,7 +89,12 @@ export const deleteMe: TController = async ( req, res, next ) => {
     try {
         const refusal = await currentPasswordRefusal(me, req.body?.currentPassword, "delete your account")
         if (refusal) return next(refusal)
+        // A manager's shops would be left with no one to run them (or settle
+        // their payments): they're deleted first.
+        if (await ShopModel.exists({ shopMg: me._id })) return next(createError(409, "Delete your shops first"))
         await me.deleteOne()
+        // The session ends with the account.
+        clearAuthCookies(res)
         res.status(204).send()
     } catch {
         next(createError(500, "An Error ocurred while deleting the user"))

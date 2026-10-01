@@ -54,8 +54,9 @@ export const tokenRefresh: TController = async (req, res, next) => {
             return next(createError(401, "Invalid token"))
         }
         // Another tab refreshed moments ago; clearing here would wipe the new
-        // cookies it just got.
-        if (tokens === "superseded") return next(createError(401, "Invalid token"))
+        // cookies it just got. Said so, so this tab can resend its request
+        // with them (UnQ-FE's interceptor does).
+        if (tokens === "superseded") return next(createError(401, "Invalid token", { reason: "superseded" }))
 
         setAuthCookies(res, tokens)
         res.status(200).send()

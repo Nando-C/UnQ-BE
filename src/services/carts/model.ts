@@ -224,6 +224,11 @@ CartSchema.pre(["findOneAndUpdate", "updateOne", "updateMany"], function () {
 // open carts — list them with src/scripts/findDuplicateOpenCarts.ts.
 CartSchema.index({ tableId: 1 }, { unique: true, partialFilterExpression: { status: "open" } })
 
+// How long a closed cart stays on its table's sheet, where a manager refunds
+// it (refunds usually come after a table has finished). A shop with a paid
+// cart still on a sheet can't be deleted yet.
+export const RECENTLY_CLOSED_MS = 24 * 60 * 60 * 1000
+
 // Carts with money PayPal hasn't confirmed: a payment it holds for review or a
 // refund it didn't clearly answer. Only a manager can settle them (checkPayment,
 // retryRefund), so they stay in reach and hold back deleting their table or shop.
