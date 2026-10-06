@@ -27,7 +27,14 @@ export interface IRefund {
     failureReason?: string
     byUserId: Types.ObjectId
     at: Date
+    // Why the manager refunded (absent on older refunds, or from an older
+    // client); `reasonNote` only with "other".
+    reason?: RefundReason
+    reasonNote?: string
 }
+
+// From the one list, in services/carts/model.ts.
+export type RefundReason = import("../services/carts/model").RefundReason
 
 // A note to the table's diners about a manager's change; `forUserId` makes it
 // one diner's.
@@ -72,6 +79,8 @@ export interface IPaymentLine {
     qty: number
     unitPrice: number
     refundedQty: number
+    // The item's category when paid (absent on lines paid before it was kept).
+    category?: string
 }
 
 // A line of the table's order: `qty` units of a menu item, `qtyPayed` of them

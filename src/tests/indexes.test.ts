@@ -19,6 +19,8 @@ import CartModel from "../services/carts/model"
 import ShopModel from "../services/shops/model"
 import UserModel from "../services/users/model"
 import MenuModel from "../services/menus/model"
+import OrderModel from "../services/orders/model"
+import { SHOP_DELETION_READ } from "../services/orders/sync"
 import { googleUserFor } from "../services/auth/oauth"
 import { getOrder, captureOrder } from "../lib/paypal"
 
@@ -40,9 +42,10 @@ const noScans = async <T>(run: () => Promise<T>): Promise<T> => {
         await admin.command({ setParameter: 1, notablescan: 0 })
         await db.command({ profile: 0 })
     }
-    // Deleting a shop removes all its carts (a "remove"): that one reads them all.
+    // Deleting a shop removes all its carts (a "remove"): that one reads them
+    // all, and so does the check that their payments' orders are kept first.
     const reads = await db.collection("system.profile")
-        .find({ ns: `${db.databaseName}.carts`, op: { $nin: ["insert", "remove"] } })
+        .find({ ns: `${db.databaseName}.carts`, op: { $nin: ["insert", "remove"] }, "command.comment": { $ne: SHOP_DELETION_READ } })
         .toArray()
     await db.collection("system.profile").drop()
     const long = reads
@@ -79,7 +82,7 @@ beforeEach(() => {
 
 // The indexes are built before any test runs, as they are long before traffic in production.
 beforeAll(async () => {
-    await Promise.all([CartModel.init(), ShopModel.init(), UserModel.init(), MenuModel.init()])
+    await Promise.all([CartModel.init(), ShopModel.init(), UserModel.init(), MenuModel.init(), OrderModel.init()])
 })
 
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000)
@@ -167,7 +170,9 @@ describe("no request reads a whole collection", () => {
             }],
         })
 
-        // The capture first checks the PayPal order wasn't used on any cart before.
+        // The capture first checks the PayPal order wasn't used on any cart
+        // before; then the payment's order is written (a refused read would
+        // only be logged, so its order is checked too).
         const paid = await noScans(() =>
             request(app)
                 .post(`/carts/tables/${tableId}/${cartId}/captureCheckout`)
@@ -175,6 +180,7 @@ describe("no request reads a whole collection", () => {
                 .send({ paypalOrderId: "ORDER-1" })
         )
         expect(paid.status).toBe(200)
+        expect(await OrderModel.countDocuments({ cartId })).toBe(1)
     })
 
     it("a manager's table sheets and statuses", async () => {

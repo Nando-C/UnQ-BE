@@ -547,7 +547,7 @@ describe("payment records", () => {
         expect(String(payment.userId)).toBe(String(customer.user._id))
         expect(payment.paidAt.getTime()).toBeGreaterThanOrEqual(before)
         expect(cart!.toObject().payments[0].lines).toEqual([
-            { menuId: expect.anything(), name: "Latte", qty: 2, unitPrice: 3, refundedQty: 0 },
+            { menuId: expect.anything(), name: "Latte", qty: 2, unitPrice: 3, refundedQty: 0, category: "drinks" },
         ])
         expect(String(payment.lines[0].menuId)).toBe(String(menuId))
         // The closed split carries the price and time too.

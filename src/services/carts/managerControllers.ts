@@ -1,7 +1,8 @@
 import { TController } from "src/typings/controllers"
-import { ICartDocument, IPayment } from "src/typings/cart"
+import { ICartDocument, IPayment, RefundReason } from "src/typings/cart"
 import CartModel, { AWAITING_PAYPAL, RECENTLY_CLOSED_MS, refId, tookPart } from "./model"
-import ShopModel from "../shops/model"
+import ShopModel, { ofTable } from "../shops/model"
+import { keepOrderInStep } from "../orders/sync"
 import createError from "http-errors"
 import { CART_MENUS, closeIfPaidOff, hasPendingPayment, removeUnpaidUnits } from "./controllers"
 import { saveChecked } from "../../lib/mongo"
@@ -18,8 +19,6 @@ import { IUserDocument } from "src/typings/users"
 // A selection held longer than this is flagged for the manager.
 const STALE_SELECTION_MS = 15 * 60 * 1000
 
-// A shop filter: the table is one of its tables, current or deleted.
-const ofTable = (tableId: string) => ({ $or: [{ "tables._id": tableId }, { "deletedTables._id": tableId }] })
 
 type Menu = { price?: number; available?: boolean } | null
 const menuOf = (ref: unknown) => ref as Menu
@@ -478,6 +477,21 @@ type Req = Parameters<TController>[0]
 type Res = Parameters<TController>[1]
 type Next = Parameters<TController>[2]
 
+// A refund left in progress (the provider's answer unclear, or it went
+// through but couldn't be recorded): its order shows it pending until a retry
+// records it. Synced after the provider is asked, not before (that would only
+// delay the refund); if the process stops in between, the pending refund is on
+// the cart for a retry or the repair script. Never throws: the answer to the
+// manager matters more.
+const showPendingOnOrder = async (cartId: unknown, payment: IPayment) => {
+    try {
+        const cart = await CartModel.findById(cartId)
+        if (cart) await keepOrderInStep(cart, payment._id)
+    } catch (error) {
+        console.error("Order not written; run npx tsx src/scripts/syncOrders.ts", { cartId: String(cartId), paymentId: String(payment._id), error })
+    }
+}
+
 // Marks the pending refund failed: the provider refused it, nothing moved.
 const markFailed = async (cartId: unknown, refundId: unknown, reason: string) => {
     const recorded = await withFreshCart(cartId, (c) => {
@@ -487,7 +501,15 @@ const markFailed = async (cartId: unknown, refundId: unknown, reason: string) =>
             r.failureReason = reason
         }
     })
-    if (!recorded) console.error("Refund failed and couldn't be marked failed", { cartId, refundId, reason })
+    if (!recorded) {
+        console.error("Refund failed and couldn't be marked failed", { cartId, refundId, reason })
+        // Still pending on the cart: its order shows it so.
+        const refund = findById((await CartModel.findById(cartId).catch(() => null))?.refunds ?? [], refundId)
+        if (refund) await showPendingOnOrder(cartId, { _id: refund.paymentId } as IPayment)
+        return
+    }
+    const refund = findById(recorded.refunds, refundId)
+    if (refund) await keepOrderInStep(recorded, refund.paymentId)
 }
 
 // (c): the provider refunded; complete the record and answer { refund, cart }.
@@ -498,10 +520,12 @@ const recordRefund = async (
     const cart = await withFreshCart(cartId, (c) => completeRefund(c, refundId, providerRefundId, req))
     if (!cart) {
         console.error("Refund went through but couldn't be recorded", { cartId, refundId, providerRefundId })
+        await showPendingOnOrder(cartId, payment)
         return next(createError(500,
             `The refund went through at ${providerName(payment)} but couldn't be recorded here. It shows as in progress: retry it to record it.`,
             { expose: true }))
     }
+    await keepOrderInStep(cart, payment._id)
 
     res.send({ refund: findById(cart.refunds, refundId), cart: await managerView(cart) })
 }
@@ -523,6 +547,7 @@ const sendRefund = async (
         // refunded a second time under a new request id.
         if (!(error instanceof RefundRefused)) {
             console.error("Refund outcome unknown", { cartId, refundId, reason })
+            await showPendingOnOrder(cartId, payment)
             return next(createError(502,
                 `${providerName(payment)} didn't confirm the refund (${reason}). It shows as in progress: retry it, which checks with ${providerName(payment)} first.`,
                 { expose: true }))
@@ -538,7 +563,7 @@ const sendRefund = async (
 export const refundItems: TController = async ( req, res, next ) => {
     try {
         const { shopId, cartId } = req.params
-        const { paymentId, lines } = req.body as { paymentId: string; lines: RefundLine[] }
+        const { paymentId, lines, reason, reasonNote } = req.body as { paymentId: string; lines: RefundLine[]; reason?: RefundReason; reasonNote?: string }
         const user = req.user as IUserDocument
 
         const cart = await loadShopCart(shopId, cartId)
@@ -585,6 +610,8 @@ export const refundItems: TController = async ( req, res, next ) => {
             status: "pending",
             byUserId: user._id,
             at: new Date(),
+            ...(reason && { reason }),
+            ...(reasonNote && { reasonNote }),
         })
         const refundId = cart.refunds[cart.refunds.length - 1]._id
         if (!(await saveChecked(cart))) return next(createError(409, CART_CHANGED))
@@ -708,6 +735,7 @@ export const checkPayment: TController = async ( req, res, next ) => {
             }
         })
         if (!saved) return next(createError(409, CART_CHANGED))
+        await keepOrderInStep(saved, paymentId)
 
         res.send({ payment: findById(saved.payments, paymentId), cart: await managerView(saved) })
     } catch (error) {

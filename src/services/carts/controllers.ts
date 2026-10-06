@@ -2,6 +2,7 @@ import { TController } from "src/typings/controllers"
 import { IUserDocument } from "src/typings/users"
 import { ICartDocument, ISplitItem } from "src/typings/cart"
 import CartModel, { dinerView, noticesFor, NOTICE_MAX_AGE_MS, refId, tookPart } from "./model"
+import { keepOrderInStep } from "../orders/sync"
 import { Request } from "express"
 import createError from "http-errors"
 import mongoose, { UpdateQuery } from "mongoose"
@@ -17,7 +18,7 @@ import { isDuplicateKey, isVersionConflict, saveChecked } from "../../lib/mongo"
 // Menu fields every cart response populates. `available` is included so the FE
 // can flag items that sold out after being added, and the checkout guards read
 // it from the populated splits.
-const MENU_FIELDS = "name short_description image price available"
+const MENU_FIELDS = "name short_description image price available category"
 
 // A deleted menu item is kept (unavailable) for the carts that hold it, but one
 // deleted before items were kept is gone, and a plain populate turns its
@@ -500,7 +501,7 @@ export const removeSplitItem = changeMySplit(() => ({ $set: { "split.$.qty": 0 }
 // serialises simultaneous payers so no unit is double-settled.
 
 // A split's or item's menuId once populated (CART_MENUS).
-type PopulatedMenuRef = { _id: mongoose.Types.ObjectId; name: string; price: number; available?: boolean }
+type PopulatedMenuRef = { _id: mongoose.Types.ObjectId; name: string; price: number; available?: boolean; category?: string }
 
 // The cart must be the one of the table in the URL: a cart id is otherwise
 // enough to act on any table's cart (a stale page after moving tables, or a
@@ -581,7 +582,7 @@ const applyCheckout = (
         split.splitStatus = "closed"
         split.unitPrice = menu.price
         split.paidAt = paidAt
-        lines.push({ menuId: menu._id, name: menu.name, qty: split.qty, unitPrice: menu.price, refundedQty: 0 })
+        lines.push({ menuId: menu._id, name: menu.name, qty: split.qty, unitPrice: menu.price, refundedQty: 0, category: menu.category })
         const item = cart.items.find((i) => refId(i.menuId) === refId(split.menuId))
         if (item) item.qtyPayed += split.qty
     }
@@ -647,11 +648,12 @@ const settleCheckout = async (
         applyCheckout(cart, openSplits, userId, paypalOrderId, order)
         try {
             await cart.save()
-            return { ok: true, cart }
         } catch (error) {
             if (isDuplicateKey(error)) return { ok: false, status: 402, message: "This PayPal order has already been used" }
             if (!isVersionConflict(error)) throw error
+            continue
         }
+        return { ok: true, cart }
     }
     return { ok: false, status: 409, message: "Checkout conflicted with a concurrent payment, please retry" }
 }
@@ -789,7 +791,13 @@ export const captureCheckout: TController = async ( req, res, next ) => {
         }
         // 202 for a pending payment: the diner's units are held, but PayPal
         // hasn't confirmed it yet.
-        if (outcome.ok) return res.status(pending ? 202 : 200).send(forDiner(outcome.cart, req))
+        if (outcome.ok) {
+            // Recorded: its order is written now, outside the settle's error
+            // handling above, which would refund the buyer (a failure here is
+            // only logged).
+            await keepOrderInStep(outcome.cart, outcome.cart.payments[outcome.cart.payments.length - 1]._id)
+            return res.status(pending ? 202 : 200).send(forDiner(outcome.cart, req))
+        }
 
         // (g) The buyer HAS been charged but the settlement is impossible (a
         // concurrent payer took the units, a replay was hit, or attempts were

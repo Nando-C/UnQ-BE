@@ -3,6 +3,11 @@ import { ICartDocument, INotice } from "src/typings/cart"
 
 const { Schema, model } = mongoose
 
+// Why a manager refunds (see `refunds`); "other" comes with a note. The one
+// list: the type, the refund route's validation and both models read it.
+export const REFUND_REASONS = ["unavailable", "wrong_item", "quality", "long_wait", "paid_by_mistake", "changed_mind", "other"] as const
+export type RefundReason = (typeof REFUND_REASONS)[number]
+
 // A table's order. Each table has at most one OPEN cart, shared by everyone
 // sitting there: whoever orders first creates it, the others add to it.
 // - items: what the table ordered, one line per menu item (qty ordered, qtyPayed
@@ -146,6 +151,8 @@ const CartSchema = new Schema<ICartDocument>(
                         qty: { type: Number, required: true },
                         unitPrice: { type: Number, required: true },
                         refundedQty: { type: Number, default: 0 },
+                        // The item's category when paid, for the sales report.
+                        category: String,
                     }
                 ],
             }
@@ -174,6 +181,10 @@ const CartSchema = new Schema<ICartDocument>(
                 failureReason: String,
                 byUserId: { type: Schema.Types.ObjectId, required: true },
                 at: { type: Date, required: true },
+                // Why the manager refunded, for the sales report; a note only
+                // with "other". Older refunds have none.
+                reason: { type: String, enum: REFUND_REASONS },
+                reasonNote: String,
             }
         ],
         // Notes to the table's diners when a manager changes their cart ("The

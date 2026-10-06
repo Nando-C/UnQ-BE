@@ -5,6 +5,7 @@ import ShopModel from "../model"
 import createError from "http-errors"
 import CartModel, { AWAITING_PAYPAL, RECENTLY_CLOSED_MS } from "../../carts/model"
 import MenuModel from "../../menus/model"
+import { keepShopOrders } from "../../orders/sync"
 import { destroyReplacedImage, discardUpload } from "../../../settings/cloudinary"
 import mongoose, { PipelineStage } from "mongoose"
 import { BrowseShopsQuery } from "../schemas"
@@ -210,6 +211,19 @@ export const deleteMyShop: TController = async ( req, res, next ) => {
             p.status === "completed" && !!p.providerPaymentId && p.lines.some((l) => l.qty > l.refundedQty)))
         if (refundable) {
             return next(createError(409, `A payment at table ${tableName(refundable.tableId)} can still be refunded from its sheet: the shop can be deleted once no paid cart has changed for a day`))
+        }
+
+        // Its carts go with it, and the orders are then the only record of
+        // their payments: any order missing or older than its cart (a sync
+        // that failed earlier) is written first, or nothing is deleted. Reads
+        // all its paid carts, as deleting them does.
+        if (itsCarts) {
+            try {
+                await keepShopOrders(itsCarts)
+            } catch (error) {
+                console.error("Shop not deleted: its sales records couldn't be written", { shopId, error })
+                return next(createError(500, "The shop's sales records couldn't be saved, so nothing was deleted. Try again shortly.", { expose: true }))
+            }
         }
 
         const deletedShop = await ShopModel.findOneAndDelete({_id: shopId, shopMg: user._id })

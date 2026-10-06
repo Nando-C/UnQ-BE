@@ -73,6 +73,10 @@ const ShopSchema = new Schema<IShopDocument> (
 // A manager's shops (/shops/me, and deleting their account).
 ShopSchema.index({ shopMg: 1 })
 
+// A filter for the shop with this table, current or deleted (for carts saved
+// before they recorded their shop).
+export const ofTable = (tableId: string) => ({ $or: [{ "tables._id": tableId }, { "deletedTables._id": tableId }] })
+
 ShopSchema.methods.toJSON = function () {
     const shop = this.toObject()
     delete shop.__v

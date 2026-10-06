@@ -227,6 +227,7 @@ Copy `.env.example` to `.env` and fill it in. Configuration is validated at boot
 | `npm start` | Run the compiled build |
 | `npm test` | Run the Jest integration suite |
 | `npm run lint` | Run ESLint on the `src/` directory |
+| `npx tsx src/scripts/syncOrders.ts` | Write or bring up to date every payment's order (backfill, and repair after "Order not written"); safe to rerun |
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -244,7 +245,7 @@ npm test
 
 ## Models
 
-I have used MongoDB with Mongoose to model the data for this application, creating four main models as shown below.
+I have used MongoDB with Mongoose to model the data for this application, creating five main models as shown below.
 
 ### User
 
@@ -369,7 +370,10 @@ Cart Model:
         // Manager-only: refunds against the payments, pending → completed | failed.
         refunds: [{ paymentId: ObjectId, lines: [{ menuId, name, qty }], amount: number, currency: string,
                     status: "pending" | "completed" | "failed", providerRefundId?: string, failureReason?: string,
-                    byUserId: ObjectId, at: Date }],
+                    byUserId: ObjectId, at: Date,
+                    // Why (absent on older refunds); a note only with "other".
+                    reason?: "unavailable" | "wrong_item" | "quality" | "long_wait" | "paid_by_mistake" | "changed_mind" | "other",
+                    reasonNote?: string }],
         // Notes to the diners about a manager's change. Diners get the table-wide
         // ones and their own, from the last 2 hours (at most 5).
         notices: [{ at: Date, forUserId?: ObjectId, message: string }],
@@ -388,10 +392,38 @@ Cart Model:
                 paidAt: Date,
                 amount: number,     // captured, in `currency`
                 lines: [
-                    { menuId: ObjectId, name: string, qty: number, unitPrice: number, refundedQty: number },
+                    { menuId: ObjectId, name: string, qty: number, unitPrice: number, refundedQty: number,
+                      category?: string }, // the item's category when paid (absent on older lines)
                 ],
             }
         ],
+    }
+```
+
+### Order
+
+One per cart payment, the sales record the reports read (no route serves it yet). Rebuilt from the cart after every save that changes the payment or a refund of it, so the cart stays the source of truth; an order outlives its cart, table, menu items and shop. A sync that fails after the money moved is logged ("Order not written") and never fails the request: `npx tsx src/scripts/syncOrders.ts` puts it right.
+
+```js
+Order Model:
+    {
+        paymentId: ObjectId,      // the cart payment's _id (unique: one order per payment)
+        cartId: ObjectId,         // a table visit is the orders sharing it
+        cartOpenedAt: Date,
+        cartVersion: number,      // the cart's __v it was built from (an older one never overwrites it)
+        shopId: ObjectId,
+        tableId: string,
+        tableName: string,        // as it was when first written
+        payerId: ObjectId,        // counted, never shown
+        status: "completed" | "pending" | "failed", // the payment's
+        paidAt: Date,
+        currency: string,
+        amount: number,
+        provider: "paypal",
+        providerCheckoutId: string,
+        providerPaymentId: string,
+        lines: [{ menuId, name, category: string | null, unitPrice, qty, refundedQty }],
+        refunds: [{ refundId, status, at: Date, amount, lines: [{ menuId, name, qty }], reason?, reasonNote? }],
     }
 ```
 
@@ -511,7 +543,7 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/shops/:shopId/carts/:cartId/refunds
 
-  Shop managers only; money moves. Body `{ paymentId, lines: [{ menuId, qty }] }`: refunds those units of one recorded payment, at the prices it charged, through the payment's provider (PayPal: a partial refund of its capture, with an idempotency key), and takes them out of the cart. Open or closed carts of the shop. A `pending` refund record is saved before the provider is asked, so the same units can't be refunded twice; it then becomes `completed` or `failed`. Answers `{ refund, cart }`; `400` for more than is left to refund, `409` for a payment with no recorded capture (refund it from PayPal) or one that is `pending` or `failed`, `502` with the provider's reason when it refuses (nothing refunded; the record is `failed`), `502` also when the provider gives no clear answer (a timeout, a provider error, or an earlier request for it still in progress: the refund may have gone through, so the record stays `pending`: retry it), `500` if it went through but couldn't be recorded (the refund stays `pending`: retry it). The payer gets a note.
+  Shop managers only; money moves. Body `{ paymentId, lines: [{ menuId, qty }], reason?, reasonNote? }`, `reason` one of `unavailable`, `wrong_item`, `quality`, `long_wait`, `paid_by_mistake`, `changed_mind`, `other`, with `reasonNote` (1–200 characters) required for `other` and refused otherwise (`400`); without a reason the refund is still made, with none recorded: refunds those units of one recorded payment, at the prices it charged, through the payment's provider (PayPal: a partial refund of its capture, with an idempotency key), and takes them out of the cart. Open or closed carts of the shop. A `pending` refund record is saved before the provider is asked, so the same units can't be refunded twice; it then becomes `completed` or `failed`. Answers `{ refund, cart }`; `400` for more than is left to refund, `409` for a payment with no recorded capture (refund it from PayPal) or one that is `pending` or `failed`, `502` with the provider's reason when it refuses (nothing refunded; the record is `failed`), `502` also when the provider gives no clear answer (a timeout, a provider error, or an earlier request for it still in progress: the refund may have gone through, so the record stays `pending`: retry it), `500` if it went through but couldn't be recorded (the refund stays `pending`: retry it). The payer gets a note.
 
 - [ 'POST' ]
 
