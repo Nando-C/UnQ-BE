@@ -214,6 +214,10 @@ Copy `.env.example` to `.env` and fill it in. Configuration is validated at boot
 | `PASSWORD_FAILS_PER_ACCOUNT` | Wrong passwords allowed per account in 15 minutes (default 10) |
 | `CART_EDITS_PER_MINUTE` | Cart changes allowed per diner a minute (default 120) |
 
+### Dependency override
+
+`package.json`'s `overrides` gives `@istanbuljs/load-nyc-config` (pulled in by Jest's coverage tooling) `js-yaml` 4 instead of 3. js-yaml 3 depends on `argparse@1` → `sprintf-js`, which has an open advisory (GHSA-hp3w-g68c-fv3c) with no fixed version. That module only calls `js-yaml`'s `load()`, which works the same in 4. Remove the override once `@istanbuljs/load-nyc-config` itself depends on js-yaml 4 (check with `npm ls js-yaml`).
+
 ### Available Scripts
 
 | Script | Description |
