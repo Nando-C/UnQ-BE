@@ -3,16 +3,15 @@ import 'dotenv/config'
 // pulls in oauth.ts, which builds its Google strategy as it is imported.
 import env from "./settings/env"
 import mongoose from "mongoose"
-import listEndpoints from "express-list-endpoints"
-import app from "./server"
-import CartModel from "./services/carts/model"
+import app, { routeList } from "./server"
+import CartModel, { OPEN_CART_INDEX } from "./services/carts/model"
 import ShopModel from "./services/shops/model"
 import UserModel from "./services/users/model"
 import MenuModel from "./services/menus/model"
 
 const PORT = env.PORT
 
-console.table(listEndpoints(app))
+console.table(routeList())
 
 mongoose.set('returnDocument', 'after')
 mongoose.set('strictQuery', true)
@@ -20,15 +19,24 @@ mongoose.set('strictQuery', true)
 mongoose.connect(env.MONGO_CONNECTION)
     .then(() => {
         // Mongoose builds indexes by itself and a failure is otherwise silent;
-        // without its index, a lookup reads the whole collection. The one most
-        // likely to fail is the one-open-cart-per-table index, while a table
-        // still has two open carts from before it existed.
-        const hints: Record<string, string> = {
-            Cart: " — list the tables with two open carts: npx tsx src/scripts/findDuplicateOpenCarts.ts",
-        }
+        // without its index, a lookup reads the whole collection. It goes on
+        // to the model's other indexes after one fails, but reports only the
+        // first failure, so restart after fixing one to see any other.
+        // - Duplicates (11000): a unique index over values that repeat, most
+        //   likely the one-open-cart-per-table index while a table still has
+        //   two open carts from before it existed.
+        // - Conflicts (85, 86): the database already has an index with that
+        //   name, or those keys, and other options. Some are unique guards
+        //   (replays, one open cart per table): never drop one to make room.
+        const hint = (model: string, collection: string, err: Error & { code?: unknown }) =>
+            err.code === 11000 && model === "Cart" && err.message.includes(`index: ${OPEN_CART_INDEX} dup key`)
+                ? " — list the tables with two open carts: npx tsx src/scripts/findDuplicateOpenCarts.ts"
+            : err.code === 11000 ? " — values repeat that the named unique index must keep apart"
+            : err.code === 85 || err.code === 86 ? ` — the database already has an index with that name or those keys and other options: compare db.${collection}.getIndexes() with the schema before changing either`
+            : ""
         for (const model of [CartModel, ShopModel, UserModel, MenuModel] as const) {
-            model.init().catch((err: Error) => {
-                console.error(` ⚠️  ${model.modelName} indexes not built (${err.message})${hints[model.modelName] ?? ""}`)
+            model.init().catch((err: Error & { code?: unknown }) => {
+                console.error(` ⚠️  ${model.modelName} indexes not built (${err.message})${hint(model.modelName, model.collection.name, err)}`)
             })
         }
     })

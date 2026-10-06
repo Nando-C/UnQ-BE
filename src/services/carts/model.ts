@@ -232,8 +232,14 @@ CartSchema.index({ userId: 1 }, { partialFilterExpression: { status: "open" } })
 // - A shop's open and recently closed carts, before it's deleted (older carts,
 //   without shopId, by table).
 CartSchema.index({ shopId: 1, status: 1, updatedAt: 1 })
-// - The legacy branch of checkout's replay check (orderAlreadyUsed).
-CartSchema.index({ paypalOrderId: 1 }, { sparse: true })
+// - The legacy branch of checkout's replay check (orderAlreadyUsed): only
+//   legacy carts have the field. Descending, so it has a name no database
+//   holds: they have `paypalOrderId_1` unique (checkout's first replay guard)
+//   or not (S29), or `paypalOrderId_1__id_1` (briefly, 2026-10-06), and an
+//   index declared under a name a database holds with other options is
+//   refused. Those stay, unused (dropping them is optional). Never change an
+//   index's options under the same name: give it a new one.
+CartSchema.index({ paypalOrderId: -1 }, { partialFilterExpression: { paypalOrderId: { $exists: true } } })
 
 // One open cart per table: the database refuses a second one, so two diners
 // placing a table's first order at the same moment can't each create a cart
@@ -241,6 +247,8 @@ CartSchema.index({ paypalOrderId: 1 }, { sparse: true })
 // (index.ts reports a failure); it can't be built while a table already has two
 // open carts — list them with src/scripts/findDuplicateOpenCarts.ts.
 CartSchema.index({ tableId: 1 }, { unique: true, partialFilterExpression: { status: "open" } })
+// Its name, as MongoDB generates it (index.ts names it when it can't build).
+export const OPEN_CART_INDEX = "tableId_1"
 
 // How long a closed cart stays on its table's sheet, where a manager refunds
 // it (refunds usually come after a table has finished). A shop with a paid

@@ -230,3 +230,50 @@ describe("no request reads a whole collection", () => {
         })
     })
 })
+
+describe("an existing database's indexes", () => {
+    // Drops an index if it's there; any failure but "not found" (27) stops the test.
+    const dropIfThere = (name: string) =>
+        CartModel.collection.dropIndex(name).catch((error: { code?: number }) => {
+            if (error.code !== 27) throw error
+        })
+    const LEGACY = ["paypalOrderId_1", "paypalOrderId_1__id_1"]
+
+    // Databases hold an earlier index for the legacy order id: `paypalOrderId_1`
+    // unique (checkout's first replay guard, before order ids moved to
+    // `paypalOrderIds`) or not (built from S29 until 2026-10-06), or
+    // `paypalOrderId_1__id_1` (briefly, 2026-10-06), or none (a new database).
+    // The cart indexes build over each, the lookup's own index among them.
+    it.each([
+        ["none, a new database", null, null],
+        ["unique, from July", { paypalOrderId: 1 }, { unique: true, sparse: true }],
+        ["not unique, from S29", { paypalOrderId: 1 }, { sparse: true }],
+        ["with _id, from 2026-10-06", { paypalOrderId: 1, _id: 1 }, { sparse: true }],
+    ])("builds the cart indexes over an earlier order id index (%s)", async (_, keys, options) => {
+        // As a deploy meets it: the earlier index there, the new one not yet.
+        for (const name of [...LEGACY, "paypalOrderId_-1"]) await dropIfThere(name)
+        const earlier = keys && await CartModel.collection.createIndex(keys, options ?? {})
+        try {
+            await expect(CartModel.createIndexes()).resolves.toBeUndefined()
+            expect((await CartModel.collection.indexes()).map((i) => i.name)).toContain("paypalOrderId_-1")
+        } finally {
+            // Back to the schema's indexes alone, whatever happened above.
+            if (earlier) await dropIfThere(earlier)
+            await CartModel.createIndexes()
+        }
+    })
+
+    // With no earlier index, so only the new one can serve it: checkout's
+    // replay check (orderAlreadyUsed) reads no cart collection whole, legacy
+    // carts included, and its chosen plan uses the new index.
+    it("serves the legacy replay lookup by its own index", async () => {
+        for (const name of LEGACY) await dropIfThere(name)
+        await CartModel.createIndexes()
+        await CartModel.collection.insertOne({ userId: new mongoose.Types.ObjectId(), tableId: "t-old", status: "closed", items: [], paypalOrderId: "ORDER-OLD" })
+        const lookup = { $or: [{ paypalOrderIds: "ORDER-OLD" }, { paypalOrderId: "ORDER-OLD" }] }
+
+        expect(await noScans(() => CartModel.exists(lookup))).toBeTruthy()
+        const plan = (await CartModel.find(lookup).explain()) as unknown as { queryPlanner: { winningPlan: unknown } }
+        expect(JSON.stringify(plan.queryPlanner.winningPlan)).toContain('"indexName":"paypalOrderId_-1"')
+    })
+})
