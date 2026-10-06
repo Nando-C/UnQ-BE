@@ -213,6 +213,7 @@ Copy `.env.example` to `.env` and fill it in. Configuration is validated at boot
 | `PAYPAL_API_BASE` | PayPal API base URL — defaults to the sandbox (`https://api-m.sandbox.paypal.com`) when unset |
 | `PASSWORD_FAILS_PER_ACCOUNT` | Wrong passwords allowed per account in 15 minutes (default 10) |
 | `CART_EDITS_PER_MINUTE` | Cart changes allowed per diner a minute (default 120) |
+| `BCRYPT_ROUNDS` | bcrypt cost for stored passwords, 10–13 (default 10; lower refused except inside the test suite, which uses 4) |
 
 ### Dependency override
 

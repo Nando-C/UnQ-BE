@@ -4,5 +4,7 @@ module.exports = {
   testEnvironment: "node",
   testMatch: ["<rootDir>/src/tests/**/*.test.ts"],
   setupFiles: ["<rootDir>/src/tests/env.ts"],
-  testTimeout: 30000,
+  // Room for a busy machine: a stall shorter than this waits instead of
+  // failing (see src/tests/setup.ts for the database side).
+  testTimeout: 60000,
 }

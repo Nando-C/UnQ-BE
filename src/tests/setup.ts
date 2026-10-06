@@ -19,8 +19,14 @@ beforeAll(async () => {
     // metadata and the server refuses it (every query then hangs buffering).
     // Handing the driver `os` directly sidesteps the import. Tests only: plain
     // Node (dev/prod) resolves it fine.
-    await mongoose.connect(mongo.getUri(), { runtimeAdapters: { os } })
-})
+    // Patient with a busy machine: the driver's health check of the test
+    // database times out after connectTimeoutMS (30 s by default) and then
+    // drops every query in flight, which failed whole tests when the machine
+    // was loaded. Under the test timeout (60 s, jest.config.js), so a longer
+    // stall shows the driver's own error, not just Jest's.
+    await mongoose.connect(mongo.getUri(), { runtimeAdapters: { os }, connectTimeoutMS: 45_000, serverSelectionTimeoutMS: 45_000 })
+    // Starting the database comes first, on the same clock: room for both.
+}, 120_000)
 
 afterEach(async () => {
     const { collections } = mongoose.connection

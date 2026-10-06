@@ -52,6 +52,17 @@ const envSchema = z
         PASSWORD_FAILS_PER_ACCOUNT: limit(10),
         CART_EDITS_PER_MINUTE: limit(120),
 
+        // bcrypt's cost for stored passwords, 10 to 13 (above, a hash takes
+        // seconds and a few sign-ups at once stall the server). Lower, down to
+        // 4, only inside Jest, which sets JEST_WORKER_ID in every test process
+        // and no deployment does (NODE_ENV can be inherited or copied into a
+        // server's config). Stored hashes are never rehashed at sign-in, so a
+        // weak one would stay weak.
+        BCRYPT_ROUNDS: z.preprocess(emptyAsAbsent, z.coerce.number().int()
+            .min(process.env.JEST_WORKER_ID ? 4 : 10, "at least 10 for real passwords (lower only inside the test suite)")
+            .max(13)
+            .default(10)),
+
         // Individually optional, but constrained in pairs by the rules below.
         FRONTEND_URL: optional,
         FRONTEND_DEV_URL: optional,

@@ -2,6 +2,7 @@ import mongoose from "mongoose"
 import { IUserDocument, IUserModel } from "src/typings/users"
 import * as bcrypt from 'bcrypt';
 import { limitedPasswordCheck } from "../../lib/passwordLimit"
+import env from "../../settings/env"
 
 const { Schema, model } = mongoose
 
@@ -47,7 +48,7 @@ const UserSchema = new Schema<IUserDocument, IUserModel>(
 
 // Mongoose 9: async middleware signals completion by resolving — there is no `next`.
 UserSchema.pre("save", async function () {
-    if (this.isModified("password") && this.password) this.password = await bcrypt.hash(this.password!, 10)
+    if (this.isModified("password") && this.password) this.password = await bcrypt.hash(this.password!, env.BCRYPT_ROUNDS)
 })
 
 UserSchema.statics.checkCredentials = async function (email, password) {
