@@ -7,12 +7,15 @@ import { cartItemSchema, cartItemWithQtySchema, checkOutSplitSchema } from "./sc
 
 const router = Router()
 
-router.post("/:shopId/tables/:tableId/addItem", JWTAuthMiddleware, cartEditLimit, validate(cartItemWithQtySchema), controllers.addItem)
-router.post("/:shopId/tables/:tableId/removeItem", JWTAuthMiddleware, cartEditLimit, validate(cartItemWithQtySchema), controllers.decreaseItem)
-router.post("/:shopId/tables/:tableId/deleteItem", JWTAuthMiddleware, cartEditLimit, validate(cartItemSchema), controllers.deleteItem)
-router.post("/:shopId/tables/:tableId/:cartId/addSplitItem", JWTAuthMiddleware, cartEditLimit, validate(cartItemWithQtySchema), controllers.addSplitItem)
-router.post("/:shopId/tables/:tableId/:cartId/decreaseSplitItem", JWTAuthMiddleware, cartEditLimit, validate(cartItemSchema), controllers.decreaseSplitItem)
-router.post("/:shopId/tables/:tableId/:cartId/removeSplitItem", JWTAuthMiddleware, cartEditLimit, validate(cartItemSchema), controllers.removeSplitItem)
+// A diner changing a table's order: signed in, and within the edit limit.
+const editing = [JWTAuthMiddleware, cartEditLimit]
+
+router.post("/:shopId/tables/:tableId/addItem", editing, validate(cartItemWithQtySchema), controllers.addItem)
+router.post("/:shopId/tables/:tableId/removeItem", editing, validate(cartItemWithQtySchema), controllers.decreaseItem)
+router.post("/:shopId/tables/:tableId/deleteItem", editing, validate(cartItemSchema), controllers.deleteItem)
+router.post("/:shopId/tables/:tableId/:cartId/addSplitItem", editing, validate(cartItemWithQtySchema), controllers.addSplitItem)
+router.post("/:shopId/tables/:tableId/:cartId/decreaseSplitItem", editing, validate(cartItemSchema), controllers.decreaseSplitItem)
+router.post("/:shopId/tables/:tableId/:cartId/removeSplitItem", editing, validate(cartItemSchema), controllers.removeSplitItem)
 router.post("/tables/:tableId/:cartId/createCheckoutOrder", JWTAuthMiddleware, controllers.createCheckoutOrder)
 router.post("/tables/:tableId/:cartId/captureCheckout", JWTAuthMiddleware, validate(checkOutSplitSchema), controllers.captureCheckout)
 // Public (anyone at the table); a signed-in diner also gets their own notices.

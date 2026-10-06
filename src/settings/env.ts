@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { emptyAsAbsent } from "../lib/emptyAsAbsent"
 
 // Single source of truth for configuration. Parsed once, at import time, so a missing
 // or empty variable stops the process here instead of surfacing later as a quietly
@@ -12,7 +13,6 @@ import { z } from "zod"
 // `.env` lines written as `KEY=` arrive as "", so required values check length, not just
 // presence; optional ones treat "" as absent so an empty line behaves like a missing one.
 const required = z.string().min(1)
-const emptyAsAbsent = (value: unknown) => (value === "" ? undefined : value)
 const optional = z.preprocess(emptyAsAbsent, z.string().min(1).optional())
 
 // A whole number above 0, or the default when absent or empty.

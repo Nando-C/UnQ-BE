@@ -26,12 +26,13 @@ export const limitedPasswordCheck = async (accountId: string, compare: () => Pro
     }
     if (window.count >= env.PASSWORD_FAILS_PER_ACCOUNT) return "locked" as const
     window.count++
-    let wrong = false
     try {
-        wrong = !(await compare())
-        return !wrong
-    } finally {
-        if (!wrong) window.count--
+        const right = await compare()
+        if (right) window.count--
+        return right
+    } catch (error) {
+        window.count--
+        throw error
     }
 }
 

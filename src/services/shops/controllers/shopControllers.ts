@@ -89,30 +89,32 @@ export const getAllShops: TController = async ( req, res, next) => {
 
 // -------------------------------------------------------------------------
 
-// browseShops' query: `limit + 1` shops, to tell whether there's a next page.
-export const browsePipeline = (q: string, cursor: string | undefined, limit: number): PipelineStage[] => {
+// browseShops' search (what `q` matches is described there). One menu item
+// named with it is enough; a deleted item has already left its shop's menu.
+const searchStages = (q: string): PipelineStage[] => {
     const text = new RegExp(escapeRegExp(q), "i")
     return [
-        { $match: cursor ? { _id: { $gt: new mongoose.Types.ObjectId(cursor) } } : {} },
-        { $sort: { _id: 1 } },
-        ...(q ? [
-            // One of its menu items named with it is enough. A deleted item
-            // has already left its shop's menu.
-            {
-                $lookup: {
-                    from: MenuModel.collection.name,
-                    localField: "menu",
-                    foreignField: "_id",
-                    pipeline: [{ $match: { name: text } }, { $limit: 1 }, { $project: { _id: 1 } }],
-                    as: "itemsNamed",
-                },
+        {
+            $lookup: {
+                from: MenuModel.collection.name,
+                localField: "menu",
+                foreignField: "_id",
+                pipeline: [{ $match: { name: text } }, { $limit: 1 }, { $project: { _id: 1 } }],
+                as: "itemsNamed",
             },
-            { $match: { $or: [{ name: text }, { bio: text }, { "itemsNamed.0": { $exists: true } }] } },
-        ] : []),
-        { $limit: limit + 1 },
-        { $project: { name: 1, bio: 1, cover: 1 } },
+        },
+        { $match: { $or: [{ name: text }, { bio: text }, { "itemsNamed.0": { $exists: true } }] } },
     ]
 }
+
+// browseShops' query: `limit + 1` shops, to tell whether there's a next page.
+export const browsePipeline = (q: string, cursor: string | undefined, limit: number): PipelineStage[] => [
+    { $match: cursor ? { _id: { $gt: new mongoose.Types.ObjectId(cursor) } } : {} },
+    { $sort: { _id: 1 } },
+    ...(q ? searchStages(q) : []),
+    { $limit: limit + 1 },
+    { $project: { name: 1, bio: 1, cover: 1 } },
+]
 
 // The home page's list: a page of shops, without their menus or tables, oldest
 // first; `next` is the cursor for the page after (null on the last). With `q`,
@@ -127,8 +129,8 @@ export const browseShops: TController = async ( req, res, next) => {
         const found = await ShopModel.aggregate(browsePipeline(q, cursor, limit))
 
         // Through the model, so the cover's default fills in as on the other routes.
-        const shops = found.slice(0, limit).map((found) => {
-            const { _id, name, bio, cover } = ShopModel.hydrate(found)
+        const shops = found.slice(0, limit).map((stored) => {
+            const { _id, name, bio, cover } = ShopModel.hydrate(stored)
             return { _id, name, bio, cover }
         })
         res.send({ shops, next: found.length > limit ? shops[shops.length - 1]._id : null })
