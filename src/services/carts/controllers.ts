@@ -795,7 +795,8 @@ export const captureCheckout: TController = async ( req, res, next ) => {
             // Recorded: its order is written now, outside the settle's error
             // handling above, which would refund the buyer (a failure here is
             // only logged).
-            await keepOrderInStep(outcome.cart, outcome.cart.payments[outcome.cart.payments.length - 1]._id)
+            // applyCheckout pushed it last.
+            await keepOrderInStep(outcome.cart, outcome.cart.payments.at(-1)!._id)
             return res.status(pending ? 202 : 200).send(forDiner(outcome.cart, req))
         }
 

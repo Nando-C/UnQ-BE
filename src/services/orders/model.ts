@@ -1,6 +1,6 @@
 import mongoose from "mongoose"
 import { IOrderDocument } from "src/typings/order"
-import { REFUND_REASONS } from "../carts/model"
+import { PAYMENT_PROVIDERS, PAYMENT_STATUSES, REFUND_REASONS, REFUND_STATUSES } from "../carts/model"
 
 const { Schema, model } = mongoose
 
@@ -19,11 +19,11 @@ const OrderSchema = new Schema<IOrderDocument>(
         tableId: { type: String, required: true },
         tableName: String,
         payerId: { type: Schema.Types.ObjectId, required: true },
-        status: { type: String, enum: ["completed", "pending", "failed"], required: true },
+        status: { type: String, enum: PAYMENT_STATUSES, required: true },
         paidAt: { type: Date, required: true },
         currency: { type: String, required: true },
         amount: { type: Number, required: true },
-        provider: { type: String, enum: ["paypal"], required: true },
+        provider: { type: String, enum: PAYMENT_PROVIDERS, required: true },
         providerCheckoutId: { type: String, required: true },
         providerPaymentId: String,
         lines: [
@@ -41,7 +41,7 @@ const OrderSchema = new Schema<IOrderDocument>(
             {
                 _id: false,
                 refundId: { type: Schema.Types.ObjectId, required: true },
-                status: { type: String, enum: ["pending", "completed", "failed"], required: true },
+                status: { type: String, enum: REFUND_STATUSES, required: true },
                 at: { type: Date, required: true },
                 amount: { type: Number, required: true },
                 lines: [

@@ -1,5 +1,5 @@
 import { Document, Types } from "mongoose"
-import { PaymentProvider, PaymentStatus, RefundReason } from "./cart"
+import { IRefund, PaymentProvider, PaymentStatus } from "./cart"
 
 // One diner's payment as a sales record: the cart's payment (see ICart's
 // `payments`) with what the sales report needs, kept after the cart, table,
@@ -33,14 +33,9 @@ export interface IOrderLine {
     refundedQty: number
 }
 
-export interface IOrderRefund {
+// The cart's refund as the report reads it; `at` is the day it counts on.
+export type IOrderRefund = Pick<IRefund, "status" | "at" | "amount" | "lines" | "reason" | "reasonNote"> & {
     refundId: Types.ObjectId
-    status: "pending" | "completed" | "failed"
-    at: Date // counts on this day
-    amount: number
-    lines: { menuId: Types.ObjectId; name: string; qty: number }[]
-    reason?: RefundReason
-    reasonNote?: string
 }
 
 export interface IOrderDocument extends Document, IOrder {}

@@ -7,6 +7,11 @@ const { Schema, model } = mongoose
 // list: the type, the refund route's validation and both models read it.
 export const REFUND_REASONS = ["unavailable", "wrong_item", "quality", "long_wait", "paid_by_mistake", "changed_mind", "other"] as const
 export type RefundReason = (typeof REFUND_REASONS)[number]
+// A payment's and a refund's status, and the payment providers: also the
+// orders' (services/orders/model.ts).
+export const PAYMENT_STATUSES = ["completed", "pending", "failed"] as const
+export const REFUND_STATUSES = ["pending", "completed", "failed"] as const
+export const PAYMENT_PROVIDERS = ["paypal"] as const
 
 // A table's order. Each table has at most one OPEN cart, shared by everyone
 // sitting there: whoever orders first creates it, the others add to it.
@@ -135,8 +140,8 @@ const CartSchema = new Schema<ICartDocument>(
         //   read as `completed`.
         payments: [
             {
-                provider: { type: String, enum: ["paypal"], required: true },
-                status: { type: String, enum: ["completed", "pending", "failed"], default: "completed" },
+                provider: { type: String, enum: PAYMENT_PROVIDERS, required: true },
+                status: { type: String, enum: PAYMENT_STATUSES, default: "completed" },
                 providerCheckoutId: { type: String, required: true },
                 providerPaymentId: String,
                 currency: { type: String, required: true },
@@ -176,7 +181,7 @@ const CartSchema = new Schema<ICartDocument>(
                 ],
                 amount: { type: Number, required: true },
                 currency: { type: String, required: true },
-                status: { type: String, enum: ["pending", "completed", "failed"], required: true },
+                status: { type: String, enum: REFUND_STATUSES, required: true },
                 providerRefundId: String,
                 failureReason: String,
                 byUserId: { type: Schema.Types.ObjectId, required: true },

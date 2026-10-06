@@ -16,7 +16,7 @@ import mongoose from "mongoose"
 import "./setup"
 import app from "../server"
 import { authFor } from "./helpers"
-import CartModel from "../services/carts/model"
+import CartModel, { REFUND_REASONS } from "../services/carts/model"
 import MenuModel from "../services/menus/model"
 import ShopModel from "../services/shops/model"
 import OrderModel from "../services/orders/model"
@@ -77,7 +77,29 @@ const paid = async ({ captureStatus = "COMPLETED" } = {}) => {
         request(app).post(`/shops/${shopId}/carts/${cartId}/refunds`).set("Cookie", owner.cookies)
             .send({ paymentId, lines: [{ menuId: latte, qty: 1 }], reason: "wrong_item", ...body })
     const order = () => OrderModel.findOne({ paymentId }).lean()
-    return { owner, shopId, tableId, latte, ada, cartId, paymentId, checkout, check, refund, order }
+    // syncOrder from the cart as it is now.
+    const resync = async () => syncOrder((await CartModel.findById(cartId))!, paymentId)
+    return { owner, shopId, tableId, latte, ada, cartId, paymentId, checkout, check, refund, order, resync }
+}
+
+// Closed three days ago, so nothing on it holds its shop back.
+const closedLongAgo = (cartId: string) => CartModel.collection.updateOne(
+    { _id: new mongoose.Types.ObjectId(cartId) },
+    { $set: { status: "closed", updatedAt: new Date(Date.now() - 3 * 86_400_000) } }
+)
+
+// `send` with the first version-checked save going through (the pending
+// refund) and every later one meeting a newer cart, quietly.
+const withRecordingFailing = async <T>(send: () => Promise<T>) => {
+    const real = mongoLib.saveChecked
+    const save = jest.spyOn(mongoLib, "saveChecked").mockImplementationOnce(real).mockResolvedValue(false)
+    const quiet = jest.spyOn(console, "error").mockImplementation(() => {})
+    try {
+        return await send()
+    } finally {
+        save.mockRestore()
+        quiet.mockRestore()
+    }
 }
 
 describe("an order per payment", () => {
@@ -152,30 +174,14 @@ describe("an order per payment", () => {
         const { refund, order } = await paid()
         // The pending refund saves; recording PayPal's success then keeps
         // meeting newer versions of the cart.
-        const real = mongoLib.saveChecked
-        const save = jest.spyOn(mongoLib, "saveChecked").mockImplementationOnce(real).mockResolvedValue(false)
-        const quiet = jest.spyOn(console, "error").mockImplementation(() => {})
-        try {
-            expect((await refund()).status).toBe(500)
-        } finally {
-            save.mockRestore()
-            quiet.mockRestore()
-        }
+        expect((await withRecordingFailing(refund)).status).toBe(500)
         expect((await order())?.refunds).toEqual([expect.objectContaining({ status: "pending", reason: "wrong_item" })])
     })
 
     it("shows a refund PayPal refused but that couldn't be marked failed as in progress", async () => {
         const { refund, order } = await paid()
         mockedRefund.mockRejectedValueOnce(new PayPalRefundRefused("PayPal refused the refund"))
-        const real = mongoLib.saveChecked
-        const save = jest.spyOn(mongoLib, "saveChecked").mockImplementationOnce(real).mockResolvedValue(false)
-        const quiet = jest.spyOn(console, "error").mockImplementation(() => {})
-        try {
-            expect((await refund()).status).toBe(502)
-        } finally {
-            save.mockRestore()
-            quiet.mockRestore()
-        }
+        expect((await withRecordingFailing(refund)).status).toBe(502)
         expect((await order())?.refunds).toEqual([expect.objectContaining({ status: "pending" })])
     })
 
@@ -204,6 +210,12 @@ describe("an order per payment", () => {
 })
 
 describe("syncOrder", () => {
+    // The payment's line as if paid before categories were kept, and no order yet.
+    const forgetCategory = async (cartId: string) => {
+        await CartModel.updateOne({ _id: cartId }, { $unset: { "payments.0.lines.0.category": 1 } })
+        await OrderModel.deleteMany({})
+    }
+
     it("never doubles an order, and an older cart never overwrites a newer one's", async () => {
         const { cartId, paymentId, refund, order } = await paid()
         const before = (await CartModel.findById(cartId))!
@@ -238,65 +250,63 @@ describe("syncOrder", () => {
     })
 
     it("fills in a table name a first write couldn't find", async () => {
-        const { cartId, paymentId, order } = await paid()
+        const { paymentId, order, resync } = await paid()
         await OrderModel.updateOne({ paymentId }, { $unset: { tableName: 1 } })
 
-        await syncOrder((await CartModel.findById(cartId))!, paymentId)
+        await resync()
         expect((await order())?.tableName).toBe("T1")
     })
 
     it("keeps the category it gave a line paid before categories were kept, whatever the menu does after", async () => {
-        const { cartId, paymentId, latte } = await paid()
-        await CartModel.updateOne({ _id: cartId }, { $unset: { "payments.0.lines.0.category": 1 } })
-        await OrderModel.deleteMany({})
-        await syncOrder((await CartModel.findById(cartId))!, paymentId)
+        const { cartId, paymentId, latte, resync } = await paid()
+        await forgetCategory(cartId)
+        await resync()
 
         await MenuModel.updateOne({ _id: latte }, { category: "food" })
-        await syncOrder((await CartModel.findById(cartId))!, paymentId)
+        await resync()
         await MenuModel.deleteOne({ _id: latte })
-        await syncOrder((await CartModel.findById(cartId))!, paymentId)
+        await resync()
         expect((await OrderModel.findOne({ paymentId }))?.lines[0].category).toBe("drinks")
     })
 
     it("refuses a cart with no creation date rather than writing an order without one", async () => {
-        const { cartId, paymentId } = await paid()
+        const { cartId, resync } = await paid()
         await CartModel.collection.updateOne({ _id: new mongoose.Types.ObjectId(cartId) }, { $unset: { createdAt: 1 } })
 
-        await expect(syncOrder((await CartModel.findById(cartId))!, paymentId)).rejects.toThrow("no creation date")
+        await expect(resync()).rejects.toThrow("no creation date")
     })
 
     it("refuses an order that breaks the schema rather than writing it", async () => {
-        const { cartId, paymentId } = await paid()
+        const { cartId, resync } = await paid()
         await CartModel.collection.updateOne({ _id: new mongoose.Types.ObjectId(cartId) }, { $set: { "payments.0.status": "lost" } })
 
-        await expect(syncOrder((await CartModel.findById(cartId))!, paymentId)).rejects.toThrow()
+        await expect(resync()).rejects.toThrow()
     })
 
     it("finds the shop of a cart saved without one, by its table", async () => {
-        const { shopId, cartId, paymentId } = await paid()
+        const { shopId, cartId, paymentId, resync } = await paid()
         await OrderModel.deleteMany({})
         await CartModel.updateOne({ _id: cartId }, { $unset: { shopId: 1 } })
 
-        await syncOrder((await CartModel.findById(cartId))!, paymentId)
+        await resync()
         expect(String((await OrderModel.findOne({ paymentId }))?.shopId)).toBe(shopId)
     })
 
     it("gives a line paid before categories were kept its item's current one, or none", async () => {
-        const { cartId, paymentId, latte } = await paid()
-        await CartModel.updateOne({ _id: cartId }, { $unset: { "payments.0.lines.0.category": 1 } })
-        await OrderModel.deleteMany({})
-        await syncOrder((await CartModel.findById(cartId))!, paymentId)
+        const { cartId, paymentId, latte, resync } = await paid()
+        await forgetCategory(cartId)
+        await resync()
         expect((await OrderModel.findOne({ paymentId }))?.lines[0].category).toBe("drinks")
 
         await MenuModel.deleteOne({ _id: latte })
         await OrderModel.deleteMany({})
-        await syncOrder((await CartModel.findById(cartId))!, paymentId)
+        await resync()
         expect((await OrderModel.findOne({ paymentId }))?.lines[0].category).toBeNull()
     })
 })
 
 describe("refund reasons", () => {
-    const REASONS = ["unavailable", "wrong_item", "quality", "long_wait", "paid_by_mistake", "changed_mind"]
+    const REASONS = REFUND_REASONS.filter((r) => r !== "other")
 
     it("takes each listed reason, and Other with a note", async () => {
         for (const reason of REASONS) {
@@ -331,8 +341,7 @@ describe("refund reasons", () => {
 describe("orders as sales history", () => {
     it("outlive their shop and their payer's account", async () => {
         const { owner, shopId, cartId, ada, paymentId } = await paid()
-        // Long closed, so nothing holds the shop back.
-        await CartModel.collection.updateOne({ _id: new mongoose.Types.ObjectId(cartId) }, { $set: { status: "closed", updatedAt: new Date(Date.now() - 3 * 86_400_000) } })
+        await closedLongAgo(cartId)
 
         expect((await request(app).delete("/users/me").set("Cookie", ada.cookies).send({ currentPassword: ada.password })).status).toBe(204)
         expect((await request(app).delete(`/shops/${shopId}`).set("Cookie", owner.cookies)).status).toBe(204)
@@ -342,10 +351,6 @@ describe("orders as sales history", () => {
     })
 
     it("are written before their shop's carts are deleted, and the shop stays if they can't be", async () => {
-        const closedLongAgo = (cartId: string) => CartModel.collection.updateOne(
-            { _id: new mongoose.Types.ObjectId(cartId) },
-            { $set: { status: "closed", updatedAt: new Date(Date.now() - 3 * 86_400_000) } }
-        )
         // An order whose sync failed at checkout.
         const lost = await paid()
         await closedLongAgo(lost.cartId)
@@ -361,7 +366,7 @@ describe("orders as sales history", () => {
 
         expect((await request(app).delete(`/shops/${lost.shopId}`).set("Cookie", lost.owner.cookies)).status).toBe(204)
         expect(await CartModel.countDocuments({ _id: lost.cartId })).toBe(0)
-        expect((await lost.order())?.status).toBe("completed")
+        expect(await lost.order()).toMatchObject({ status: "completed", tableName: "T1" })
     })
 
     it("rewrites none before deleting a shop when they all match their payments, however the carts changed since", async () => {
@@ -370,7 +375,7 @@ describe("orders as sales history", () => {
         const cart = (await CartModel.findById(cartId))!
         cart.notices.push({ at: new Date(), message: "Thanks" })
         await cart.save()
-        await CartModel.collection.updateOne({ _id: new mongoose.Types.ObjectId(cartId) }, { $set: { status: "closed", updatedAt: new Date(Date.now() - 3 * 86_400_000) } })
+        await closedLongAgo(cartId)
 
         const writes = jest.spyOn(OrderModel, "updateOne")
         try {

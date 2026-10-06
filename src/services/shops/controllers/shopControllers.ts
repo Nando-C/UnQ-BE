@@ -219,7 +219,7 @@ export const deleteMyShop: TController = async ( req, res, next ) => {
         // all its paid carts, as deleting them does.
         if (itsCarts) {
             try {
-                await keepShopOrders(itsCarts)
+                await keepShopOrders(itsCarts, shop)
             } catch (error) {
                 console.error("Shop not deleted: its sales records couldn't be written", { shopId, error })
                 return next(createError(500, "The shop's sales records couldn't be saved, so nothing was deleted. Try again shortly.", { expose: true }))

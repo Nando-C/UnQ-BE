@@ -18,9 +18,17 @@ const shopAndTable = async (cart: ICartDocument) => {
     const shop = await ShopModel.findOne(cart.shopId ? { _id: cart.shopId } : ofTable(cart.tableId))
         .select(tableId ? { tables: { $elemMatch: { _id: tableId } }, deletedTables: { $elemMatch: { _id: tableId } } } : { _id: 1 })
         .lean()
-    const table = [...(shop?.tables ?? []), ...(shop?.deletedTables ?? [])][0]
+    const table = [...(shop?.tables ?? []), ...(shop?.deletedTables ?? [])].at(0)
     return { shopId: cart.shopId ?? shop?._id, tableName: table?.name }
 }
+type Place = Awaited<ReturnType<typeof shopAndTable>>
+
+const refundsOf = (cart: ICartDocument, paymentId: unknown) => cart.refunds.filter((r) => id(r.paymentId) === id(paymentId))
+
+// The carts matching `filter` with a payment, a cart at a time (so a long
+// history isn't held in memory at once), with what syncOrder reads.
+const paidCarts = (filter: object) =>
+    CartModel.find({ $and: [filter, { "payments.0": { $exists: true } }] }).select("shopId tableId payments refunds createdAt __v")
 
 // The order of one of the cart's payments, rebuilt from the cart as saved: the
 // payment, its refunds, the table's name, each line's category. Every change to
@@ -33,7 +41,7 @@ const shopAndTable = async (cart: ICartDocument) => {
 export const syncOrder = async (
     cart: ICartDocument,
     paymentId: unknown,
-    place?: Awaited<ReturnType<typeof shopAndTable>>
+    place?: Place
 ): Promise<Outcome> => {
     const payment = cart.payments.find((p) => id(p._id) === id(paymentId))
     if (!payment) throw new Error(`Cart ${cart._id} has no payment ${paymentId}`)
@@ -81,9 +89,7 @@ export const syncOrder = async (
             qty: l.qty,
             refundedQty: l.refundedQty ?? 0,
         })),
-        refunds: cart.refunds
-            .filter((r) => id(r.paymentId) === id(payment._id))
-            .map((r) => ({
+        refunds: refundsOf(cart, payment._id).map((r) => ({
                 refundId: r._id!,
                 status: r.status,
                 at: r.at,
@@ -124,29 +130,32 @@ export const syncOrder = async (
 const moneyState = (status: string | undefined, refundedQty: number[], refunds: { id: unknown; status: string }[]) =>
     JSON.stringify([status ?? "completed", refundedQty, refunds.map((r) => [id(r.id), r.status])])
 
-// Every order of these carts written where it's missing or doesn't match its
-// payment (shop deletion, before the carts go: a sync that failed earlier).
-// Throws if one can't be.
+// Every order of `shop`'s carts (those `carts` matches) written where it's
+// missing or doesn't match its payment (shop deletion, before the carts go: a
+// sync that failed earlier). Throws if one can't be.
 export const SHOP_DELETION_READ = "shop deletion: its paid carts' orders"
-export const keepShopOrders = async (carts: object) => {
-    // A cart at a time, so a long history isn't held in memory at once.
-    const paid = CartModel.find({ $and: [carts, { "payments.0": { $exists: true } }] })
-        .select("shopId tableId payments refunds createdAt __v")
-        .comment(SHOP_DELETION_READ)
-    for await (const cart of paid) {
+export const keepShopOrders = async (
+    carts: object,
+    shop: { _id: unknown; tables: { _id?: unknown; name: string }[]; deletedTables: { _id?: unknown; name: string }[] }
+) => {
+    const tables = [...shop.tables, ...shop.deletedTables]
+    for await (const cart of paidCarts(carts).comment(SHOP_DELETION_READ)) {
         const orders = await OrderModel.find({ paymentId: { $in: cart.payments.map((p) => p._id!) } })
             .select("paymentId status lines.refundedQty refunds.refundId refunds.status")
             .lean<{ paymentId: unknown; status: string; lines: { refundedQty: number }[]; refunds: { refundId: unknown; status: string }[] }[]>()
         const kept = new Map(orders.map((o) => [id(o.paymentId), moneyState(o.status, o.lines.map((l) => l.refundedQty), o.refunds.map((r) => ({ id: r.refundId, status: r.status })))]))
-        let place: Awaited<ReturnType<typeof shopAndTable>> | undefined
+        // The shop in hand: its carts are its own or at its tables.
+        const place: Place = {
+            shopId: shop._id as Place["shopId"],
+            tableName: tables.find((t) => id(t._id) === cart.tableId)?.name,
+        }
         for (const payment of cart.payments) {
             const now = moneyState(
                 payment.status,
                 payment.lines.map((l) => l.refundedQty ?? 0),
-                cart.refunds.filter((r) => id(r.paymentId) === id(payment._id)).map((r) => ({ id: r._id, status: r.status }))
+                refundsOf(cart, payment._id).map((r) => ({ id: r._id, status: r.status }))
             )
             if (kept.get(id(payment._id)) === now) continue
-            place ??= await shopAndTable(cart)
             await syncOrder(cart, payment._id, place)
         }
     }
@@ -167,11 +176,9 @@ export const keepOrderInStep = async (cart: ICartDocument, paymentId: unknown) =
 // logged and counted, and the rest go on.
 export const syncAllOrders = async () => {
     const counts: Record<Outcome | "failed", number> = { created: 0, updated: 0, unchanged: 0, failed: 0 }
-    const carts = CartModel.find({ "payments.0": { $exists: true } })
-        .select("shopId tableId payments refunds createdAt __v")
-    for await (const cart of carts) {
+    for await (const cart of paidCarts({})) {
         // The shop looked up once for the cart's payments.
-        let place: Awaited<ReturnType<typeof shopAndTable>> | undefined
+        let place: Place | undefined
         for (const payment of cart.payments) {
             try {
                 place ??= await shopAndTable(cart)

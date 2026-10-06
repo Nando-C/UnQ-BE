@@ -22,7 +22,7 @@ export interface IRefund {
     lines: { menuId: Types.ObjectId; name: string; qty: number }[]
     amount: number
     currency: string
-    status: "pending" | "completed" | "failed"
+    status: (typeof import("../services/carts/model").REFUND_STATUSES)[number]
     providerRefundId?: string
     failureReason?: string
     byUserId: Types.ObjectId
@@ -52,9 +52,10 @@ export interface IManagerLogEntry {
     details?: string
 }
 
-export type PaymentProvider = "paypal"
+// From the lists in services/carts/model.ts.
+export type PaymentProvider = (typeof import("../services/carts/model").PAYMENT_PROVIDERS)[number]
 // See the model: pending until the provider confirms it.
-export type PaymentStatus = "completed" | "pending" | "failed"
+export type PaymentStatus = (typeof import("../services/carts/model").PAYMENT_STATUSES)[number]
 
 // One settled checkout: what a payer paid, when, and at what prices. Written in
 // the same save that settles it. Payments made before these records existed

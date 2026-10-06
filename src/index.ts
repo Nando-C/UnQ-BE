@@ -35,11 +35,11 @@ mongoose.connect(env.MONGO_CONNECTION)
             : err.code === 11000 ? " — values repeat that the named unique index must keep apart"
             : err.code === 85 || err.code === 86 ? ` — the database already has an index with that name or those keys and other options: compare db.${collection}.getIndexes() with the schema before changing either`
             : ""
-        const build = (model: { init(): Promise<unknown>; modelName: string; collection: { name: string } }): Promise<void> =>
-            model.init().then(() => {}, (err: Error & { code?: unknown }) => {
+        for (const model of [CartModel, ShopModel, UserModel, MenuModel, OrderModel] as const) {
+            model.init().catch((err: Error & { code?: unknown }) => {
                 console.error(` ⚠️  ${model.modelName} indexes not built (${err.message})${hint(model.modelName, model.collection.name, err)}`)
             })
-        for (const model of [CartModel, ShopModel, UserModel, MenuModel, OrderModel]) build(model)
+        }
         // The orders' unique payment index first, awaited, so no request
         // arrives before it exists: an order written before it could be
         // doubled. (The rest build in the background, so a long build can't
