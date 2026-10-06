@@ -14,7 +14,7 @@ export interface IUser {
 export interface IUserDocument extends Document, IUser {}
 
 export interface IUserModel extends Model<IUserDocument> {
-    checkCredentials (email: string, password: string): Promise<IUserDocument | null>
+    checkCredentials (email: string, password: string): Promise<IUserDocument | null | "locked">
 }
 
 export interface IGoogleUser extends IUserDocument {

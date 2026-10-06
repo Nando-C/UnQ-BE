@@ -5,6 +5,7 @@ import createError from "http-errors"
 import { IGoogleUser, IUserDocument } from "src/typings/users"
 import env from "../../settings/env"
 import { isDuplicateKey } from "../../lib/mongo"
+import { TOO_MANY_WRONG_PASSWORDS } from "../../lib/passwordLimit"
 
 export const registerUser: TController = async (req, res, next) => {
     const { name, surname, email, password } = req.body
@@ -30,6 +31,7 @@ export const loginUser: TController = async ( req, res, next ) => {
 
     try {
         const user = await UserModel.checkCredentials(email, password)
+        if (user === "locked") return next(createError(429, TOO_MANY_WRONG_PASSWORDS))
         if (!user) return next(createError(401, "Invalid credentials"))
 
         setAuthCookies(res, await getTokens(user))

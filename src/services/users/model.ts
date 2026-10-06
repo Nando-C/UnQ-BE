@@ -1,6 +1,7 @@
 import mongoose from "mongoose"
 import { IUserDocument, IUserModel } from "src/typings/users"
 import * as bcrypt from 'bcrypt';
+import { limitedPasswordCheck } from "../../lib/passwordLimit"
 
 const { Schema, model } = mongoose
 
@@ -52,9 +53,10 @@ UserSchema.pre("save", async function () {
 UserSchema.statics.checkCredentials = async function (email, password) {
     const user = await this.findOne({email})
     if (!user || !user.password) return null
-    const isMatch = await bcrypt.compare(password, user.password)
-    if (isMatch) return user
-    return null
+    const hash = user.password
+    const right = await limitedPasswordCheck(String(user._id), () => bcrypt.compare(password, hash))
+    if (right === "locked") return "locked"
+    return right ? user : null
 }
 
 UserSchema.methods.toJSON = function () {

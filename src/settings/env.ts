@@ -12,10 +12,11 @@ import { z } from "zod"
 // `.env` lines written as `KEY=` arrive as "", so required values check length, not just
 // presence; optional ones treat "" as absent so an empty line behaves like a missing one.
 const required = z.string().min(1)
-const optional = z.preprocess(
-    (value) => (value === "" ? undefined : value),
-    z.string().min(1).optional()
-)
+const emptyAsAbsent = (value: unknown) => (value === "" ? undefined : value)
+const optional = z.preprocess(emptyAsAbsent, z.string().min(1).optional())
+
+// A whole number above 0, or the default when absent or empty.
+const limit = (fallback: number) => z.preprocess(emptyAsAbsent, z.coerce.number().int().positive().default(fallback))
 
 const envSchema = z
     .object({
@@ -45,6 +46,11 @@ const envSchema = z
         // Defaults to sandbox on purpose. Note this means a *typo* in this variable name
         // silently leaves you on sandbox, which is why index.ts logs the resolved mode.
         PAYPAL_API_BASE: z.string().min(1).default("https://api-m.sandbox.paypal.com"),
+
+        // Rate limits (see middlewares/rateLimits.ts): wrong passwords per account
+        // in 15 minutes, and cart edits per diner in a minute.
+        PASSWORD_FAILS_PER_ACCOUNT: limit(10),
+        CART_EDITS_PER_MINUTE: limit(120),
 
         // Individually optional, but constrained in pairs by the rules below.
         FRONTEND_URL: optional,

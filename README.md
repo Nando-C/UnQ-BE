@@ -82,6 +82,7 @@ You can find the Front-End repo of this project in the following link, where mor
 - [Express.js](https://expressjs.com/)
 - [MongoDB](https://www.mongodb.com/) + [Mongoose](https://mongoosejs.com/)
 - [Zod](https://zod.dev/)
+- [express-rate-limit](https://express-rate-limit.mintlify.app/)
 - [Passport.js](https://www.passportjs.org/) (Google OAuth 2.0)
 - [Cloudinary](https://cloudinary.com)
 - [Jest](https://jestjs.io/) + [Supertest](https://github.com/ladjs/supertest) + [mongodb-memory-server](https://github.com/typegoose/mongodb-memory-server)
@@ -145,6 +146,7 @@ The API is organized service-per-domain: each domain under `src/services/<name>/
 
 - `src/services/auth/middlewares.ts` — `JWTAuthMiddleware` (verifies the access-token cookie), `adminOnly` / `isShopManager` (role guards)
 - `src/middlewares/validate.ts` — generic `validate(schema)` middleware, runs after auth/role checks and before the controller
+- `src/lib/passwordLimit.ts` and `src/middlewares/rateLimits.ts` — the wrong-password and cart-change rate limits (see [REST API](#rest-api))
 - `src/errorMiddlewares.ts` — single error-handling exit point: 4xx errors return `{ message, details? }`, everything else is logged and returns a generic 500
 - `src/settings/` — CORS whitelist and a custom Cloudinary multer `StorageEngine`
 
@@ -154,6 +156,7 @@ src/
 ├── server.ts              # express app (exported, not listening — used directly by tests)
 ├── errorMiddlewares.ts
 ├── middlewares/
+│   ├── rateLimits.ts
 │   └── validate.ts
 ├── settings/
 │   ├── cors.ts
@@ -208,6 +211,8 @@ Copy `.env.example` to `.env` and fill it in. Configuration is validated at boot
 | `PAYPAL_CLIENT_ID` | PayPal client ID (used for server-side order verification) |
 | `PAYPAL_CLIENT_SECRET` | PayPal client secret (used for server-side order verification) |
 | `PAYPAL_API_BASE` | PayPal API base URL — defaults to the sandbox (`https://api-m.sandbox.paypal.com`) when unset |
+| `PASSWORD_FAILS_PER_ACCOUNT` | Wrong passwords allowed per account in 15 minutes (default 10) |
+| `CART_EDITS_PER_MINUTE` | Cart changes allowed per diner a minute (default 120) |
 
 ### Available Scripts
 
@@ -391,6 +396,11 @@ Cart Model:
 ## REST API
 
 These are the available endpoints created for this application. Every mutating request is validated (`zod`) and responds `400 { message: "Validation failed", details: [...] }` on bad input.
+
+**Rate limits.** Over a limit, a request gets `429 { message }`. Limits count per account, not per IP: behind the front-end's proxy the server can't tell visitors' addresses apart reliably.
+- Wrong passwords: 10 per account in 15 minutes (`PASSWORD_FAILS_PER_ACCOUNT`), counted together at `POST /auth/login` (`401`) and wherever the current password is confirmed (`PUT /users/me` changing the email or password, `DELETE /users/me`; `403`). Over it, every password check for that account answers `429` until the 15 minutes are up, the right password included; other changes to the account still work. Only real comparisons count: an email with no account, or a Google-only one, isn't counted.
+- A diner's cart changes (`addItem`, `removeItem`, `deleteItem` and the three split routes): 120 a minute per user (`CART_EDITS_PER_MINUTE`). Checkout is never limited.
+- Counts are kept in the server's memory: they restart with it, and several servers would need a shared store.
 
 ### Authorization
 

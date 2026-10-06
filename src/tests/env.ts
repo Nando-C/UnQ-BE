@@ -25,6 +25,11 @@ process.env.CLOUDINARY_URL = process.env.CLOUDINARY_URL || "cloudinary://test-ke
 process.env.PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "test-paypal-client-id"
 process.env.PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || "test-paypal-client-secret"
 
+// High enough that no suite meets a rate limit by accident; rateLimits.test.ts
+// checks the real ones.
+process.env.PASSWORD_FAILS_PER_ACCOUNT = "10000"
+process.env.CART_EDITS_PER_MINUTE = "10000"
+
 // If a mongod binary is already installed locally, point mongodb-memory-server at it
 // so the suite never tries to download one. Only use a binary that actually RUNS:
 // existing is not enough — an x86_64 mongod left by an old Intel Homebrew exists at

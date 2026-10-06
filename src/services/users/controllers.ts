@@ -6,6 +6,7 @@ import { destroyReplacedImage, discardUpload } from "../../settings/cloudinary"
 import { clearAuthCookies, getTokens, setAuthCookies } from "../auth/tools"
 import ShopModel from "../shops/model"
 import { isDuplicateKey } from "../../lib/mongo"
+import { limitedPasswordCheck, TOO_MANY_WRONG_PASSWORDS } from "../../lib/passwordLimit"
 
 // -------------------------------------------------------------------------
 
@@ -17,13 +18,17 @@ export const getMe: TController = async ( req, res) => {
 
 // Why the account's current password doesn't allow `what`, or null when it
 // does (or the account has none). 403, not 401, for a wrong one: a 401 would
-// send the FE to refresh the session.
+// send the FE to refresh the session. Wrong ones count towards the account's
+// limit, as at sign-in (see lib/passwordLimit.ts).
 const currentPasswordRefusal = async (me: IUserDocument, currentPassword: unknown, what: string) => {
     if (!me.password) return null
     if (typeof currentPassword !== "string" || !currentPassword) {
         return createError(400, `Enter your current password to ${what}`)
     }
-    if (!(await bcrypt.compare(currentPassword, me.password))) return createError(403, "Your current password is incorrect")
+    const hash = me.password
+    const right = await limitedPasswordCheck(String(me._id), () => bcrypt.compare(currentPassword, hash))
+    if (right === "locked") return createError(429, TOO_MANY_WRONG_PASSWORDS)
+    if (!right) return createError(403, "Your current password is incorrect")
     return null
 }
 
