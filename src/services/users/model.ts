@@ -38,7 +38,8 @@ const UserSchema = new Schema<IUserDocument, IUserModel>(
         },
         // The one refresh token currently valid for this user (see auth/tools.ts).
         refreshToken: String,
-        googleId: String,
+        // Looked up on every Google sign-in.
+        googleId: { type: String, index: { sparse: true } },
     },
     { timestamps: true }
 )

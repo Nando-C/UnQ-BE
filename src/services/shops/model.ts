@@ -70,6 +70,9 @@ const ShopSchema = new Schema<IShopDocument> (
     { timestamps: true }
 )
 
+// A manager's shops (/shops/me, and deleting their account).
+ShopSchema.index({ shopMg: 1 })
+
 ShopSchema.methods.toJSON = function () {
     const shop = this.toObject()
     delete shop.__v

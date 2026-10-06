@@ -179,7 +179,8 @@ const CartSchema = new Schema<ICartDocument>(
         // Notes to the table's diners when a manager changes their cart ("The
         // staff released your selection of 2× Latte"). Text only. One with a
         // `forUserId` is for that diner alone; one without is for the table.
-        // Diners see recent ones only (see dinerView).
+        // Diners see recent ones only (see dinerView). Added through save(),
+        // which moves updatedAt: closedCartNotices finds them by it.
         notices: [
             {
                 at: { type: Date, required: true },
@@ -216,6 +217,23 @@ CartSchema.pre(["findOneAndUpdate", "updateOne", "updateMany"], function () {
     const inc = ((update as UpdateQuery<ICartDocument>).$inc ??= {}) as Record<string, number>
     if (!("__v" in inc)) inc.__v = 1
 })
+
+// Most carts are kept for good, so the lookups by something other than id have
+// an index that reaches the few carts they want, not every cart of a table or
+// a shop (an $or needs one on each branch). indexes.test.ts checks the main routes.
+// - A table's recently closed carts: its sheet, diners' notices, deleted
+//   tables. Open-cart lookups use the one-open-cart index below.
+CartSchema.index({ tableId: 1, status: 1, updatedAt: 1 })
+// - Carts awaiting PayPal (AWAITING_PAYPAL): only those are indexed.
+CartSchema.index({ "payments.status": 1, tableId: 1 }, { partialFilterExpression: { "payments.status": "pending" } })
+CartSchema.index({ "refunds.status": 1, tableId: 1 }, { partialFilterExpression: { "refunds.status": "pending" } })
+// - A diner's open cart: only open ones are indexed.
+CartSchema.index({ userId: 1 }, { partialFilterExpression: { status: "open" } })
+// - A shop's open and recently closed carts, before it's deleted (older carts,
+//   without shopId, by table).
+CartSchema.index({ shopId: 1, status: 1, updatedAt: 1 })
+// - The legacy branch of checkout's replay check (orderAlreadyUsed).
+CartSchema.index({ paypalOrderId: 1 }, { sparse: true })
 
 // One open cart per table: the database refuses a second one, so two diners
 // placing a table's first order at the same moment can't each create a cart

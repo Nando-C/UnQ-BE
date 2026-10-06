@@ -72,7 +72,8 @@ export const getMyCarts: TController = async ( req, res, next) => {
 // them (a selection of theirs the close dropped). Someone new gets none.
 const closedCartNotices = async (tableId: string, viewerId: unknown) => {
     const since = new Date(Date.now() - NOTICE_MAX_AGE_MS)
-    const carts = await CartModel.find({ tableId, status: "closed", "notices.at": { $gte: since } })
+    // A notice changes its cart, so a cart with a recent notice changed recently.
+    const carts = await CartModel.find({ tableId, status: "closed", updatedAt: { $gte: since }, "notices.at": { $gte: since } })
     const viewer = String(viewerId)
     const theirs = (cart: ICartDocument) =>
         tookPart(cart, viewer) ? cart.notices : cart.notices.filter((n) => n.forUserId && String(n.forUserId) === viewer)

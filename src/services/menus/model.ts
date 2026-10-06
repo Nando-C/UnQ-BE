@@ -40,6 +40,8 @@ export const MenuSchema = new Schema<IMenuDocument>(
         deletedFrom: {
             type: Schema.Types.ObjectId,
             ref: "Shop",
+            // Found by it when the shop is deleted.
+            index: { sparse: true },
         },
     },
     { timestamps: true }
