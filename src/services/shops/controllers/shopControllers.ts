@@ -6,6 +6,11 @@ import createError from "http-errors"
 import CartModel, { AWAITING_PAYPAL, RECENTLY_CLOSED_MS } from "../../carts/model"
 import MenuModel from "../../menus/model"
 import { destroyReplacedImage, discardUpload } from "../../../settings/cloudinary"
+import mongoose, { PipelineStage } from "mongoose"
+import { BrowseShopsQuery } from "../schemas"
+
+// The text as a pattern that matches it literally.
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 // -------------------------------------------------------------------------
 
@@ -77,6 +82,56 @@ export const getAllShops: TController = async ( req, res, next) => {
         if (!shopList) return next(createError(404, "Shops Not Found!"))
 
         res.send(shopList)
+    } catch (error) {
+        next(createError(500, error as Error))
+    }
+}
+
+// -------------------------------------------------------------------------
+
+// browseShops' query: `limit + 1` shops, to tell whether there's a next page.
+export const browsePipeline = (q: string, cursor: string | undefined, limit: number): PipelineStage[] => {
+    const text = new RegExp(escapeRegExp(q), "i")
+    return [
+        { $match: cursor ? { _id: { $gt: new mongoose.Types.ObjectId(cursor) } } : {} },
+        { $sort: { _id: 1 } },
+        ...(q ? [
+            // One of its menu items named with it is enough. A deleted item
+            // has already left its shop's menu.
+            {
+                $lookup: {
+                    from: MenuModel.collection.name,
+                    localField: "menu",
+                    foreignField: "_id",
+                    pipeline: [{ $match: { name: text } }, { $limit: 1 }, { $project: { _id: 1 } }],
+                    as: "itemsNamed",
+                },
+            },
+            { $match: { $or: [{ name: text }, { bio: text }, { "itemsNamed.0": { $exists: true } }] } },
+        ] : []),
+        { $limit: limit + 1 },
+        { $project: { name: 1, bio: 1, cover: 1 } },
+    ]
+}
+
+// The home page's list: a page of shops, without their menus or tables, oldest
+// first; `next` is the cursor for the page after (null on the last). With `q`,
+// only shops whose name or bio holds it, or whose menu has an item named with
+// it, case aside (what the home page used to match in the browser). Unanchored
+// patterns can't use an index, so a search reads shops in `_id` order, each
+// with its own menu items (by `_id`), until the page is full.
+export const browseShops: TController = async ( req, res, next) => {
+    try {
+        const { q, cursor, limit } = res.locals.query as BrowseShopsQuery
+
+        const found = await ShopModel.aggregate(browsePipeline(q, cursor, limit))
+
+        // Through the model, so the cover's default fills in as on the other routes.
+        const shops = found.slice(0, limit).map((found) => {
+            const { _id, name, bio, cover } = ShopModel.hydrate(found)
+            return { _id, name, bio, cover }
+        })
+        res.send({ shops, next: found.length > limit ? shops[shops.length - 1]._id : null })
     } catch (error) {
         next(createError(500, error as Error))
     }

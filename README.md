@@ -456,6 +456,12 @@ These are the available endpoints created for this application. Every mutating r
 
 - [ 'GET' ]
 
+  baseURL-api/shops/browse?q=&cursor=&limit=
+
+  A page of shops for the home page, oldest first: `{ shops: [{ _id, name, bio, cover }], next }`. `next` is the `cursor` for the following page, `null` on the last. `limit` 1–50 (default 20; an empty parameter counts as absent). With `q` (up to 100 characters), only shops whose name or bio contains it, or whose menu has an item whose name contains it, case aside. `400` (`details`, as for a bad body) for a query it can't read. `GET /shops` still returns every shop with its menu.
+
+- [ 'GET' ]
+
   baseURL-api/shops/me
 
   The manager's shops. Each also carries `deletedTables: [{ _id, name, deletedAt, needsAttention?, recentCartsUntil? }]`, the tables they deleted; `needsAttention: true` while one still has an open cart or a payment or refund `pending` at PayPal, and `recentCartsUntil` (a date) while its carts route still lists a closed cart there: a day after the latest one last changed. The public shop routes leave it out.

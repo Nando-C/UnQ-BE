@@ -5,7 +5,7 @@ import * as shopControllers from "./controllers/shopControllers"
 import * as tableControllers from "./controllers/tableControllers"
 import * as managerControllers from "../carts/managerControllers"
 import { validate } from "../../middlewares/validate"
-import { createShopSchema, editShopSchema, createTableSchema, editTableSchema } from "./schemas"
+import { createShopSchema, editShopSchema, createTableSchema, editTableSchema, browseShopsSchema } from "./schemas"
 import { cartItemSchema, releaseSelectionSchema, refundSchema } from "../carts/schemas"
 
 const router = Router()
@@ -14,6 +14,8 @@ const router = Router()
 router.post("/", JWTAuthMiddleware, adminOnly, validate(createShopSchema), shopControllers.createShop)
 router.get("/", shopControllers.getAllShops)
 router.get("/me", JWTAuthMiddleware, adminOnly, shopControllers.getMyShops)
+// Before "/:shopId", which would otherwise take "browse" as a shop id.
+router.get("/browse", validate(browseShopsSchema, "query"), shopControllers.browseShops)
 router.get("/:shopId", shopControllers.getSingleShop)
 router.put("/:shopId", JWTAuthMiddleware, adminOnly, validate(editShopSchema), shopControllers.editMyShop)
 // isShopManager (manages THIS shop) runs before the upload, so a refused
