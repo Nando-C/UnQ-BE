@@ -14,13 +14,21 @@ import userRouter from "./services/users/routes"
 import shopRouter from "./services/shops/routes"
 import menuRouter from "./services/menus/routes"
 import cartRouter from "./services/carts/routes"
+import paymentRouter from "./services/payments/routes"
+import { isStripeWebhook } from "./lib/stripeWebhook"
 
 
 const app = express()
 passport.use("google", googleStrategy)
 
 // ===================== MIDDLEWARES ================================
-app.use(express.json())
+// Stripe's webhook is trusted by a signature over the body's exact bytes:
+// kept for that path only (a re-serialised body wouldn't verify).
+app.use(express.json({
+    verify: (req, _res, buf) => {
+        if (isStripeWebhook(req.url)) (req as express.Request).rawBody = buf
+    },
+}))
 // Behind the host's proxy: trust its X-Forwarded-* headers (client IP, https).
 app.set('trust proxy', 1)
 app.use(cors(corsOptions))
@@ -36,6 +44,7 @@ export const mounts: [string, Router][] = [
     ["/shops", shopRouter],
     ["/shops", menuRouter],
     ["/carts", cartRouter],
+    ["/payments", paymentRouter],
 ]
 for (const [path, router] of mounts) app.use(path, router)
 

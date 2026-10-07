@@ -3,6 +3,7 @@ import request from "supertest"
 import mongoose from "mongoose"
 import "./setup"
 import app, { mounts, routeList } from "../server"
+import { STRIPE_WEBHOOK_PATH } from "../lib/stripeWebhook"
 
 describe("the route list printed at startup", () => {
     const routes = routeList()
@@ -17,8 +18,11 @@ describe("the route list printed at startup", () => {
             "POST /carts/tables/:tableId/:cartId/captureCheckout",
             "POST /carts/tables/:tableId/:cartId/createStripeCheckout",
             "POST /carts/tables/:tableId/:cartId/captureStripeCheckout",
+            "POST /payments/stripe/webhook",
         ]))
         expect(new Set(rows).size).toBe(rows.length)
+        // The path server.ts keeps the raw body for (the signature needs it).
+        expect(rows).toContain(`POST ${STRIPE_WEBHOOK_PATH}`)
     })
 
     // It reads the routers in server.ts's mounts table, and shows each route's

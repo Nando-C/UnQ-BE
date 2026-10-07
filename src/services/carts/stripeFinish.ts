@@ -1,14 +1,14 @@
 import { randomUUID } from "crypto"
 import mongoose from "mongoose"
 import CartModel from "./model"
-import StripeCheckoutModel, { FINAL_STATES, FinalState, IStripeCheckout, outcomeKey, syncCheckoutRecord } from "./stripeCheckout"
+import StripeCheckoutModel, { FINAL_STATES, FinalState, IStripeCheckout, outcomeKey, syncRecordFromCart } from "./stripeCheckout"
 import { checkoutCheck, settleCheckout, Settlement, SettleOutcome } from "./controllers"
 import { keepOrderInStep } from "../orders/sync"
 import {
     cancelIntent, captureIntent, chargeIdOf, createRefund, retrieveIntent, StripeCaptureRefused, StripeCharge, StripeIntent, StripeRefundRefused,
 } from "../../lib/stripe"
 import { money, toPence } from "../../lib/money"
-import { log, logEntry } from "./managerControllers"
+import { log, logOnce } from "./managerControllers"
 
 // Finishing a card payment: one procedure for the diner's capture call
 // (captureStripeCheckout), the sweep below and the webhook (S34). The diner's
@@ -39,11 +39,14 @@ export type Caller = { cartId: string; tableId: string; userId: string; connecte
 //   500 means "try again" to the webhook.
 // - busy: someone else holds it (the webhook answers 200; they finish it).
 // - open: not authorised yet; left for the diner, the webhook or the sweep.
+// - waiting: charged, its refund refused by Stripe and retried later by the
+//   sweep (the webhook answers 200: nothing a retry of its own would change).
 // - unknown: no record (not an intent UnQ made).
 export type Outcome =
     | { kind: "answer"; status: number; message?: string; reason?: string; expose?: boolean; cartId?: string; final?: FinalState }
     | { kind: "busy" }
     | { kind: "open" }
+    | { kind: "waiting" }
     | { kind: "unknown" }
 
 type Answer = { status: number; message: string }
@@ -127,6 +130,13 @@ const stillConfirmingFor = async (id: string) => {
     return stillConfirming(id)
 }
 
+// The cart that recorded intent `id` (open or closed), and its payment.
+export const cardPaymentOf = async (id: string) => {
+    const cart = await CartModel.findOne({ stripePaymentIntentIds: id })
+    const payment = cart?.payments.find((p) => p.provider === "stripe" && p.providerCheckoutId === id)
+    return { cart, payment }
+}
+
 // Step 2: the intent on a cart (open or closed) is recorded, and the answer is
 // that cart's payment's: completed 200, pending 202, failed 402. Its record is
 // made to say so. Null when no cart has it, or when its record says it's being
@@ -136,16 +146,14 @@ const stillConfirmingFor = async (id: string) => {
 // record that wasn't marked yet (its holder stopped after saving the cart, or
 // the save reported an error but went through) gets its order written too.
 const answerFromCart = async (id: string, caller?: Caller): Promise<Outcome | null> => {
-    const cart = await CartModel.findOne({ stripePaymentIntentIds: id })
+    const { cart, payment } = await cardPaymentOf(id)
     if (!cart) return null
-    const payment = cart.payments.find((p) => p.provider === "stripe" && p.providerCheckoutId === id)
     const status = payment?.status ?? "completed"
     // Synced first (it never touches one being refunded), then read: a refund
     // decided before the sync stands.
-    const { modifiedCount } = await syncCheckoutRecord(id, status)
+    await syncRecordFromCart(cart, id, payment)
     const record = await StripeCheckoutModel.findById(id).select("state refunding").lean()
     if (record?.state === "refunded" || record?.refunding) return null
-    if (modifiedCount > 0 && payment) await keepOrderInStep(cart, payment._id)
     await markAnswered(id, outcomeKey({ state: "recorded", paymentStatus: status }), caller, { state: "recorded", paymentStatus: status })
     if (status === "failed") return { kind: "answer", ...PAYMENT_FAILED, final: "recorded" }
     return { kind: "answer", status: status === "pending" ? 202 : 200, cartId: String(cart._id), final: "recorded" }
@@ -183,11 +191,21 @@ const chargeOf = (intent: StripeIntent) =>
 
 // Finishes intent `id`: for the diner's capture call (`caller`), or for the
 // sweep or the webhook (none). `expire`: the sweep's cancel of an intent still
-// unauthorised an hour after it was created. Errors other than those handled
-// below leave the record claimed until its lease runs out: the webhook's retry
-// or the sweep finishes it.
-export const finishStripeIntent = async (id: string, { caller, expire = false }: { caller?: Caller; expire?: boolean } = {}): Promise<Outcome> => {
+// unauthorised an hour after it was created. `sweep`: the sweep is finishing
+// it (its diner left: it only finishes records ten minutes old, or whose
+// holder stopped). `wait`: the webhook waits for another finisher as the
+// route does (for an event that must act on what that finisher records).
+// `leaveOpen`: nothing done to a record nobody holds (a sheet the diner may
+// still be using). An error other than those handled
+// below gives the claim up (or leaves it until its lease runs out, if that
+// write fails too): the webhook's retry or the sweep finishes it.
+export const finishStripeIntent = async (
+    id: string,
+    { caller, expire = false, sweep = false, wait = false, leaveOpen = false }:
+        { caller?: Caller; expire?: boolean; sweep?: boolean; wait?: boolean; leaveOpen?: boolean } = {}
+): Promise<Outcome> => {
     const record = await StripeCheckoutModel.findById(id).lean()
+    if (leaveOpen && record?.state === "open") return { kind: "open" }
     // Step 1: the route only acts on an intent made for its cart, table and diner.
     if (caller && (!record || String(record.cartId) !== caller.cartId || record.tableId !== caller.tableId || String(record.userId) !== caller.userId)) {
         return NOT_THIS_CHECKOUT
@@ -197,33 +215,36 @@ export const finishStripeIntent = async (id: string, { caller, expire = false }:
     const onCart = await answerFromCart(id, caller)
     if (onCart) return onCart
 
-    // The route waits a little for another finisher; the others don't.
-    const deadline = Date.now() + (caller ? stripeTiming.waitMs : 0)
+    // The route waits a little for another finisher; the others don't, unless told to.
+    const deadline = Date.now() + (caller || wait ? stripeTiming.waitMs : 0)
     for (;;) {
         const token = randomUUID()
         const held = await claim(id, token)
         if (held) {
             try {
-                return await new Holder(held, token, caller, expire).run()
+                return await new Holder(held, token, caller, { expire, sweep }).run()
             } catch (error) {
                 if (!(error instanceof LostClaim)) {
                     // A failure after the cart saved (marking the record, say)
                     // must not tell the diner it failed: the cart is the truth.
                     const onCart = await answerFromCart(id, caller).catch(() => null)
                     if (onCart) return onCart
+                    // This holder has stopped: its lease given up, so the
+                    // next finisher (the webhook's retry, the sweep) takes
+                    // over at once. Best effort: the lease runs out anyway.
+                    await StripeCheckoutModel.updateOne({ _id: id, token }, { $set: { leaseUntil: new Date() } }).catch(() => {})
                     throw error
                 }
             }
         }
         const latest = await StripeCheckoutModel.findById(id).lean()
         if (latest && FINAL_STATES.includes(latest.state)) return finalAnswer(latest, caller)
-        if (Date.now() >= deadline) {
-            if (!caller) return { kind: "busy" }
-            // Charged, and waiting on a refund Stripe refused (retried later):
-            // the same answer the diner had, not "still confirming". (A
-            // refund still in flight is: it may go through in a moment.)
-            return latest?.refundRetryAt && latest.refundRetryAt > new Date() ? notRefunded(id) : stillConfirmingFor(id)
-        }
+        // Charged, and waiting on a refund Stripe refused (retried later by
+        // the sweep): nothing changes before then, so no waiting. The diner
+        // gets the same answer they had, not "still confirming". (A refund
+        // still in flight is: it may go through in a moment.)
+        if (latest?.refundRetryAt && latest.refundRetryAt > new Date()) return caller ? notRefunded(id) : { kind: "waiting" }
+        if (Date.now() >= deadline) return caller ? stillConfirmingFor(id) : { kind: "busy" }
         await sleep(stripeTiming.pollMs)
     }
 }
@@ -237,7 +258,7 @@ class Holder {
         private readonly record: IStripeCheckout,
         private readonly token: string,
         private readonly caller: Caller | undefined,
-        private readonly expire: boolean
+        private readonly by: { expire: boolean; sweep: boolean }
     ) {
         this.id = record._id
     }
@@ -302,12 +323,12 @@ class Holder {
                 return this.answer(this.stored() ?? NOT_COMPLETED, "released")
             case "requires_action":
                 // The bank check is still open: an approval can still come.
-                if (!this.expire) return this.reopen()
+                if (!this.by.expire) return this.reopen()
                 return this.release(intent, NOT_COMPLETED)
             default:
                 // Declined, the bank check failed, or never confirmed. The
                 // diner's sheet has given up on it by the time the route asks.
-                if (this.caller || this.expire) return this.release(intent, NOT_COMPLETED)
+                if (this.caller || this.by.expire) return this.release(intent, NOT_COMPLETED)
                 return this.reopen()
         }
     }
@@ -440,9 +461,11 @@ class Holder {
                         throw error
                     }
                 },
-                // Finished for a diner who had left: the manager sees who did it.
-                change: this.caller ? undefined : (cart) => log(cart, undefined, "stripeFinished",
-                    `${money(settlement.amount, "GBP")} card payment finished by the server after the diner left (payment ${this.id})`),
+                // Finished by the sweep for a diner who had left: the manager
+                // sees who did it. (Not the webhook's: Stripe's notice often
+                // comes while the diner's own capture call is on its way.)
+                change: this.by.sweep ? (cart) => log(cart, undefined, "stripeFinished",
+                    `${money(settlement.amount, "GBP")} card payment finished by the server after the diner left (payment ${this.id})`) : undefined,
             })
         } catch (error) {
             // Most likely brief (a database failover): the claim is given up
@@ -492,9 +515,14 @@ class Holder {
         // with this answer.
         // Only on a record not yet final: one the cart check marked recorded
         // meanwhile is recorded (this holder backs off, and answers from it).
-        await this.write({ refunding: true, status: answer.status, message: answer.message, leaseUntil: leaseEnd() }, { refundRetryAt: 1 }, { notFinal: true })
+        await this.write(
+            { refunding: true, status: answer.status, message: answer.message, leaseUntil: leaseEnd() },
+            { refundRetryAt: 1, refundId: 1 },
+            { notFinal: true }
+        )
+        let made: { id: string } | null = null
         try {
-            await createRefund(
+            made = await createRefund(
                 { payment_intent: this.id, metadata: { intentId: this.id, cartId: String(this.record.cartId), late: "true" } },
                 `late-refund:${this.id}:${this.token}`
             )
@@ -510,17 +538,55 @@ class Holder {
                 return notRefunded(this.id)
             }
         }
-        await this.finish("refunded", answer)
+        // The refund that did it, if this holder made it (a failure Stripe
+        // reports later reopens the record: reopenFailedRefund). One reopened
+        // that way keeps its first finishedAt: the same outcome, so the same
+        // notice (one the diner dismissed stays dismissed).
+        await this.finish("refunded", answer, {
+            ...(made ? { refundId: made.id } : {}),
+            ...(this.record.finishedAt ? { finishedAt: this.record.finishedAt } : {}),
+        })
         // Accepted residual risk: a holder that stalled past its lease between
-        // renewing and saving the cart. Seen, so the manager knows.
-        const cart = await CartModel.findOne({ stripePaymentIntentIds: this.id }).select("_id")
-        if (cart) {
-            const details = `recorded, but refunded by Stripe after a lost race: the diner wasn't charged (payment ${this.id})`
-            console.error(`A card payment was ${details}`, { cartId: String(cart._id) })
-            await CartModel.updateOne({ _id: cart._id }, { $push: { managerLog: logEntry(undefined, "stripeRefundedRecorded", details) } })
+        // renewing and saving the cart. Seen, so the manager knows. Best
+        // effort: the refund is done whatever happens here.
+        try {
+            const cart = await CartModel.findOne({ stripePaymentIntentIds: this.id }).select("_id")
+            if (cart) {
+                const details = `recorded, but refunded by Stripe after a lost race: the diner wasn't charged (payment ${this.id})`
+                console.error(`A card payment was ${details}`, { cartId: String(cart._id) })
+                // Once, however often it's refunded again (reopenFailedRefund).
+                await logOnce(cart._id, "stripeRefundedRecorded", details)
+            }
+        } catch (error) {
+            console.error("A refunded card payment's cart couldn't be checked or logged", { paymentIntentId: this.id, error })
         }
         return this.answer(answer, "refunded")
     }
+}
+
+// A late refund (refund() above) that Stripe accepted, then couldn't make (the
+// webhook's refund.failed, S34): the money is still taken, so the record goes
+// back to being refunded. `finishing` with `refunding`, its lease ending when
+// one Stripe refused would be retried, so the sweep refunds it again then (no
+// cap, as there). Only for the refund that finished it, or for any when it
+// isn't known (its holder stopped before finishing, and the next found the
+// charge already refunded): a repeated event, or an older refund's, changes
+// nothing (at worst, the sweep's refund is refused as already done). The diner
+// was told it was refunded; that stands.
+// "inFlight": a holder is still making its refund (refund() unsets the retry
+// time; one waiting to retry, or reopened, has one), so the record may say
+// refunded in a moment: the webhook has Stripe retry. Looked at first: a
+// record can only go from in flight to refunded, which the update then finds.
+export const reopenFailedRefund = async (id: string, refundId: string): Promise<"reopened" | "inFlight" | "none"> => {
+    if (await StripeCheckoutModel.exists({ _id: id, refunding: true, state: { $nin: FINAL_STATES }, refundRetryAt: { $exists: false } })) {
+        return "inFlight"
+    }
+    const until = new Date(Date.now() + REFUND_RETRY_MS)
+    const { modifiedCount } = await StripeCheckoutModel.updateOne(
+        { _id: id, state: "refunded", $or: [{ refundId }, { refundId: { $exists: false } }] },
+        { $set: { state: "finishing", refunding: true, leaseUntil: until, refundRetryAt: until }, $unset: { token: 1, refundId: 1 } }
+    )
+    return modifiedCount > 0 ? "reopened" : "none"
 }
 
 // --------------------------------------------------------------------------
@@ -554,7 +620,7 @@ const sweep = async (): Promise<Counts> => {
     const now = Date.now()
     const finish = async (id: string, expire = false) => {
         try {
-            tally(counts, await finishStripeIntent(id, { expire }))
+            tally(counts, await finishStripeIntent(id, { expire, sweep: true }))
         } catch (error) {
             counts.failed++
             console.error("The sweep couldn't finish a card payment", { paymentIntentId: id, error })

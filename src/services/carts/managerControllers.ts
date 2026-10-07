@@ -1,7 +1,8 @@
+import mongoose from "mongoose"
 import { TController } from "src/typings/controllers"
 import { ICartDocument, IPayment, PaymentStatus, RefundReason } from "src/typings/cart"
 import CartModel, { AWAITING_PROVIDER, RECENTLY_CLOSED_MS, refId, tookPart } from "./model"
-import { syncCheckoutRecord } from "./stripeCheckout"
+import { syncRecordFromCart } from "./stripeCheckout"
 import ShopModel, { ofTable } from "../shops/model"
 import { keepOrderInStep } from "../orders/sync"
 import createError from "http-errors"
@@ -212,6 +213,12 @@ export const logEntry = (actor: unknown, action: string, details: string) =>
     ({ at: new Date(), ...(actor ? { byUserId: actor as never } : {}), action, details })
 export const log = (cart: ICartDocument, actor: unknown, action: string, details: string) =>
     cart.managerLog.push(logEntry(actor, action, details))
+// A line by the server on cart `cartId`, once however often it's asked for
+// (Stripe repeats events; a refund may be retried). A push moves the cart's
+// version (Mongoose), so a save from an older copy retries rather than
+// dropping it.
+export const logOnce = (cartId: string | mongoose.Types.ObjectId, action: string, details: string) =>
+    CartModel.updateOne({ _id: cartId, "managerLog.details": { $ne: details } }, { $push: { managerLog: logEntry(undefined, action, details) } })
 
 // The manager making the request.
 const managerOf = (req: Parameters<TController>[0]) => (req.user as IUserDocument)._id
@@ -689,18 +696,28 @@ const unsettle = (cart: ICartDocument, payment: IPayment) => {
 
 // A card payment's record follows its status (stripeCheckout.ts), from the
 // cart as it is: run on every check, before anything refuses, so a record left
-// behind by a crash between the cart's save and its own is repaired.
-const syncPaymentRecord = async (payment: IPayment) => {
-    if (payment.provider === "stripe") await syncCheckoutRecord(payment.providerCheckoutId, payment.status ?? "completed")
+// behind by a crash between the cart's save and its own is repaired (its
+// order too). Whether it worked: a failure is logged, and the check goes on
+// without it.
+const syncPaymentRecord = async (cart: ICartDocument, payment: IPayment) => {
+    if (payment.provider !== "stripe") return true
+    try {
+        await syncRecordFromCart(cart, payment.providerCheckoutId, payment)
+        return true
+    } catch (error) {
+        console.error("Card payment record not updated", { cartId: String(cart._id), paymentId: String(payment._id), error })
+        return false
+    }
 }
 
 // A pending payment of cart `cartId` settled as `status` (the provider's
 // answer), by `actor` (none: the server): the cart's save, its order, and the
-// payer told. The saved cart, or null if it never saved (other writes kept
-// landing). `providerPaymentId`: the provider's id for the money, when the
-// payment was recorded before it had one (a card payment still processing:
-// refunds go against it). Shared with the Stripe webhook (S34).
-export const settlePendingPayment = async (
+// payer told (a card payment's by its record: checkPendingPayment syncs it).
+// The saved cart, or null if it never saved (other writes kept landing).
+// `providerPaymentId`: the provider's id for the money, when the payment was
+// recorded before it had one (a card payment still processing: refunds go
+// against it).
+const settlePendingPayment = async (
     cartId: unknown, paymentId: string, status: Exclude<PaymentStatus, "pending">, actor: unknown, providerPaymentId?: string
 ) => {
     const saved = await withFreshCart(cartId, (c) => {
@@ -728,10 +745,42 @@ export const settlePendingPayment = async (
     })
     if (!saved) return null
     await keepOrderInStep(saved, paymentId)
-    // Saved: a failure here is only logged (the next check repairs the record).
-    await syncPaymentRecord(findById(saved.payments, paymentId)!)
-        .catch((error) => console.error("Card payment record not updated", { cartId: String(cartId), paymentId, error }))
     return saved
+}
+
+// A payment's check with its provider, shared by the manager's check below and
+// the Stripe webhook (S34): its card payment record synced first, always,
+// then a pending payment settled as the provider says, by `actor` (none: the
+// server), and its record synced from the payment as saved (another check may
+// have settled it first). `synced`: whether the record ended in step (the
+// last sync worked: after a settle, the one from the saved payment). The
+// manager's check goes on without (the next check repairs it); the webhook
+// has Stripe retry, since no check may come once the payment is settled.
+type Check =
+    | { kind: "notPending" }
+    | { kind: "unreachable"; error: Error }
+    | { kind: "stillPending" }
+    | { kind: "lost" }
+    | { kind: "settled"; saved: ICartDocument }
+export type PaymentCheck = Check & { synced: boolean }
+export const checkPendingPayment = async (cart: ICartDocument, payment: IPayment, actor: unknown): Promise<PaymentCheck> => {
+    const synced = await syncPaymentRecord(cart, payment)
+    if (payment.status !== "pending") return { kind: "notPending", synced }
+
+    let status: PaymentStatus
+    let providerPaymentId: string | undefined
+    try {
+        ({ status, providerPaymentId } = await checkProviderPayment(payment))
+    } catch (error) {
+        return { kind: "unreachable", error: error instanceof Error ? error : new Error(String(error)), synced }
+    }
+    if (status === "pending") return { kind: "stillPending", synced }
+
+    const saved = await settlePendingPayment(cart._id, String(payment._id), status, actor, providerPaymentId)
+    if (!saved) return { kind: "lost", synced }
+    // The last sync is the one that counts: it brings the record to the end.
+    const settled = findById(saved.payments, String(payment._id))
+    return { kind: "settled", saved, synced: settled ? await syncPaymentRecord(saved, settled) : false }
 }
 
 export const checkPayment: TController = async ( req, res, next ) => {
@@ -741,28 +790,21 @@ export const checkPayment: TController = async ( req, res, next ) => {
         if (!cart) return next(createError(404, "Cart Not Found!"))
         const payment = findById(cart.payments, paymentId)
         if (!payment) return next(createError(404, "Payment Not Found!"))
-        // Best effort: the check itself doesn't need the record.
-        await syncPaymentRecord(payment)
-            .catch((error) => console.error("Card payment record not updated", { cartId, paymentId, error }))
-        if (payment.status !== "pending") return next(createError(409, "This payment isn't awaiting confirmation any more"))
 
-        let status: PaymentStatus
-        let providerPaymentId: string | undefined
-        try {
-            ({ status, providerPaymentId } = await checkProviderPayment(payment))
-        } catch (error) {
-            return next(createError(502,
-                `Couldn't check with ${providerName(payment)} (${(error as Error).message}). Try again shortly.`,
-                { expose: true }))
+        const check = await checkPendingPayment(cart, payment, managerOf(req))
+        switch (check.kind) {
+            case "notPending":
+                return next(createError(409, "This payment isn't awaiting confirmation any more"))
+            case "unreachable":
+                return next(createError(502,
+                    `Couldn't check with ${providerName(payment)} (${check.error.message}). Try again shortly.`,
+                    { expose: true }))
+            case "stillPending":
+                return next(createError(409, `${providerName(payment)} is still processing this payment. Check again later`))
+            case "lost":
+                return next(createError(409, CART_CHANGED))
         }
-        if (status === "pending") {
-            return next(createError(409, `${providerName(payment)} is still processing this payment. Check again later`))
-        }
-
-        const saved = await settlePendingPayment(cartId, paymentId, status, managerOf(req), providerPaymentId)
-        if (!saved) return next(createError(409, CART_CHANGED))
-
-        res.send({ payment: findById(saved.payments, paymentId), cart: await managerView(saved) })
+        res.send({ payment: findById(check.saved.payments, paymentId), cart: await managerView(check.saved) })
     } catch (error) {
         next(createError(500, error as Error))
     }

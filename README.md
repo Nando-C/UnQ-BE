@@ -194,6 +194,12 @@ src/
    npm install
    ```
 
+3. To receive Stripe's webhook events locally, forward them to the dev server with the [Stripe CLI](https://docs.stripe.com/stripe-cli) (its signing secret, from `stripe listen --print-secret`, is `STRIPE_WEBHOOK_SECRET`; it stays the same for this machine and account):
+   ```bash
+   stripe listen --forward-to localhost:3001/payments/stripe/webhook
+   ```
+   Deployed, the endpoint is added in Stripe's dashboard (Developers → Webhooks) with the events `payment_intent.amount_capturable_updated`, `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.canceled` and `refund.failed`, and its signing secret set on the host before the API deploys (the API won't start without it).
+
 Configuration is centralised in `src/settings/env.ts` — a single zod schema parsed once at import time, exported as a typed frozen object. No other file reads `process.env`.
 
 ### Environment Variables
@@ -430,6 +436,8 @@ StripeCheckout Model:
         answered?: string,        // the outcome the diner's own request gave them ("recorded:completed", "released", …);
         answeredBy?: string[],    // the ids of the requests that gave it; a notice is shown while the outcome differs from `answered`
         status?: number, message?: string, // the answer given for a released or refunded one
+        refunding?: boolean,      // a finisher decided to refund it (a race lost after the capture): later ones only complete the refund
+        refundId?: string,        // the refund a refunded one ended with; if Stripe reports it failed, the record reopens and it's refunded again
     }
 ```
 
@@ -679,6 +687,23 @@ These are the available endpoints created for this application. Every mutating r
 - [ 'GET' ]
 
   baseURL-api/carts/:cartId
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+### Payments
+
+- [ 'POST' ]
+
+  baseURL-api/payments/stripe/webhook
+
+  Stripe's events, for Stripe only: no sign-in, trusted only by the `Stripe-Signature` header over the body's exact bytes (`400 "Invalid Stripe signature"` otherwise, nothing done). `200 { received: true }` once handled, or for an event it doesn't act on (another type, or a payment or refund the API didn't make). Stripe retries anything else, for up to 3 days, and may repeat or reorder events: each is acted on as Stripe has the payment now, and a repeat changes nothing.
+
+  - `payment_intent.amount_capturable_updated` (a card authorised): finished as the diner's capture call would finish it (checked, then captured, or cancelled so nothing is charged), for a diner who never came back for it; they're told the outcome on their next visit to the table. Another finisher already on it (the diner's own request): `200`, it finishes it.
+  - `payment_intent.succeeded`: one captured but not on a cart (a crash after the capture) is finished the same way.
+  - `payment_intent.succeeded`, `payment_failed`, `canceled`, for a payment on a cart: a `pending` one is settled as the manager's payment check settles it (completed, or failed with its items unpaid again), its log line with no manager; the diner gets one notice.
+  - `refund.failed` (a refund Stripe accepted, then couldn't make): a manager's refund is logged on its cart (`stripeRefundFailed`, once) and as a server error, not reversed: the manager pays the diner back another way. The API's own full refund of a payment it couldn't record is made again (in 30 minutes, by the sweep). One made in Stripe's dashboard: a server error only.
+
+  `500` (Stripe retries) when the outcome isn't settled yet: Stripe or the database erred, the capture's outcome is unclear, or a refund failed. The sweep (every 2 minutes) finishes what the webhook doesn't.
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 

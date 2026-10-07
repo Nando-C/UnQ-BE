@@ -1,7 +1,8 @@
 import mongoose from "mongoose"
-import { INotice } from "src/typings/cart"
+import { ICartDocument, INotice, IPayment } from "src/typings/cart"
 import { NOTICE_MAX_AGE_MS } from "./model"
 import { money } from "../../lib/money"
+import { keepOrderInStep } from "../orders/sync"
 
 const { Schema, model } = mongoose
 
@@ -34,7 +35,9 @@ const { Schema, model } = mongoose
 // - status, message: the answer given for a `released` or `refunded` intent,
 //   the same to every caller (and for one being refunded, `refunding`: a
 //   holder decided to refund it, so later ones only complete the refund;
-//   refundRetryAt: when one Stripe refused is tried again).
+//   refundRetryAt: when one Stripe refused is tried again; refundId: the
+//   refund a `refunded` one ended with, when its holder made it, so a failure
+//   Stripe reports later reopens it, see reopenFailedRefund).
 // - settleFailingSince: when saving its captured payment first failed (an
 //   error, not a lost race): retried for an hour from then, then refunded.
 export const CHECKOUT_STATES = ["open", "finishing", "releasing", "recorded", "released", "refunded"] as const
@@ -61,6 +64,7 @@ export interface IStripeCheckout {
     status?: number
     message?: string
     refunding?: boolean
+    refundId?: string
     settleFailingSince?: Date
     refundRetryAt?: Date
     createdAt: Date
@@ -87,6 +91,7 @@ const StripeCheckoutSchema = new Schema<IStripeCheckout>(
         status: Number,
         message: String,
         refunding: Boolean,
+        refundId: String,
         settleFailingSince: Date,
         refundRetryAt: Date,
     },
@@ -159,14 +164,25 @@ export const paymentNotices = async (viewerId: unknown, tableId: string): Promis
 // seen. (The cart is the truth: a payment on a cart is recorded, whatever the
 // record said; except one being or already refunded, saved by a holder that
 // stalled past its lease after the refund was decided: the refund stands, and
-// the manager is told.)
-export const syncCheckoutRecord = (intentId: string, paymentStatus: "completed" | "pending" | "failed") =>
+// the manager is told.) A payment only moves on from pending, so never back
+// to it: a sync from a copy of the cart read before a settle can't undo it.
+const syncCheckoutRecord = (intentId: string, paymentStatus: "completed" | "pending" | "failed") =>
     StripeCheckoutModel.updateOne(
         {
             _id: intentId,
             state: { $ne: "refunded" },
             refunding: { $ne: true },
             $or: [{ state: { $ne: "recorded" } }, { paymentStatus: { $ne: paymentStatus } }],
+            ...(paymentStatus === "pending" ? { $nor: [{ state: "recorded", paymentStatus: { $in: ["completed", "failed"] } }] } : {}),
         },
         { $set: { state: "recorded", paymentStatus, finishedAt: new Date() } }
     )
+
+// The record of intent `intentId` synced from its payment on `cart` (as
+// above). One this marks recorded may be a finisher's that stopped after
+// saving the cart, before writing its order: written now (idempotent, so one
+// just written is only checked again).
+export const syncRecordFromCart = async (cart: ICartDocument, intentId: string, payment?: IPayment) => {
+    const { modifiedCount } = await syncCheckoutRecord(intentId, payment?.status ?? "completed")
+    if (modifiedCount > 0 && payment) await keepOrderInStep(cart, payment._id)
+}
