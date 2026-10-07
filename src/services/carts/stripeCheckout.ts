@@ -15,7 +15,10 @@ const { Schema, model } = mongoose
 // - state: `open` (nobody is finishing it) → `finishing` (claimed), or
 //   `releasing` (a holder decided to cancel it; whoever finishes it later only
 //   completes the cancel) → `recorded` (on a cart), `released` (cancelled,
-//   nothing taken) or `refunded` (captured, then refunded in full).
+//   nothing taken) or `refunded` (captured, then refunded in full); one
+//   whose refund Stripe won't make (a closed card), or kept failing or
+//   refusing, is `refundFailed`: handed to staff, who pay the
+//   diner back another way (see reopenFailedRefund).
 // - token, leaseUntil: the current holder's claim. Every write a holder makes
 //   matches its token; a lease that ran out can be taken over.
 // - amount: in pence, as created (the notices' £X, since the cart may be gone).
@@ -37,13 +40,20 @@ const { Schema, model } = mongoose
 //   holder decided to refund it, so later ones only complete the refund;
 //   refundRetryAt: when one Stripe refused is tried again; refundId: the
 //   refund a `refunded` one ended with, when its holder made it, so a failure
-//   Stripe reports later reopens it, see reopenFailedRefund).
+//   Stripe reports later reopens it, see reopenFailedRefund;
+//   refundFailures: how many of its refunds Stripe reported failed;
+//   refundRefusedSince: when Stripe first refused its refund, since the last
+//   one it made: handed to staff a day later; staffToldAt: when staff were
+//   told of a `refundFailed` one, on its cart: the sweep tells them until then;
+//   refundOwed: in pence, what was still taken when it was handed over, when
+//   Stripe could be asked; disputed: the diner disputed the charge with their
+//   bank, so the dispute pays them back, not staff).
 // - settleFailingSince: when saving its captured payment first failed (an
 //   error, not a lost race): retried for an hour from then, then refunded.
-export const CHECKOUT_STATES = ["open", "finishing", "releasing", "recorded", "released", "refunded"] as const
+export const CHECKOUT_STATES = ["open", "finishing", "releasing", "recorded", "released", "refunded", "refundFailed"] as const
 export type CheckoutState = (typeof CHECKOUT_STATES)[number]
-export type FinalState = "recorded" | "released" | "refunded"
-export const FINAL_STATES: CheckoutState[] = ["recorded", "released", "refunded"]
+export type FinalState = "recorded" | "released" | "refunded" | "refundFailed"
+export const FINAL_STATES: CheckoutState[] = ["recorded", "released", "refunded", "refundFailed"]
 
 export interface IStripeCheckout {
     _id: string
@@ -65,6 +75,11 @@ export interface IStripeCheckout {
     message?: string
     refunding?: boolean
     refundId?: string
+    refundFailures?: number
+    refundRefusedSince?: Date
+    staffToldAt?: Date
+    refundOwed?: number
+    disputed?: boolean
     settleFailingSince?: Date
     refundRetryAt?: Date
     createdAt: Date
@@ -92,6 +107,11 @@ const StripeCheckoutSchema = new Schema<IStripeCheckout>(
         message: String,
         refunding: Boolean,
         refundId: String,
+        refundFailures: Number,
+        refundRefusedSince: Date,
+        staffToldAt: Date,
+        refundOwed: Number,
+        disputed: Boolean,
         settleFailingSince: Date,
         refundRetryAt: Date,
     },
@@ -121,6 +141,12 @@ const noticeText = (record: IStripeCheckout) => {
             return `Your card payment of ${amount} went through`
         case "released":
             return `Your card payment of ${amount} didn't go through: nothing was charged`
+        case "refundFailed": {
+            // What's still taken (staff may have refunded part by hand).
+            const owed = money((record.refundOwed ?? record.amount) / 100, "GBP")
+            if (record.disputed) return `Your card payment of ${owed} couldn't be refunded to your card while you dispute it: your bank returns it (payment ${record._id})`
+            return `Your card payment of ${owed} couldn't be refunded to your card: please contact staff about it (payment ${record._id})`
+        }
         default: {
             // Why, from the stored answer ("The table's cart changed while you
             // were paying — your payment was refunded").
@@ -162,7 +188,8 @@ export const paymentNotices = async (viewerId: unknown, tableId: string): Promis
 // it unless their request answers it). Matches
 // only a real change, so a repeated check doesn't bring back a notice already
 // seen. (The cart is the truth: a payment on a cart is recorded, whatever the
-// record said; except one being or already refunded, saved by a holder that
+// record said; except one being or already refunded (or whose refund
+// failed), saved by a holder that
 // stalled past its lease after the refund was decided: the refund stands, and
 // the manager is told.) A payment only moves on from pending, so never back
 // to it: a sync from a copy of the cart read before a settle can't undo it.
@@ -170,7 +197,7 @@ const syncCheckoutRecord = (intentId: string, paymentStatus: "completed" | "pend
     StripeCheckoutModel.updateOne(
         {
             _id: intentId,
-            state: { $ne: "refunded" },
+            state: { $nin: ["refunded", "refundFailed"] },
             refunding: { $ne: true },
             $or: [{ state: { $ne: "recorded" } }, { paymentStatus: { $ne: paymentStatus } }],
             ...(paymentStatus === "pending" ? { $nor: [{ state: "recorded", paymentStatus: { $in: ["completed", "failed"] } }] } : {}),

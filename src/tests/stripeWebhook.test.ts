@@ -15,7 +15,7 @@ import { stripeTable, minutesAgo, setRecord, heldElsewhere } from "./stripeHelpe
 import CartModel from "../services/carts/model"
 import StripeCheckoutModel, { syncRecordFromCart } from "../services/carts/stripeCheckout"
 import OrderModel from "../services/orders/model"
-import { stripeTiming, sweepStripeCheckouts } from "../services/carts/stripeFinish"
+import { REFUND_REOPENS, stripeTiming, sweepStripeCheckouts } from "../services/carts/stripeFinish"
 
 const m = jest.mocked(stripe)
 
@@ -484,8 +484,10 @@ describe("a pending card payment", () => {
 // --------------------------------------------------------------------------
 
 describe("a refund Stripe accepted, then couldn't make (refund.failed)", () => {
-    const failed = (refund: { id: string; metadata: Record<string, string>; payment_intent: string; amount: number }) =>
-        ({ ...refund, object: "refund", status: "failed", currency: "gbp", failure_reason: "expired_or_canceled_card" })
+    const failed = (
+        refund: { id: string; metadata: Record<string, string>; payment_intent: string; amount: number },
+        reason: string | null = "expired_or_canceled_card"
+    ) => ({ ...refund, object: "refund", status: "failed", currency: "gbp", failure_reason: reason })
 
     it("a manager's: logged on its cart (once) and as a server error, not reversed", async () => {
         const t = await stripeTable()
@@ -536,6 +538,21 @@ describe("a refund Stripe accepted, then couldn't make (refund.failed)", () => {
             expect(await t.record(pi)).toMatchObject({ state: "refunded" })
             return { t, pi, refund: fakeStripe.refunds[0] }
         }
+        // Failed for a reason a new refund may not hit (the balance was short).
+        const mayClear = (refund: Parameters<typeof failed>[0]) => failed(refund, "insufficient_funds")
+        // Stripe marks the refund failed, and gives the money back to the charge.
+        const failsAtStripe = (pi: string, refund: Parameters<typeof failed>[0], reason: string | null) => {
+            Object.assign(fakeStripe.refunds.find((r) => r.id === refund.id)!, { status: "failed" })
+            fakeStripe.get(pi).latest_charge!.amount_refunded = 0
+            return deliver("refund.failed", failed(refund, reason))
+        }
+        // The sweep's refund of one reopened, once its retry time comes.
+        const refundedAgain = async (pi: string) => {
+            await setRecord(pi, { leaseUntil: minutesAgo(1) })
+            await sweepStripeCheckouts()
+            return fakeStripe.refunds.at(-1)!
+        }
+        const HANDED_OVER = "Your card payment of £6.00 couldn't be refunded to your card: please contact staff about it"
 
         it("reopens the record for another refund, retried by the sweep once the retry time comes", async () => {
             const { t, pi, refund } = await refundedLate()
@@ -547,7 +564,7 @@ describe("a refund Stripe accepted, then couldn't make (refund.failed)", () => {
             // Stripe gives the money back to the charge when the refund fails.
             fakeStripe.get(pi).latest_charge!.amount_refunded = 0
 
-            expect((await deliver("refund.failed", failed(refund))).status).toBe(200)
+            expect((await deliver("refund.failed", mayClear(refund))).status).toBe(200)
 
             expect(error).toHaveBeenCalledWith(expect.stringContaining("failed at Stripe"), expect.objectContaining({ paymentIntentId: pi, reopened: "reopened" }))
             const reopened = await t.record(pi)
@@ -580,7 +597,7 @@ describe("a refund Stripe accepted, then couldn't make (refund.failed)", () => {
                 $push: { stripePaymentIntentIds: pi, managerLog: { at: new Date(), action: "stripeRefundedRecorded", details } },
             })
             fakeStripe.get(pi).latest_charge!.amount_refunded = 0
-            await deliver("refund.failed", failed(refund))
+            await deliver("refund.failed", mayClear(refund))
             await setRecord(pi, { leaseUntil: minutesAgo(1) })
 
             await sweepStripeCheckouts()
@@ -593,10 +610,33 @@ describe("a refund Stripe accepted, then couldn't make (refund.failed)", () => {
             const { t, pi, refund } = await refundedLate()
             jest.spyOn(console, "error").mockImplementation(() => {})
             await StripeCheckoutModel.collection.updateOne({ _id: pi as never }, { $unset: { refundId: 1 } })
+            fakeStripe.get(pi).latest_charge!.amount_refunded = 0
 
-            expect((await deliver("refund.failed", failed(refund))).status).toBe(200)
+            expect((await deliver("refund.failed", mayClear(refund))).status).toBe(200)
 
             expect(await t.record(pi)).toMatchObject({ state: "finishing", refunding: true })
+        })
+
+        it("does nothing for a stale one once the charge is refunded in full (staff refunded it by hand since)", async () => {
+            const { t, pi, refund } = await refundedLate()
+            jest.spyOn(console, "error").mockImplementation(() => {})
+            // Finished by a holder that found it already refunded: no refundId.
+            await StripeCheckoutModel.collection.updateOne({ _id: pi as never }, { $unset: { refundId: 1 } })
+            // The late refund failed; staff then refunded it all by hand.
+            fakeStripe.get(pi).latest_charge!.amount_refunded = 0
+            await stripe.createRefund({ payment_intent: pi, metadata: {} }, "by-hand")
+
+            const error = jest.spyOn(console, "error").mockImplementation(() => {})
+
+            for (const reason of ["expired_or_canceled_card", "insufficient_funds"]) {
+                expect((await deliver("refund.failed", failed(refund, reason))).status).toBe(200)
+            }
+            expect(error).toHaveBeenCalledWith(expect.stringContaining("it changes nothing now"), expect.objectContaining({ reopened: "none" }))
+            expect(error).not.toHaveBeenCalledWith(expect.stringContaining("the money is still taken"), expect.anything())
+
+            expect(await t.record(pi)).toMatchObject({ state: "refunded" })
+            expect((await t.record(pi))!.refundFailures).toBeUndefined()
+            expect((await t.cart())!.managerLog.filter((l) => l.action === "stripeRefundFailed")).toEqual([])
         })
 
         it("is retried while its finisher is still finishing the refund, then reopens it", async () => {
@@ -606,24 +646,159 @@ describe("a refund Stripe accepted, then couldn't make (refund.failed)", () => {
             await StripeCheckoutModel.collection.updateOne({ _id: pi as never }, {
                 $set: { state: "finishing", refunding: true }, $unset: { refundId: 1, refundRetryAt: 1 },
             })
+            fakeStripe.get(pi).latest_charge!.amount_refunded = 0
 
-            expect((await deliver("refund.failed", failed(refund))).status).toBe(500)
+            expect((await deliver("refund.failed", mayClear(refund))).status).toBe(500)
 
             await setRecord(pi, { state: "refunded", refundId: refund.id })
-            expect((await deliver("refund.failed", failed(refund))).status).toBe(200)
+            expect((await deliver("refund.failed", mayClear(refund))).status).toBe(200)
             expect(await t.record(pi)).toMatchObject({ state: "finishing", refunding: true })
             // A repeat once reopened isn't retried.
-            expect((await deliver("refund.failed", failed(refund))).status).toBe(200)
+            expect((await deliver("refund.failed", mayClear(refund))).status).toBe(200)
         })
 
         it("doesn't reopen it for a repeated event or an older refund's", async () => {
             const { t, pi, refund } = await refundedLate()
             jest.spyOn(console, "error").mockImplementation(() => {})
             await setRecord(pi, { refundId: "re_newer" })
+            m.retrieveIntent.mockClear()
 
-            expect((await deliver("refund.failed", failed(refund))).status).toBe(200)
+            expect((await deliver("refund.failed", mayClear(refund))).status).toBe(200)
 
             expect(await t.record(pi)).toMatchObject({ state: "refunded", refundId: "re_newer" })
+            // Not even Stripe asked (an outage can't make it retried).
+            expect(m.retrieveIntent).not.toHaveBeenCalled()
+        })
+
+        it("is handed to staff at once when a new refund would fail too (a closed card): logged once, the diner told", async () => {
+            const { t, pi, refund } = await refundedLate()
+            const error = jest.spyOn(console, "error").mockImplementation(() => {})
+            const before = (await t.record(pi))!.finishedAt!
+
+            expect((await failsAtStripe(pi, refund, "expired_or_canceled_card")).status).toBe(200)
+            // Staff already told: a repeat doesn't go near the cart, or Stripe.
+            const cartWrites = jest.spyOn(CartModel, "updateOne")
+            m.retrieveIntent.mockClear()
+            expect((await deliver("refund.failed", failed(refund))).status).toBe(200)
+            expect(cartWrites).not.toHaveBeenCalled()
+            expect(m.retrieveIntent).not.toHaveBeenCalled()
+            cartWrites.mockRestore()
+
+            expect(error).toHaveBeenCalledWith(expect.stringContaining("failed at Stripe"), expect.objectContaining({ reopened: "handedOver" }))
+            const record = (await t.record(pi))!
+            expect(record).toMatchObject({ state: "refundFailed", refunding: true, refundFailures: 1, refundId: refund.id })
+            expect(record.finishedAt!.getTime()).toBeGreaterThan(before.getTime())
+            const lines = (await t.cart())!.managerLog.filter((l) => l.action === "stripeRefundFailed")
+            expect(lines.map((l) => l.details)).toEqual([
+                `£6.00 card payment by Test: Stripe won't refund it, so they were charged (payment ${pi}). ` +
+                "Pay them back another way, unless a cart shows this payment as paid and they didn't pay again, " +
+                "or Stripe's dashboard shows they've disputed it since (their bank returns it then).",
+            ])
+            expect(await t.messages()).toEqual([`${HANDED_OVER} (payment ${pi})`])
+
+            // Final: nothing refunds it again, and Stripe's events about the
+            // intent aren't retried.
+            await setRecord(pi, { leaseUntil: minutesAgo(1) })
+            await sweepStripeCheckouts()
+            expect(fakeStripe.refunds).toHaveLength(1)
+            expect((await aboutIntent("payment_intent.succeeded", pi)).status).toBe(200)
+            expect((await t.record(pi))!.state).toBe("refundFailed")
+            // The diner asking again is told to see staff.
+            const res = await t.capture(pi)
+            expect([res.status, res.body.message]).toEqual([500, `Payment captured but could not be recorded or refunded — please contact staff (payment ${pi})`])
+        })
+
+        it("logs the hand-over on Stripe's retry when the log failed the first time", async () => {
+            const { t, pi, refund } = await refundedLate()
+            jest.spyOn(console, "error").mockImplementation(() => {})
+            jest.spyOn(CartModel, "updateOne").mockRejectedValueOnce(new Error("database down"))
+
+            expect((await failsAtStripe(pi, refund, "expired_or_canceled_card")).status).toBe(500)
+            expect((await t.record(pi))!.state).toBe("refundFailed")
+            expect((await t.cart())!.managerLog.filter((l) => l.action === "stripeRefundFailed")).toEqual([])
+
+            expect((await deliver("refund.failed", failed(refund))).status).toBe(200)
+            expect((await t.cart())!.managerLog.filter((l) => l.action === "stripeRefundFailed")).toHaveLength(1)
+            expect((await t.record(pi))!.refundFailures).toBe(1)
+        })
+
+        it("tells staff only what's still taken when part was refunded by hand", async () => {
+            const { t, pi, refund } = await refundedLate()
+            jest.spyOn(console, "error").mockImplementation(() => {})
+
+            // £2.00 of the £6.00 refunded by hand in Stripe's dashboard meanwhile.
+            fakeStripe.get(pi).latest_charge!.amount_refunded = 0
+            await stripe.createRefund({ payment_intent: pi, amount: 200, metadata: {} }, "by-hand")
+            await deliver("refund.failed", failed(refund))
+
+            expect(await t.record(pi)).toMatchObject({ state: "refundFailed", refundOwed: 400 })
+            expect((await t.cart())!.managerLog.filter((l) => l.action === "stripeRefundFailed").map((l) => l.details))
+                .toEqual([expect.stringMatching(/^£4\.00 card payment by Test: /)])
+            expect(await t.messages()).toEqual([expect.stringMatching(/^Your card payment of £4\.00 couldn't be refunded to your card: /)])
+        })
+
+        it("is handed over when Stripe hasn't taken the failed refund off the charge's total yet", async () => {
+            const { t, pi, refund } = await refundedLate()
+            jest.spyOn(console, "error").mockImplementation(() => {})
+            expect(fakeStripe.get(pi).latest_charge!.amount_refunded).toBe(600)
+
+            await deliver("refund.failed", failed(refund))
+
+            expect(await t.record(pi)).toMatchObject({ state: "refundFailed", refundOwed: 600 })
+        })
+
+        it("is handed over as disputed for charge_for_pending_refund_disputed: staff don't pay back", async () => {
+            const { t, pi, refund } = await refundedLate()
+            jest.spyOn(console, "error").mockImplementation(() => {})
+
+            await failsAtStripe(pi, refund, "charge_for_pending_refund_disputed")
+
+            expect(await t.record(pi)).toMatchObject({ state: "refundFailed", disputed: true })
+            expect((await t.cart())!.managerLog.filter((l) => l.action === "stripeRefundFailed").map((l) => l.details))
+                .toEqual([expect.stringContaining("is disputed with their bank")])
+            // The diner's bank, not staff, gives it back.
+            expect(await t.messages()).toEqual([
+                `Your card payment of £6.00 couldn't be refunded to your card while you dispute it: your bank returns it (payment ${pi})`,
+            ])
+        })
+
+        it("is refunded again when only the charge's flag says disputed (it stays once a dispute closes)", async () => {
+            const { t, pi, refund } = await refundedLate()
+            jest.spyOn(console, "error").mockImplementation(() => {})
+            Object.assign(fakeStripe.get(pi).latest_charge!, { disputed: true })
+
+            await failsAtStripe(pi, refund, "insufficient_funds")
+
+            expect(await t.record(pi)).toMatchObject({ state: "finishing", refunding: true })
+        })
+
+        it.each(["lost_or_stolen_card", "charge_for_pending_refund_disputed", "merchant_request"])("is handed to staff at once for %s", async (reason) => {
+            const { t, pi, refund } = await refundedLate()
+            jest.spyOn(console, "error").mockImplementation(() => {})
+
+            await failsAtStripe(pi, refund, reason)
+
+            expect((await t.record(pi))!.state).toBe("refundFailed")
+        })
+
+        it(`is refunded again ${REFUND_REOPENS} times when it may go through, then handed to staff`, async () => {
+            const { t, pi } = await refundedLate()
+            jest.spyOn(console, "error").mockImplementation(() => {})
+            // A missing or new reason counts as one that may clear.
+            const reasons = ["insufficient_funds", null, "declined", "unknown"]
+
+            for (const [i, reason] of reasons.entries()) {
+                await failsAtStripe(pi, fakeStripe.refunds.at(-1)!, reason)
+                if (i === REFUND_REOPENS) break
+                expect(await t.record(pi)).toMatchObject({ state: "finishing", refundFailures: i + 1 })
+                expect(await refundedAgain(pi)).toBe(fakeStripe.refunds[i + 1])
+                expect((await t.record(pi))!.state).toBe("refunded")
+                expect((await t.cart())!.managerLog.filter((l) => l.action === "stripeRefundFailed")).toEqual([])
+            }
+
+            expect(await t.record(pi)).toMatchObject({ state: "refundFailed", refundFailures: REFUND_REOPENS + 1 })
+            expect(fakeStripe.refunds).toHaveLength(REFUND_REOPENS + 1)
+            expect((await t.cart())!.managerLog.filter((l) => l.action === "stripeRefundFailed")).toHaveLength(1)
         })
     })
 })

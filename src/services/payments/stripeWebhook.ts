@@ -18,11 +18,12 @@ type Handled = "done" | "retry"
 type Intent = Extract<StripeEvent, { type: "payment_intent.succeeded" }>["data"]["object"]
 type Refund = Extract<StripeEvent, { type: "refund.failed" }>["data"]["object"]
 
-// The finishing procedure's outcome. Final, left to a holder with a live
-// lease (it finishes it; the sweep if it stops), or not authorised yet:
-// done. Its own unclear capture, a refund that failed, a cancel or a save
-// that failed (a 500 answer): retried.
-const finished = (outcome: Outcome): Handled => (outcome.kind === "answer" && outcome.status >= 500 ? "retry" : "done")
+// The finishing procedure's outcome. Final (even a 500 one: a refund handed
+// to staff), left to a holder with a live lease (it finishes it; the sweep if
+// it stops), or not authorised yet: done. Its own unclear capture, a refund
+// that failed, a cancel or a save that failed (a 500 answer): retried.
+const finished = (outcome: Outcome): Handled =>
+    (outcome.kind === "answer" && !outcome.final && outcome.status >= 500 ? "retry" : "done")
 
 // A recorded payment: its record synced, and a pending one settled. Null if
 // no cart has it.
@@ -74,10 +75,14 @@ const onRefundFailed = async (refund: Refund): Promise<Handled> => {
     const amount = money(refund.amount / 100, refund.currency.toUpperCase())
 
     // The full refund of a payment that couldn't be recorded: the money is
-    // still taken, so it's refunded again (stripeFinish.ts).
+    // still taken, so it's refunded again, or handed to staff when it won't go
+    // through (stripeFinish.ts).
     if (late === "true") {
-        const reopened = intentId ? await reopenFailedRefund(intentId, refund.id) : "none"
-        console.error("A card payment's refund after a lost race failed at Stripe: the money is still taken", {
+        const reopened = intentId ? await reopenFailedRefund(intentId, refund.id, refund.failure_reason ?? null) : "none"
+        // "none": not its refund, or nothing's still taken (refunded since).
+        console.error(reopened === "none"
+            ? "A card payment's refund after a lost race failed at Stripe, but it changes nothing now (an older refund's, or refunded since)"
+            : "A card payment's refund after a lost race failed at Stripe: the money is still taken", {
             paymentIntentId: intentId, cartId, refundId: refund.id, reason, reopened,
         })
         // A finisher still making it: retried, so a later delivery reopens it.

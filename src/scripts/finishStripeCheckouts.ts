@@ -22,8 +22,8 @@ const main = async () => {
     await mongoose.connect(env.MONGO_CONNECTION)
 
     // The only run in this process, so never skipped.
-    const { finished, released, refunded, left, failed } = (await sweepStripeCheckouts())!
-    console.log(`Card payments (Stripe ${env.STRIPE_MODE}): ${finished} recorded, ${released} released (nothing taken), ${refunded} refunded, ${left} left (in use or held), ${failed} failed.`)
+    const { finished, released, refunded, handedOver, left, failed } = (await sweepStripeCheckouts())!
+    console.log(`Card payments (Stripe ${env.STRIPE_MODE}): ${finished} recorded, ${released} released (nothing taken), ${refunded} refunded, ${handedOver} handed to staff (Stripe won't refund them), ${left} left (in use or held), ${failed} failed.`)
     if (failed > 0) process.exitCode = 1
 }
 

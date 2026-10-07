@@ -5,6 +5,10 @@ import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@j
 jest.mock("../lib/stripe", () => jest.requireActual<typeof import("./fakeStripe")>("./fakeStripe").stripeMock())
 
 import "./setup"
+import app from "../server"
+import UserModel from "../services/users/model"
+import mongoose from "mongoose"
+import request from "supertest"
 import * as stripe from "../lib/stripe"
 import { fakeStripe } from "./fakeStripe"
 import { stripeTable, heldElsewhere, setRecord } from "./stripeHelpers"
@@ -12,7 +16,7 @@ import CartModel from "../services/carts/model"
 import MenuModel from "../services/menus/model"
 import OrderModel from "../services/orders/model"
 import StripeCheckoutModel from "../services/carts/stripeCheckout"
-import { stripeTiming, takeBackAnswer } from "../services/carts/stripeFinish"
+import { REFUSED_FOR_MS, stripeTiming, sweepStripeCheckouts, takeBackAnswer } from "../services/carts/stripeFinish"
 
 const m = jest.mocked(stripe)
 const STILL_CONFIRMING = "STILL_CONFIRMING"
@@ -766,7 +770,7 @@ describe("captureStripeCheckout", () => {
                 await CartModel.updateOne({ _id: t.cartId }, { $set: { "items.0.qtyPayed": 2 } })
                 return captured
             })
-            m.createRefund.mockRejectedValueOnce(new stripe.StripeRefundRefused("Stripe didn't make the refund (expired_or_canceled_card)", "expired_or_canceled_card"))
+            m.createRefund.mockRejectedValueOnce(new stripe.StripeRefundRefused("Insufficient funds in Stripe account", "balance_insufficient"))
             jest.spyOn(console, "error").mockImplementation(() => {})
 
             const res = await t.capture(pi)
@@ -782,6 +786,249 @@ describe("captureStripeCheckout", () => {
             await setRecord(pi, { leaseUntil: new Date(Date.now() - 1000) })
             expect((await t.capture(pi)).status).toBe(409)
             expect(fakeStripe.get(pi).latest_charge!.amount_refunded).toBe(600)
+        })
+
+        describe("a late refund Stripe keeps refusing", () => {
+            const NOT_REFUNDED = (pi: string) => `Payment captured but could not be recorded or refunded — please contact staff (payment ${pi})`
+            const HANDED_OVER = (pi: string) =>
+                `£6.00 card payment by Test: Stripe won't refund it, so they were charged (payment ${pi}). ` +
+                "Pay them back another way, unless a cart shows this payment as paid and they didn't pay again, " +
+                "or Stripe's dashboard shows they've disputed it since (their bank returns it then)."
+            const refused = (code: string) => new stripe.StripeRefundRefused(`Stripe didn't make the refund (${code})`, code)
+            const staffLines = async (t: Awaited<ReturnType<typeof stripeTable>>) =>
+                (await t.cart())!.managerLog.filter((l) => l.action === "stripeRefundFailed").map((l) => l.details)
+            // Captured, then the cart changed under it: refunded, and Stripe
+            // refuses that refund once (`code`).
+            const refusedOnce = async (code: string) => {
+                const t = await stripeTable()
+                const pi = await t.authorised()
+                const capture = m.captureIntent.getMockImplementation()!
+                m.captureIntent.mockImplementationOnce(async (id, key) => {
+                    const captured = await capture(id, key)
+                    await CartModel.updateOne({ _id: t.cartId }, { $set: { "items.0.qtyPayed": 2 } })
+                    return captured
+                })
+                m.createRefund.mockRejectedValueOnce(refused(code))
+                jest.spyOn(console, "error").mockImplementation(() => {})
+                const res = await t.capture(pi)
+                expect([res.status, res.body.message]).toEqual([500, ["charge_disputed", "refund_disputed_payment"].includes(code)
+                    ? `Payment captured but couldn't be refunded to your card while you dispute it: your bank returns it (payment ${pi})`
+                    : NOT_REFUNDED(pi)])
+                return { t, pi }
+            }
+            // Its retry time come, as the sweep finds it.
+            const retried = async (pi: string) => {
+                await setRecord(pi, { leaseUntil: new Date(Date.now() - 1000) })
+                return sweepStripeCheckouts()
+            }
+
+            it("is handed to staff at once when a new refund would fail too (the card's closed)", async () => {
+                const { t, pi } = await refusedOnce("expired_or_canceled_card")
+
+                expect(await t.record(pi)).toMatchObject({ state: "refundFailed", refunding: true })
+                expect(await staffLines(t)).toEqual([HANDED_OVER(pi)])
+                // Final: never refunded again; asked again, the same answer.
+                await retried(pi)
+                expect(m.createRefund).toHaveBeenCalledTimes(1)
+                const again = await t.capture(pi)
+                expect([again.status, again.body.message]).toEqual([500, NOT_REFUNDED(pi)])
+                // The diner had the answer: no notice of it too.
+                expect(await t.messages()).toEqual([])
+            })
+
+            it("is tried again for a day from its first refusal, then handed to staff", async () => {
+                const { t, pi } = await refusedOnce("balance_insufficient")
+                const first = (await t.record(pi))!.refundRefusedSince!
+                expect(first).toBeInstanceOf(Date)
+
+                // Refused again within the day: tried again later, the clock kept.
+                m.createRefund.mockRejectedValueOnce(refused("balance_insufficient"))
+                await retried(pi)
+                const later = (await t.record(pi))!
+                expect(later).toMatchObject({ state: "finishing", refundRefusedSince: first })
+                expect(later.refundRetryAt!.getTime()).toBeGreaterThan(Date.now() + 25 * 60 * 1000)
+
+                // A day on.
+                await setRecord(pi, { refundRefusedSince: new Date(Date.now() - REFUSED_FOR_MS - 1000) })
+                m.createRefund.mockRejectedValueOnce(refused("balance_insufficient"))
+                expect(await retried(pi)).toMatchObject({ handedOver: 1, left: 0 })
+
+                const record = (await t.record(pi))!
+                expect(record.state).toBe("refundFailed")
+                expect(record.refundRetryAt).toBeUndefined()
+                expect(await staffLines(t)).toEqual([HANDED_OVER(pi)])
+                expect(await t.messages()).toEqual([
+                    `Your card payment of £6.00 couldn't be refunded to your card: please contact staff about it (payment ${pi})`,
+                ])
+            })
+
+            it("starts the clock again once a refund goes through", async () => {
+                const { t, pi } = await refusedOnce("balance_insufficient")
+
+                await retried(pi)
+
+                const record = (await t.record(pi))!
+                expect(record.state).toBe("refunded")
+                expect(record.refundRefusedSince).toBeUndefined()
+                expect(await staffLines(t)).toEqual([])
+            })
+
+            it.each(["charge_not_refundable", "canceled"])("is handed to staff at once when refused outright as %s", async (code) => {
+                const { t, pi } = await refusedOnce(code)
+
+                expect(await t.record(pi)).toMatchObject({ state: "refundFailed", refundOwed: 600 })
+                expect(await staffLines(t)).toEqual([HANDED_OVER(pi)])
+            })
+
+            it.each(["charge_disputed", "refund_disputed_payment"])("is handed over as disputed when refused outright as %s: staff don't pay back", async (code) => {
+                const { t, pi } = await refusedOnce(code)
+                // Asked again, the diner hears their bank returns it.
+                const again = await t.capture(pi)
+                expect([again.status, again.body.message]).toEqual([
+                    500, `Payment captured but couldn't be refunded to your card while you dispute it: your bank returns it (payment ${pi})`,
+                ])
+
+                expect(await t.record(pi)).toMatchObject({ state: "refundFailed", disputed: true })
+                expect(await staffLines(t)).toEqual([
+                    `£6.00 card payment by Test is disputed with their bank, so Stripe won't refund it (payment ${pi}). ` +
+                    "Don't pay them back yourselves: accept the dispute in Stripe's dashboard (don't contest it), and their bank returns the money. " +
+                    "If it closes without the money going back to them, pay them back another way.",
+                ])
+            })
+
+            it("isn't taken as disputed from the charge's flag, which stays once a dispute closes", async () => {
+                const { t, pi } = await refusedOnce("balance_insufficient")
+                Object.assign(fakeStripe.get(pi).latest_charge!, { disputed: true })
+                await setRecord(pi, { refundRefusedSince: new Date(Date.now() - REFUSED_FOR_MS - 1000) })
+                m.createRefund.mockRejectedValueOnce(refused("balance_insufficient"))
+
+                await retried(pi)
+
+                const record = (await t.record(pi))!
+                expect(record.state).toBe("refundFailed")
+                expect(record.disputed).toBeUndefined()
+                expect(await staffLines(t)).toEqual([HANDED_OVER(pi)])
+            })
+
+            it("is refunded, not handed over, when staff refunded it in full by hand meanwhile", async () => {
+                const { t, pi } = await refusedOnce("balance_insufficient")
+                await stripe.createRefund({ payment_intent: pi, metadata: {} }, "by-hand")
+                m.createRefund.mockRejectedValueOnce(refused("canceled"))
+
+                await retried(pi)
+
+                const record = (await t.record(pi))!
+                expect(record.state).toBe("refunded")
+                expect(record.refundRefusedSince).toBeUndefined()
+                expect(await staffLines(t)).toEqual([])
+            })
+
+            it("isn't handed over while Stripe can't be asked what's still taken: tried again", async () => {
+                const { t, pi } = await refusedOnce("balance_insufficient")
+                const retrieve = m.retrieveIntent.getMockImplementation()!
+                m.retrieveIntent.mockImplementationOnce(retrieve).mockRejectedValueOnce(new Error("Stripe down"))
+                m.createRefund.mockRejectedValueOnce(refused("canceled"))
+
+                await retried(pi)
+                expect((await t.record(pi))!.state).toBe("finishing")
+                expect(await staffLines(t)).toEqual([])
+
+                m.createRefund.mockRejectedValueOnce(refused("canceled"))
+                await retried(pi)
+                expect(await t.record(pi)).toMatchObject({ state: "refundFailed", refundOwed: 600 })
+            })
+
+            it("names a diner with no name as such", async () => {
+                const { t, pi } = await refusedOnce("balance_insufficient")
+                await UserModel.collection.updateOne({ _id: (await t.record(pi))!.userId }, { $set: { name: "" } })
+                m.createRefund.mockRejectedValueOnce(refused("canceled"))
+
+                await retried(pi)
+
+                expect(await staffLines(t)).toEqual([expect.stringMatching(/^£6\.00 card payment by a diner with no name: /)])
+            })
+
+            it("tells staff on the next sweep when they couldn't be told, never refunding it again", async () => {
+                const { t, pi } = await refusedOnce("balance_insufficient")
+                await setRecord(pi, { refundRefusedSince: new Date(Date.now() - REFUSED_FOR_MS - 1000) })
+                m.createRefund.mockRejectedValueOnce(refused("balance_insufficient"))
+                // Down for the hand-over, and for the same sweep's own try.
+                jest.spyOn(CartModel, "updateOne").mockRejectedValueOnce(new Error("database down")).mockRejectedValueOnce(new Error("database down"))
+
+                expect(await retried(pi)).toMatchObject({ handedOver: 1, failed: 1 })
+                const record = (await t.record(pi))!
+                expect(record.state).toBe("refundFailed")
+                expect(record.staffToldAt).toBeUndefined()
+                expect(await staffLines(t)).toEqual([])
+
+                await sweepStripeCheckouts()
+                expect(await staffLines(t)).toEqual([HANDED_OVER(pi)])
+                expect((await t.record(pi))!.staffToldAt).toBeInstanceOf(Date)
+                // Told: a later sweep doesn't tell them again.
+                await sweepStripeCheckouts()
+                expect(await staffLines(t)).toHaveLength(1)
+                expect(m.createRefund).toHaveBeenCalledTimes(2)
+            })
+
+            it("tells staff in the same words when a stalled finisher recorded it on the cart (they check it)", async () => {
+                const { t, pi } = await refusedOnce("balance_insufficient")
+                await CartModel.updateOne({ _id: t.cartId }, { $push: { stripePaymentIntentIds: pi } })
+                m.createRefund.mockRejectedValueOnce(refused("canceled"))
+
+                await retried(pi)
+
+                expect((await t.record(pi))!.state).toBe("refundFailed")
+                expect(await staffLines(t)).toEqual([HANDED_OVER(pi)])
+            })
+
+            it("is never answered as recorded, even on a cart and without its refunding mark", async () => {
+                const { t, pi } = await refusedOnce("canceled")
+                await StripeCheckoutModel.collection.updateOne({ _id: pi as never }, { $unset: { refunding: 1 } })
+                await CartModel.updateOne({ _id: t.cartId }, { $push: { stripePaymentIntentIds: pi } })
+
+                const res = await t.capture(pi)
+
+                expect([res.status, res.body.message]).toEqual([500, NOT_REFUNDED(pi)])
+                expect((await t.record(pi))!.state).toBe("refundFailed")
+            })
+
+            it("names a diner whose account is gone as such", async () => {
+                const { t, pi } = await refusedOnce("balance_insufficient")
+                await UserModel.deleteOne({ _id: (await t.record(pi))!.userId })
+                m.createRefund.mockRejectedValueOnce(refused("canceled"))
+
+                await retried(pi)
+
+                expect(await staffLines(t)).toEqual([expect.stringMatching(/^£6\.00 card payment by a diner whose account is gone: /)])
+            })
+
+            it("lists the table's closed cart again for a day, with the line on it", async () => {
+                const { t, pi } = await refusedOnce("balance_insufficient")
+                const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000)
+                await CartModel.collection.updateOne({ _id: new mongoose.Types.ObjectId(t.cartId) }, { $set: { status: "closed", updatedAt: twoDaysAgo } })
+                const listed = async () => (await request(app).get(`/shops/${t.shopId}/tables/${t.tableId}/carts`).set("Cookie", t.owner.cookies))
+                    .body.recentlyClosed.map((c: { _id: string }) => c._id)
+                expect(await listed()).toEqual([])
+                m.createRefund.mockRejectedValueOnce(refused("canceled"))
+
+                await retried(pi)
+
+                expect(await listed()).toEqual([t.cartId])
+                expect(await staffLines(t)).toEqual([HANDED_OVER(pi)])
+            })
+
+            it("says so as a server error when its cart is gone, and stops telling", async () => {
+                const { pi } = await refusedOnce("balance_insufficient")
+                const record = (await StripeCheckoutModel.findById(pi).lean())!
+                await CartModel.deleteOne({ _id: record.cartId })
+                const error = jest.spyOn(console, "error").mockImplementation(() => {})
+                m.createRefund.mockRejectedValueOnce(refused("expired_or_canceled_card"))
+
+                await retried(pi)
+
+                expect(error).toHaveBeenCalledWith(expect.stringContaining("no cart left to tell staff on"), expect.objectContaining({ paymentIntentId: pi }))
+                expect(await StripeCheckoutModel.findById(pi).lean()).toMatchObject({ state: "refundFailed", staffToldAt: expect.any(Date) })
+            })
         })
     })
 })

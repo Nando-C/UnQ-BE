@@ -1,11 +1,12 @@
 import { randomUUID } from "crypto"
 import mongoose from "mongoose"
 import CartModel from "./model"
+import UserModel from "../users/model"
 import StripeCheckoutModel, { FINAL_STATES, FinalState, IStripeCheckout, outcomeKey, syncRecordFromCart } from "./stripeCheckout"
 import { checkoutCheck, settleCheckout, Settlement, SettleOutcome } from "./controllers"
 import { keepOrderInStep } from "../orders/sync"
 import {
-    cancelIntent, captureIntent, chargeIdOf, createRefund, retrieveIntent, StripeCaptureRefused, StripeCharge, StripeIntent, StripeRefundRefused,
+    cancelIntent, captureIntent, chargeIdOf, createRefund, listRefunds, retrieveIntent, StripeCaptureRefused, StripeCharge, StripeIntent, StripeRefundRefused,
 } from "../../lib/stripe"
 import { money, toPence } from "../../lib/money"
 import { log, logOnce } from "./managerControllers"
@@ -71,8 +72,15 @@ const stillConfirming = (id: string): Outcome => ({ kind: "answer", ...stillConf
 const contactStaffMessage = (id: string) => `We couldn't finish your payment — please contact staff (payment ${id})`
 // Left for a later finisher (the webhook answers 500, so Stripe retries too).
 const contactStaff = (id: string): Outcome => ({ kind: "answer", status: 500, message: contactStaffMessage(id), expose: true })
-const notRefunded = (id: string): Outcome =>
-    ({ kind: "answer", status: 500, message: `Payment captured but could not be recorded or refunded — please contact staff (payment ${id})`, expose: true })
+const notRefunded = (id: string) =>
+    ({ kind: "answer" as const, status: 500, message: `Payment captured but could not be recorded or refunded — please contact staff (payment ${id})`, expose: true })
+// Handed to staff (refundFailed): as above, or, for one the diner disputes,
+// their bank returns it (staff are told not to pay it back).
+const handedOverAnswer = (id: string, disputed?: boolean): Outcome => ({
+    ...notRefunded(id),
+    ...(disputed ? { message: `Payment captured but couldn't be refunded to your card while you dispute it: your bank returns it (payment ${id})` } : {}),
+    final: "refundFailed",
+})
 
 // The statuses that say the diner got past entering their card (see the
 // record's `confirmed`), and those of a captured intent.
@@ -82,9 +90,53 @@ const CAPTURED_STATUSES = ["succeeded", "processing"]
 // How long a captured payment that can't be saved is retried, from its first
 // failed save, before it's refunded.
 const SETTLE_RETRY_MS = 60 * 60 * 1000
-// When a late refund Stripe refused is tried again (a closed card won't take
-// one; a short balance will, later; staff may refund it by hand meanwhile).
+// When a late refund Stripe refused is tried again (a short balance clears
+// later; staff may refund it by hand meanwhile), and for how long from its
+// first refusal before it's handed to staff (a disputed charge never clears).
 const REFUND_RETRY_MS = 30 * 60 * 1000
+export const REFUSED_FOR_MS = 24 * 60 * 60 * 1000
+// How often a late refund Stripe accepted, then reported failed, is made again
+// before it's handed to staff (reopenFailedRefund).
+export const REFUND_REOPENS = 3
+// Stripe's reasons for a failed refund that a new one would fail for too (the
+// card is closed or blocked, the charge is disputed, or staff cancelled it):
+// handed to staff at once. A refund's failure_reason, whether Stripe reports
+// it later or at once, and, for one refused outright, the API's error code
+// (a dispute, a charge Stripe can't refund) or the refund's status
+// (`canceled`: see createRefund). Any other (a short balance, a decline, an
+// unknown or new reason) may clear.
+const FOR_GOOD = new Set([
+    "expired_or_canceled_card", "lost_or_stolen_card", "charge_for_pending_refund_disputed", "merchant_request",
+    "charge_disputed", "refund_disputed_payment", "charge_not_refundable", "canceled",
+])
+const wontClear = (reason: string | null | undefined) => FOR_GOOD.has(reason ?? "")
+// Those that say the diner disputed the charge with their bank, and the
+// dispute is open (Stripe refuses a refund for it): the dispute, not staff,
+// gives them the money back. (Never the charge's `disputed`, which stays true
+// once a dispute closes, won or lost.)
+const DISPUTED = new Set(["charge_for_pending_refund_disputed", "charge_disputed", "refund_disputed_payment"])
+
+// What's still taken of intent `id`'s charge (pence), from the refunds Stripe
+// lists for it: those failed or cancelled don't count, nor `failed` (one
+// Stripe just reported failed, whatever its status or the charge's refunded
+// total say yet). Null when it has no charge.
+const stillTaken = async (id: string, failed?: string) => {
+    const charge = chargeOf(await retrieveIntent(id))
+    if (!charge) return null
+    const refunds = await listRefunds(id)
+    const refunded = refunds
+        .filter((r) => r.id !== failed && r.status !== "failed" && r.status !== "canceled")
+        .reduce((sum, r) => sum + r.amount, 0)
+    return charge.amount - refunded
+}
+
+// What a handed-over record keeps (`refundFailed`): what's still taken (staff
+// may have refunded part by hand), and whether Stripe's `reason` says the
+// diner's dispute is open.
+const handedOverFields = (owed: number | null, reason: string | null | undefined) => ({
+    ...(owed !== null ? { refundOwed: owed } : {}),
+    ...(DISPUTED.has(reason ?? "") ? { disputed: true } : {}),
+})
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const leaseEnd = () => new Date(Date.now() + stripeTiming.leaseMs)
@@ -153,7 +205,7 @@ const answerFromCart = async (id: string, caller?: Caller): Promise<Outcome | nu
     // decided before the sync stands.
     await syncRecordFromCart(cart, id, payment)
     const record = await StripeCheckoutModel.findById(id).select("state refunding").lean()
-    if (record?.state === "refunded" || record?.refunding) return null
+    if (record?.state === "refunded" || record?.state === "refundFailed" || record?.refunding) return null
     await markAnswered(id, outcomeKey({ state: "recorded", paymentStatus: status }), caller, { state: "recorded", paymentStatus: status })
     if (status === "failed") return { kind: "answer", ...PAYMENT_FAILED, final: "recorded" }
     return { kind: "answer", status: status === "pending" ? 202 : 200, cartId: String(cart._id), final: "recorded" }
@@ -170,6 +222,8 @@ const finalAnswer = async (record: IStripeCheckout, caller?: Caller): Promise<Ou
         return { kind: "answer", status: 404, message: record.paymentStatus === "pending" ? CART_GONE_PENDING : CART_GONE, final: "recorded" }
     }
     await markAnswered(record._id, outcomeKey(record), caller, { state: record.state })
+    // Captured, and its refund failed for good: staff pay the diner back.
+    if (record.state === "refundFailed") return handedOverAnswer(record._id, record.disputed)
     return { kind: "answer", status: record.status ?? NOT_COMPLETED.status, message: record.message ?? NOT_COMPLETED.message, final: record.state as FinalState }
 }
 
@@ -283,14 +337,15 @@ class Holder {
     // The final state, and the answer given, marked as answered if the diner
     // is still there to read it. `notFinal`: see write().
     private async finish(
-        state: "recorded" | "released" | "refunded", answer: Answer | null, set: Record<string, unknown> = {}, { notFinal = false } = {}
+        state: FinalState, answer: Answer | null, set: Record<string, unknown> = {},
+        { notFinal = false, unset = {} }: { notFinal?: boolean; unset?: Record<string, 1> } = {}
     ) {
         await this.write({
             state,
             finishedAt: new Date(),
             ...(answer ? { status: answer.status, message: answer.message } : {}),
             ...set,
-        }, {}, { notFinal })
+        }, unset, { notFinal })
         const outcome = outcomeKey({ state, paymentStatus: set.paymentStatus as string | undefined })
         await markAnswered(this.id, outcome, this.caller, { state, ...(state === "recorded" ? { paymentStatus: set.paymentStatus } : {}) })
     }
@@ -530,11 +585,20 @@ class Holder {
             // Refused as already refunded: an earlier holder's refund, or one
             // staff made by hand, went through.
             if (!(error instanceof StripeRefundRefused && error.code === "charge_already_refunded")) {
-                // Unclear: tried again at once. Refused (or made and failed):
-                // in half an hour, so a refund Stripe won't make isn't asked
-                // for every two minutes. Reported by the sweep at two hours.
-                const until = new Date(Date.now() + (error instanceof StripeRefundRefused ? REFUND_RETRY_MS : 0))
-                await this.letGo("Stripe refund failed after capture", error, { until, set: { refundRetryAt: until } })
+                // Unclear: tried again at once.
+                if (!(error instanceof StripeRefundRefused)) {
+                    await this.letGo("Stripe refund failed after capture", error, { set: { refundRetryAt: new Date() } })
+                    return notRefunded(this.id)
+                }
+                // Refused (or made and failed): for a reason that won't clear,
+                // or for a day, handed to staff; else tried again in half an
+                // hour, so a refund Stripe won't make isn't asked for every
+                // two minutes. Reported by the sweep at two hours.
+                const since = this.record.refundRefusedSince ?? new Date()
+                if (wontClear(error.code)) return this.handOver(error.code!, error)
+                if (since.getTime() <= Date.now() - REFUSED_FOR_MS) return this.handOver(`refused for a day: ${error.code ?? error.message}`, error)
+                const until = new Date(Date.now() + REFUND_RETRY_MS)
+                await this.letGo("Stripe refund failed after capture", error, { until, set: { refundRetryAt: until, refundRefusedSince: since } })
                 return notRefunded(this.id)
             }
         }
@@ -545,7 +609,7 @@ class Holder {
         await this.finish("refunded", answer, {
             ...(made ? { refundId: made.id } : {}),
             ...(this.record.finishedAt ? { finishedAt: this.record.finishedAt } : {}),
-        })
+        }, { unset: { refundRefusedSince: 1 } })
         // Accepted residual risk: a holder that stalled past its lease between
         // renewing and saving the cart. Seen, so the manager knows. Best
         // effort: the refund is done whatever happens here.
@@ -562,31 +626,127 @@ class Holder {
         }
         return this.answer(answer, "refunded")
     }
+
+    // A refund Stripe won't make: handed to staff, as reopenFailedRefund hands
+    // one over. Final first, so nothing refunds it again; staff told then
+    // (if that fails, by the sweep).
+    private async handOver(why: string, error: unknown): Promise<Outcome> {
+        console.error("A card payment's refund after a lost race was refused by Stripe: handed to staff", { paymentIntentId: this.id, why, error })
+        // What's still taken. Stripe not answering: the next holder tries
+        // again (the error gives this claim up). Refunded in full by hand
+        // meanwhile (Stripe refusing it for another reason): refunded.
+        await this.renew()
+        const owed = await stillTaken(this.id)
+        if (owed !== null && owed <= 0) {
+            const answer = this.stored() ?? NOT_RECORDED
+            await this.finish("refunded", answer, {
+                ...(this.record.finishedAt ? { finishedAt: this.record.finishedAt } : {}),
+            }, { unset: { refundRefusedSince: 1 } })
+            return this.answer(answer, "refunded")
+        }
+        await this.finish("refundFailed", null, handedOverFields(owed, why))
+        await tellStaff(this.id).catch((tellError) => console.error("Staff couldn't be told yet of a card payment Stripe won't refund: the sweep retries", {
+            paymentIntentId: this.id, error: tellError,
+        }))
+        return handedOverAnswer(this.id, this.record.disputed)
+    }
+}
+
+// A payment handed to staff (`refundFailed`) not told yet: told on the
+// table's cart (the one it was made for; a closed one is listed again for a
+// day, as the line changes it), with the diner's first name and the payment
+// id to find it in Stripe's dashboard, then marked told (`staffToldAt`). In
+// words true however it got here: a holder that stalled past its lease may
+// have recorded it on a cart after its refund was decided (refund() told staff
+// then the diner wasn't charged, so they may have paid again), so staff
+// check before paying back. Its cart gone (deleted with its table or shop):
+// a server error only. One not told (an error) is told by the sweep.
+export const tellStaff = async (id: string) => {
+    const record = await StripeCheckoutModel.findOne({ _id: id, state: "refundFailed", staffToldAt: { $exists: false } })
+        .select("cartId userId amount refundOwed disputed").lean()
+    if (!record) return
+    const { cartId } = record
+    const user = await UserModel.findById(record.userId).select("name").lean()
+    const diner = user ? user.name || "a diner with no name" : "a diner whose account is gone"
+    const amount = money((record.refundOwed ?? record.amount) / 100, "GBP")
+    const details = record.disputed
+        ? `${amount} card payment by ${diner} is disputed with their bank, so Stripe won't refund it (payment ${id}). ` +
+            "Don't pay them back yourselves: accept the dispute in Stripe's dashboard (don't contest it), and their bank returns the money. " +
+            "If it closes without the money going back to them, pay them back another way."
+        : `${amount} card payment by ${diner}: Stripe won't refund it, so they were charged (payment ${id}). ` +
+            "Pay them back another way, unless a cart shows this payment as paid and they didn't pay again, " +
+            "or Stripe's dashboard shows they've disputed it since (their bank returns it then)."
+    const { matchedCount } = await logOnce(cartId, "stripeRefundFailed", details)
+    if (matchedCount === 0 && !(await CartModel.exists({ _id: cartId }))) {
+        console.error("A card payment Stripe won't refund has no cart left to tell staff on: pay the diner back from Stripe's dashboard", {
+            paymentIntentId: id, cartId: String(cartId),
+        })
+    }
+    await StripeCheckoutModel.updateOne({ _id: id }, { $set: { staffToldAt: new Date() } })
 }
 
 // A late refund (refund() above) that Stripe accepted, then couldn't make (the
-// webhook's refund.failed, S34): the money is still taken, so the record goes
-// back to being refunded. `finishing` with `refunding`, its lease ending when
-// one Stripe refused would be retried, so the sweep refunds it again then (no
-// cap, as there). Only for the refund that finished it, or for any when it
-// isn't known (its holder stopped before finishing, and the next found the
-// charge already refunded): a repeated event, or an older refund's, changes
-// nothing (at worst, the sweep's refund is refused as already done). The diner
-// was told it was refunded; that stands.
-// "inFlight": a holder is still making its refund (refund() unsets the retry
-// time; one waiting to retry, or reopened, has one), so the record may say
-// refunded in a moment: the webhook has Stripe retry. Looked at first: a
-// record can only go from in flight to refunded, which the update then finds.
-export const reopenFailedRefund = async (id: string, refundId: string): Promise<"reopened" | "inFlight" | "none"> => {
+// webhook's refund.failed, S34), for Stripe's `reason`: the money is still
+// taken.
+// - "reopened": one that may go through next time, made fewer than
+//   REFUND_REOPENS times again: the record goes back to being refunded.
+//   `finishing` with `refunding`, its lease ending when one Stripe refused
+//   would be retried, so the sweep refunds it again then. The diner was told
+//   it was refunded; that stands.
+// - "handedOver": one that won't (FOR_GOOD), or kept failing: `refundFailed`,
+//   final, so nothing retries it; staff are told, and the diner
+//   gets a notice (a new outcome, finished now) to ask staff for it. Staff
+//   are told here (tellStaff; an error, answered 500, is retried by Stripe
+//   and the sweep). Also for one already handed over (a repeated event).
+// - "inFlight": a holder is still making its refund (refund() unsets the
+//   retry time; one waiting to retry, or reopened, has one), so the record
+//   may say refunded in a moment: the webhook has Stripe retry. Looked at
+//   first: a record can only go from in flight to refunded, which the updates
+//   then find.
+// - "none": not the refund that finished it (it acts only for that one, or for
+//   any when it isn't known: its holder stopped before finishing, and the next
+//   found the charge already refunded), or the charge is refunded in full at
+//   Stripe now (a stale event: staff refunded it by hand, say, so it's never
+//   handed over to be paid back twice). A repeated event, or an older
+//   refund's, changes nothing.
+export const reopenFailedRefund = async (
+    id: string, refundId: string, reason: string | null
+): Promise<"reopened" | "handedOver" | "inFlight" | "none"> => {
     if (await StripeCheckoutModel.exists({ _id: id, refunding: true, state: { $nin: FINAL_STATES }, refundRetryAt: { $exists: false } })) {
         return "inFlight"
     }
-    const until = new Date(Date.now() + REFUND_RETRY_MS)
-    const { modifiedCount } = await StripeCheckoutModel.updateOne(
-        { _id: id, state: "refunded", $or: [{ refundId }, { refundId: { $exists: false } }] },
-        { $set: { state: "finishing", refunding: true, leaseUntil: until, refundRetryAt: until }, $unset: { token: 1, refundId: 1 } }
-    )
-    return modifiedCount > 0 ? "reopened" : "none"
+    // The refund that finished it, or any when that isn't known.
+    const ofRefund = { _id: id, $or: [{ refundId }, { refundId: { $exists: false } }] }
+    const record = await StripeCheckoutModel.findOne({ ...ofRefund, state: { $in: ["refunded", "refundFailed"] } }).select("state").lean()
+    if (!record) return "none"
+    // Already handed over (a repeat): staff told, if they weren't.
+    if (record.state === "refundFailed") {
+        await tellStaff(id)
+        return "handedOver"
+    }
+    const owed = await stillTaken(id, refundId)
+    if (owed !== null && owed <= 0) return "none"
+    const refunded = { ...ofRefund, state: "refunded" as const }
+    if (!wontClear(reason)) {
+        const until = new Date(Date.now() + REFUND_RETRY_MS)
+        const { modifiedCount } = await StripeCheckoutModel.updateOne(
+            { ...refunded, refundFailures: { $not: { $gte: REFUND_REOPENS } } },
+            {
+                $set: { state: "finishing", refunding: true, leaseUntil: until, refundRetryAt: until },
+                $unset: { token: 1, refundId: 1 },
+                $inc: { refundFailures: 1 },
+            }
+        )
+        if (modifiedCount > 0) return "reopened"
+    }
+    const { modifiedCount } = await StripeCheckoutModel.updateOne(refunded, {
+        $set: { state: "refundFailed", finishedAt: new Date(), ...handedOverFields(owed, reason) },
+        $inc: { refundFailures: 1 },
+    })
+    // Changed meanwhile (another delivery handed it over: told below, once).
+    if (modifiedCount === 0 && !await StripeCheckoutModel.exists({ ...ofRefund, state: "refundFailed" })) return "none"
+    await tellStaff(id)
+    return "handedOver"
 }
 
 // --------------------------------------------------------------------------
@@ -603,7 +763,7 @@ const UNFINISHED_AFTER_MS = 120 * MINUTE
 // sheet still in use, left alone until the hour).
 const NEEDS_FINISHING = ["requires_capture", "succeeded", "processing", "canceled"]
 
-type Counts = { finished: number; released: number; refunded: number; left: number; failed: number }
+type Counts = { finished: number; released: number; refunded: number; handedOver: number; left: number; failed: number }
 
 // By the state it ended in; anything not final is left for a later finisher
 // (a failure throws).
@@ -612,11 +772,12 @@ const tally = (counts: Counts, outcome: Outcome) => {
     if (final === "recorded") counts.finished++
     else if (final === "released") counts.released++
     else if (final === "refunded") counts.refunded++
+    else if (final === "refundFailed") counts.handedOver++
     else counts.left++
 }
 
 const sweep = async (): Promise<Counts> => {
-    const counts: Counts = { finished: 0, released: 0, refunded: 0, left: 0, failed: 0 }
+    const counts: Counts = { finished: 0, released: 0, refunded: 0, handedOver: 0, left: 0, failed: 0 }
     const now = Date.now()
     const finish = async (id: string, expire = false) => {
         try {
@@ -648,6 +809,17 @@ const sweep = async (): Promise<Counts> => {
         } catch (error) {
             counts.failed++
             console.error("The sweep couldn't look at a card payment", { paymentIntentId: _id, error })
+        }
+    }
+
+    // Handed to staff, who weren't told (an error then).
+    const untold = await StripeCheckoutModel.find({ state: "refundFailed", staffToldAt: { $exists: false } }).select("_id").lean()
+    for (const { _id } of untold) {
+        try {
+            await tellStaff(_id)
+        } catch (error) {
+            counts.failed++
+            console.error("The sweep couldn't tell staff of a card payment Stripe won't refund", { paymentIntentId: _id, error })
         }
     }
 
