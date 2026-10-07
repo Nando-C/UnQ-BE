@@ -1,13 +1,15 @@
 import { TController } from "src/typings/controllers"
-import { ICartDocument, IPayment, RefundReason } from "src/typings/cart"
-import CartModel, { AWAITING_PAYPAL, RECENTLY_CLOSED_MS, refId, tookPart } from "./model"
+import { ICartDocument, IPayment, PaymentStatus, RefundReason } from "src/typings/cart"
+import CartModel, { AWAITING_PROVIDER, RECENTLY_CLOSED_MS, refId, tookPart } from "./model"
+import { syncCheckoutRecord } from "./stripeCheckout"
 import ShopModel, { ofTable } from "../shops/model"
 import { keepOrderInStep } from "../orders/sync"
 import createError from "http-errors"
 import { CART_MENUS, closeIfPaidOff, hasPendingPayment, removeUnpaidUnits } from "./controllers"
 import { saveChecked } from "../../lib/mongo"
+import { money } from "../../lib/money"
 import UserModel from "../users/model"
-import { checkProviderPayment, findProviderRefund, providerName, refundPayment, RefundRefused } from "../../lib/payments"
+import { awaitedProvider, checkProviderPayment, findProviderRefund, providerName, refundPayment, RefundRefused } from "../../lib/payments"
 import { IUserDocument } from "src/typings/users"
 
 // The shop manager's side of the tables' carts: viewing them, fixing them
@@ -128,7 +130,8 @@ const managerView = async (cart: ICartDocument) =>
 // closed in the last 24 hours, newest first, with payment records. Diners (in
 // selections and payments) are shown by first name only, never their email.
 // A deleted table's too, so its last carts can still be refunded. An older
-// closed cart is included while PayPal still owes it an answer, to be checked.
+// closed cart is included while its provider still owes it an answer, to be
+// checked.
 export const getTableCarts: TController = async ( req, res, next ) => {
     try {
         const { shopId, tableId } = req.params
@@ -141,7 +144,7 @@ export const getTableCarts: TController = async ( req, res, next ) => {
             $or: [
                 { status: "open" },
                 { status: "closed", updatedAt: { $gte: since } },
-                { status: "closed", ...AWAITING_PAYPAL },
+                { status: "closed", ...AWAITING_PROVIDER },
             ],
         })
             .sort({ createdAt: -1 })
@@ -167,7 +170,7 @@ export const getTableCarts: TController = async ( req, res, next ) => {
 const CART_CHANGED = "The cart changed, please retry"
 // Closing or merging would take a pending payment's units off the open table
 // before anyone knows whether they were paid.
-const PAYMENT_PENDING = "A payment on this table is still awaiting PayPal: check it first"
+const paymentPending = (cart: ICartDocument) => `A payment on this table is still awaiting ${awaitedProvider(cart)}: check it first`
 
 type Params = { shopId: string; tableId: string; cartId: string }
 
@@ -203,8 +206,15 @@ const noteDroppedSelectors = (cart: ICartDocument, selectors: string[], message:
     for (const id of selectors) if (!tookPart(cart, id)) note(cart, message, id)
 }
 
-const log = (cart: ICartDocument, req: Parameters<TController>[0], action: string, details: string) =>
-    cart.managerLog.push({ at: new Date(), byUserId: (req.user as IUserDocument)._id, action, details })
+// A line in the cart's manager log, by `actor` (a manager's user id), or by
+// the server itself when there's none (the Stripe sweep or webhook).
+export const logEntry = (actor: unknown, action: string, details: string) =>
+    ({ at: new Date(), ...(actor ? { byUserId: actor as never } : {}), action, details })
+export const log = (cart: ICartDocument, actor: unknown, action: string, details: string) =>
+    cart.managerLog.push(logEntry(actor, action, details))
+
+// The manager making the request.
+const managerOf = (req: Parameters<TController>[0]) => (req.user as IUserDocument)._id
 
 // Nothing ever paid on this cart: closing it can simply delete it.
 const neverPaid = (cart: ICartDocument) =>
@@ -256,7 +266,7 @@ export const releaseSelection: TController = async ( req, res, next ) => {
         for (const [diner, what] of byDiner) {
             note(cart, `The staff released your selection of ${what.join(", ")}.`, diner)
         }
-        log(cart, req, "releaseSelection",
+        log(cart, managerOf(req), "releaseSelection",
             [...byDiner].map(([diner, what]) => `${names.get(diner) ?? "A diner"}: ${what.join(", ")}`).join("; "))
 
         if (!(await saveChecked(cart))) return next(createError(409, CART_CHANGED))
@@ -286,7 +296,7 @@ export const removeItem: TController = async ( req, res, next ) => {
         const message = `The staff removed ${what} from this table's cart.`
         note(cart, message)
         if (cart.status === "closed") noteDroppedSelectors(cart, selectors, message)
-        log(cart, req, "removeItem", what)
+        log(cart, managerOf(req), "removeItem", what)
 
         if (!(await saveChecked(cart))) return next(createError(409, CART_CHANGED))
         res.send(await managerView(cart))
@@ -303,7 +313,7 @@ export const closeCart: TController = async ( req, res, next ) => {
     try {
         const cart = await loadManagedCart(req.params as Params)
         if (!cart) return next(createError(404, "Cart Not Found!"))
-        if (hasPendingPayment(cart)) return next(createError(409, PAYMENT_PENDING))
+        if (hasPendingPayment(cart)) return next(createError(409, paymentPending(cart)))
 
         if (neverPaid(cart)) {
             const dropped = dropUnpaid(cart)
@@ -316,7 +326,7 @@ export const closeCart: TController = async ( req, res, next ) => {
         cart.status = "closed"
         note(cart, "The staff closed this table.")
         noteDroppedSelectors(cart, selectors, "The staff closed this table.")
-        log(cart, req, "close", dropped.length
+        log(cart, managerOf(req), "close", dropped.length
             ? `dropped ${dropped.map((d) => `${d.qty}× ${d.name}`).join(", ")}`
             : "nothing unpaid")
 
@@ -338,7 +348,7 @@ export const mergeInto: TController = async ( req, res, next ) => {
     try {
         const source = await loadManagedCart(req.params as Params)
         if (!source) return next(createError(404, "Cart Not Found!"))
-        if (hasPendingPayment(source)) return next(createError(409, PAYMENT_PENDING))
+        if (hasPendingPayment(source)) return next(createError(409, paymentPending(source)))
         const target = await CartModel.findOne({ tableId: source.tableId, status: "open", _id: { $ne: source._id } })
             .sort({ createdAt: -1 })
         if (!target) return next(createError(409, "This table has only one open cart"))
@@ -363,7 +373,7 @@ export const mergeInto: TController = async ( req, res, next ) => {
             else target.split.push({ userId: sel.userId, menuId: refId(sel.menuId) as never, qty: sel.qty, splitStatus: "open", claimedAt: sel.claimedAt })
         }
         const details = `from cart ${source._id}: ${moved.join(", ") || "nothing unpaid"}`
-        log(target, req, "mergeInto", details)
+        log(target, managerOf(req), "mergeInto", details)
         if (!(await saveChecked(target))) return next(createError(409, CART_CHANGED))
 
         const removeSource = neverPaid(source)
@@ -374,7 +384,7 @@ export const mergeInto: TController = async ( req, res, next ) => {
             if (!(await deleteIfUnchanged(source))) return next(createError(409, CART_CHANGED))
         } else {
             source.status = "closed"
-            log(source, req, "mergeInto", `moved to cart ${target._id}: ${moved.join(", ") || "nothing unpaid"}`)
+            log(source, managerOf(req), "mergeInto", `moved to cart ${target._id}: ${moved.join(", ") || "nothing unpaid"}`)
             if (!(await saveChecked(source))) return next(createError(409, CART_CHANGED))
         }
         res.send(await managerView(target))
@@ -401,9 +411,6 @@ export const mergeInto: TController = async ( req, res, next ) => {
 
 type RefundLine = { menuId: string; qty: number }
 
-const money = (amount: number, currency: string) =>
-    new Intl.NumberFormat("en-GB", { style: "currency", currency }).format(amount)
-
 // Reloads the cart and applies `change` to it, saving version-checked, a few
 // times if other writes keep landing. The saved cart, or null if it never saved.
 const withFreshCart = async (cartId: unknown, change: (cart: ICartDocument) => void) => {
@@ -426,7 +433,7 @@ const completeRefund = (
     cart: ICartDocument,
     refundId: unknown,
     providerRefundId: string | undefined,
-    req: Parameters<TController>[0]
+    actor: unknown
 ) => {
     const refund = findById(cart.refunds, refundId)
     if (!refund || refund.status !== "pending") return
@@ -460,7 +467,7 @@ const completeRefund = (
 
     const what = refund.lines.map((l) => `${l.qty}× ${l.name}`).join(", ")
     note(cart, `The staff refunded ${money(refund.amount, refund.currency)} for ${what}.`, payment?.userId)
-    log(cart, req, "refund", `${money(refund.amount, refund.currency)} for ${what} (payment ${refund.paymentId})`)
+    log(cart, actor, "refund", `${money(refund.amount, refund.currency)} for ${what} (payment ${refund.paymentId})`)
 }
 
 // A cart of the shop, open or closed. By the shop the cart records, so its
@@ -502,7 +509,7 @@ const recordRefund = async (
     req: Req, res: Res, next: Next,
     cart: ICartDocument, payment: IPayment, refundId: unknown, providerRefundId: string | undefined
 ) => {
-    const recorded = await withFreshCart(cart._id, (c) => completeRefund(c, refundId, providerRefundId, req))
+    const recorded = await withFreshCart(cart._id, (c) => completeRefund(c, refundId, providerRefundId, managerOf(req)))
     if (!recorded) console.error("Refund went through but couldn't be recorded", { cartId: cart._id, refundId, providerRefundId })
     await keepOrderInStep(recorded ?? cart, payment._id)
     if (!recorded) {
@@ -524,7 +531,7 @@ const sendRefund = async (
     // (b)
     let providerRefundId: string | undefined
     try {
-        ({ providerRefundId } = await refundPayment(payment, amount, String(refundId)))
+        ({ providerRefundId } = await refundPayment(payment, amount, String(refundId), cart._id))
     } catch (error) {
         const reason = (error as Error).message
         // No clear answer (a timeout, a 5xx): the refund may have gone
@@ -651,7 +658,8 @@ export const retryRefund: TController = async ( req, res, next ) => {
 // cart closes if that was all it was waiting for. Failed: it becomes `failed`
 // and its units are unpaid again, back in the payer's selection so they can
 // pay another way (the cart reopens if it had closed). Still pending: nothing
-// changes (409). Answers { payment, cart }; the payer gets a note.
+// changes (409). Answers { payment, cart }; the payer is told (a note on the
+// cart, or for a card payment its record's notice).
 
 // The payment's units back to unpaid: its items' paid count, and the payer's
 // paid selections of it (those paid at its time) reopened, into the payer's
@@ -679,6 +687,53 @@ const unsettle = (cart: ICartDocument, payment: IPayment) => {
     cart.split = cart.split.filter((s) => s.qty > 0)
 }
 
+// A card payment's record follows its status (stripeCheckout.ts), from the
+// cart as it is: run on every check, before anything refuses, so a record left
+// behind by a crash between the cart's save and its own is repaired.
+const syncPaymentRecord = async (payment: IPayment) => {
+    if (payment.provider === "stripe") await syncCheckoutRecord(payment.providerCheckoutId, payment.status ?? "completed")
+}
+
+// A pending payment of cart `cartId` settled as `status` (the provider's
+// answer), by `actor` (none: the server): the cart's save, its order, and the
+// payer told. The saved cart, or null if it never saved (other writes kept
+// landing). `providerPaymentId`: the provider's id for the money, when the
+// payment was recorded before it had one (a card payment still processing:
+// refunds go against it). Shared with the Stripe webhook (S34).
+export const settlePendingPayment = async (
+    cartId: unknown, paymentId: string, status: Exclude<PaymentStatus, "pending">, actor: unknown, providerPaymentId?: string
+) => {
+    const saved = await withFreshCart(cartId, (c) => {
+        const p = findById(c.payments, paymentId)
+        if (p?.status !== "pending") return
+        const amount = money(p.amount, p.currency)
+        p.status = status
+        if (!p.providerPaymentId && providerPaymentId) p.providerPaymentId = providerPaymentId
+        // A card payment's payer hears it from its record's notice (which
+        // outlives a deleted or merged cart): no note as well.
+        const tell = (message: string) => { if (p.provider !== "stripe") note(c, message, p.userId) }
+        if (status === "completed") {
+            tell(`${providerName(p)} confirmed your payment of ${amount}.`)
+            log(c, actor, "checkPayment", `${amount} confirmed (payment ${paymentId})`)
+            closeIfPaidOff(c)
+        } else {
+            unsettle(c, p)
+            // Its units are owed again, so the cart must take payments:
+            // reopened if it had closed (a second open cart on the table
+            // is flagged, for the manager to merge).
+            c.status = "open"
+            tell(`${providerName(p)} didn't complete your payment of ${amount}, so nothing was taken. Those items are unpaid again.`)
+            log(c, actor, "checkPayment", `${amount} failed at ${providerName(p)} (payment ${paymentId}): its items are unpaid again`)
+        }
+    })
+    if (!saved) return null
+    await keepOrderInStep(saved, paymentId)
+    // Saved: a failure here is only logged (the next check repairs the record).
+    await syncPaymentRecord(findById(saved.payments, paymentId)!)
+        .catch((error) => console.error("Card payment record not updated", { cartId: String(cartId), paymentId, error }))
+    return saved
+}
+
 export const checkPayment: TController = async ( req, res, next ) => {
     try {
         const { shopId, cartId, paymentId } = req.params
@@ -686,11 +741,15 @@ export const checkPayment: TController = async ( req, res, next ) => {
         if (!cart) return next(createError(404, "Cart Not Found!"))
         const payment = findById(cart.payments, paymentId)
         if (!payment) return next(createError(404, "Payment Not Found!"))
+        // Best effort: the check itself doesn't need the record.
+        await syncPaymentRecord(payment)
+            .catch((error) => console.error("Card payment record not updated", { cartId, paymentId, error }))
         if (payment.status !== "pending") return next(createError(409, "This payment isn't awaiting confirmation any more"))
 
-        let status: Awaited<ReturnType<typeof checkProviderPayment>>
+        let status: PaymentStatus
+        let providerPaymentId: string | undefined
         try {
-            status = await checkProviderPayment(payment)
+            ({ status, providerPaymentId } = await checkProviderPayment(payment))
         } catch (error) {
             return next(createError(502,
                 `Couldn't check with ${providerName(payment)} (${(error as Error).message}). Try again shortly.`,
@@ -700,27 +759,8 @@ export const checkPayment: TController = async ( req, res, next ) => {
             return next(createError(409, `${providerName(payment)} is still processing this payment. Check again later`))
         }
 
-        const amount = money(payment.amount, payment.currency)
-        const saved = await withFreshCart(cartId, (c) => {
-            const p = findById(c.payments, paymentId)
-            if (p?.status !== "pending") return
-            p.status = status
-            if (status === "completed") {
-                note(c, `${providerName(p)} confirmed your payment of ${amount}.`, p.userId)
-                log(c, req, "checkPayment", `${amount} confirmed (payment ${paymentId})`)
-                closeIfPaidOff(c)
-            } else {
-                unsettle(c, p)
-                // Its units are owed again, so the cart must take payments:
-                // reopened if it had closed (a second open cart on the table
-                // is flagged, for the manager to merge).
-                c.status = "open"
-                note(c, `${providerName(p)} didn't complete your payment of ${amount}, so nothing was taken. Those items are unpaid again.`, p.userId)
-                log(c, req, "checkPayment", `${amount} failed at ${providerName(p)} (payment ${paymentId}): its items are unpaid again`)
-            }
-        })
+        const saved = await settlePendingPayment(cartId, paymentId, status, managerOf(req), providerPaymentId)
         if (!saved) return next(createError(409, CART_CHANGED))
-        await keepOrderInStep(saved, paymentId)
 
         res.send({ payment: findById(saved.payments, paymentId), cart: await managerView(saved) })
     } catch (error) {

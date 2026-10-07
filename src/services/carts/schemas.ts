@@ -36,3 +36,6 @@ export const refundSchema = z.object({
 })
 
 export const checkOutSplitSchema = z.object({ paypalOrderId: z.string().min(1) })
+
+// A Stripe PaymentIntent's id.
+export const stripeCaptureSchema = z.object({ paymentIntentId: z.string().regex(/^pi_[A-Za-z0-9_]+$/, "paymentIntentId must be a PaymentIntent id") })

@@ -9,6 +9,8 @@ import ShopModel from "./services/shops/model"
 import UserModel from "./services/users/model"
 import MenuModel from "./services/menus/model"
 import OrderModel from "./services/orders/model"
+import StripeCheckoutModel from "./services/carts/stripeCheckout"
+import { sweepStripeCheckouts } from "./services/carts/stripeFinish"
 
 const PORT = env.PORT
 
@@ -35,7 +37,7 @@ mongoose.connect(env.MONGO_CONNECTION)
             : err.code === 11000 ? " — values repeat that the named unique index must keep apart"
             : err.code === 85 || err.code === 86 ? ` — the database already has an index with that name or those keys and other options: compare db.${collection}.getIndexes() with the schema before changing either`
             : ""
-        for (const model of [CartModel, ShopModel, UserModel, MenuModel, OrderModel] as const) {
+        for (const model of [CartModel, ShopModel, UserModel, MenuModel, OrderModel, StripeCheckoutModel] as const) {
             model.init().catch((err: Error & { code?: unknown }) => {
                 console.error(` ⚠️  ${model.modelName} indexes not built (${err.message})${hint(model.modelName, model.collection.name, err)}`)
             })
@@ -52,6 +54,14 @@ mongoose.connect(env.MONGO_CONNECTION)
         // Surfaces a typo'd PAYPAL_API_BASE, which would otherwise silently
         // leave a "live" deployment talking to the sandbox.
         console.log(` 💳  PayPal: ${env.PAYPAL_MODE} (${env.PAYPAL_API_BASE})`)
+        console.log(` 💳  Stripe: ${env.STRIPE_MODE}`)
+        // Card payments the diner and the webhook left unfinished
+        // (services/carts/stripeFinish.ts). One indexed query when there's
+        // nothing to do; a run still going is skipped. Unref'd: it never keeps
+        // the process alive on its own.
+        setInterval(() => {
+            sweepStripeCheckouts().catch((error) => console.error("Card payment sweep failed", error))
+        }, 2 * 60 * 1000).unref()
     }))
     .catch((err) => {
         console.log(" 🚫 Database error: ", err);

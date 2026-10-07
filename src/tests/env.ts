@@ -19,11 +19,15 @@ process.env.PUBLIC_API_URL = process.env.PUBLIC_API_URL || "http://localhost:300
 // The app validates its whole configuration at import time (settings/env.ts),
 // so every required variable must exist here or importing the app aborts the run.
 // These are never dialled: setup.ts connects its own mongodb-memory-server, and the
-// Cloudinary and PayPal clients are mocked at the module boundary in their suites.
+// Cloudinary, PayPal and Stripe clients are mocked at the module boundary in their suites.
 process.env.MONGO_CONNECTION = process.env.MONGO_CONNECTION || "mongodb://127.0.0.1:27017/unq-test"
 process.env.CLOUDINARY_URL = process.env.CLOUDINARY_URL || "cloudinary://test-key:test-secret@test-cloud"
 process.env.PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "test-paypal-client-id"
 process.env.PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || "test-paypal-client-secret"
+// Stripe's client is mocked too (src/tests/fakeStripe.ts); a test-mode prefix,
+// as a real test key has.
+process.env.STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "sk_test_dummy"
+process.env.STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "whsec_test_dummy"
 
 // High enough that no suite meets a rate limit by accident; rateLimits.test.ts
 // checks the real ones.

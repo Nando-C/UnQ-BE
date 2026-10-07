@@ -10,8 +10,9 @@ import { IUserDocument } from "../typings/users"
 // restart with it; several servers would need a shared store (e.g. Redis).
 
 // Changes to a table's order per diner (after JWTAuthMiddleware), counted
-// before validate, so malformed requests count too. Checkout is never limited:
-// a refused capture would leave a PayPal-approved payment unrecorded.
+// before validate, so malformed requests count too. Starting a card checkout
+// counts too (each makes a Stripe intent); capturing is never limited: a
+// refused capture would leave an approved or authorised payment unfinished.
 export const cartEditLimit = rateLimit({
     standardHeaders: "draft-8",
     legacyHeaders: false,

@@ -47,6 +47,13 @@ const envSchema = z
         // silently leaves you on sandbox, which is why index.ts logs the resolved mode.
         PAYPAL_API_BASE: z.string().min(1).default("https://api-m.sandbox.paypal.com"),
 
+        // Stripe's secret key (sk_… or a restricted rk_…), whose prefix says test
+        // or live (STRIPE_MODE below), and the signing secret of the webhook
+        // endpoint (S34). Both required, as PayPal's: a missing one stops the
+        // server here instead of at the first card payment.
+        STRIPE_SECRET_KEY: required,
+        STRIPE_WEBHOOK_SECRET: required,
+
         // Rate limits (see middlewares/rateLimits.ts): wrong passwords per account
         // in 15 minutes, and cart edits per diner in a minute.
         PASSWORD_FAILS_PER_ACCOUNT: limit(10),
@@ -119,6 +126,9 @@ export const env = Object.freeze({
 
     // Whether PayPal calls resolve to the sandbox or the live API.
     PAYPAL_MODE: data.PAYPAL_API_BASE.includes("sandbox") ? "SANDBOX" : "LIVE",
+
+    // Whether the Stripe key is a test-mode one, from its prefix.
+    STRIPE_MODE: /^(sk|rk)_test_/.test(data.STRIPE_SECRET_KEY) ? "TEST" : "LIVE",
 })
 
 export default env

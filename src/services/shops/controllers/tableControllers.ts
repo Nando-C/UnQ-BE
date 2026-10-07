@@ -2,7 +2,8 @@ import mongoose from "mongoose"
 import { TController } from "../../../typings/controllers"
 import ShopModel from "../model"
 import createError from "http-errors"
-import CartModel, { AWAITING_PAYPAL } from "../../carts/model"
+import CartModel, { AWAITING_PROVIDER } from "../../carts/model"
+import { awaitedProvider } from "../../../lib/payments"
 import env from "../../../settings/env"
 
 // -------------------------------------------------------------------------
@@ -114,9 +115,10 @@ export const deleteTable: TController = async ( req, res, next ) => {
         // manager closes it first (POST …/carts/:cartId/close).
         const OPEN_CART = "This table has an open cart — close it first"
         if (await CartModel.exists({ tableId, status: "open" })) return next(createError(409, OPEN_CART))
-        // Nor while PayPal still owes one of its carts an answer (as for a shop).
-        if (await CartModel.exists({ tableId, ...AWAITING_PAYPAL })) {
-            return next(createError(409, "A payment or refund at this table is still awaiting PayPal — check it first"))
+        // Nor while a provider still owes one of its carts an answer (as for a shop).
+        const awaiting = await CartModel.findOne({ tableId, ...AWAITING_PROVIDER }).select("payments refunds")
+        if (awaiting) {
+            return next(createError(409, `A payment or refund at this table is still awaiting ${awaitedProvider(awaiting)} — check it first`))
         }
         if (!mongoose.isValidObjectId(tableId)) return next(createError(404, "Table Not Found!"))
 

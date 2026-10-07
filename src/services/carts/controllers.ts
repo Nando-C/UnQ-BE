@@ -1,7 +1,8 @@
 import { TController } from "src/typings/controllers"
 import { IUserDocument } from "src/typings/users"
-import { ICartDocument, ISplitItem } from "src/typings/cart"
+import { ICartDocument, ISplitItem, PaymentProvider } from "src/typings/cart"
 import CartModel, { dinerView, noticesFor, NOTICE_MAX_AGE_MS, refId, tookPart } from "./model"
+import { paymentNotices } from "./stripeCheckout"
 import { keepOrderInStep } from "../orders/sync"
 import { Request } from "express"
 import createError from "http-errors"
@@ -10,6 +11,8 @@ import { getOrder, createOrder, captureOrder, refundCapture, PayPalOrder, PayPal
 import MenuModel from "../menus/model"
 import ShopModel from "../shops/model"
 import { isDuplicateKey, isVersionConflict, saveChecked } from "../../lib/mongo"
+import { toPence } from "../../lib/money"
+import { providerName } from "../../lib/payments"
 
 // The diner's side of a table's cart: ordering, selecting what to pay for, and
 // paying (checkout). See the cart model for how items and splits work. The
@@ -38,9 +41,21 @@ const menuRef = (path: string) => ({
 export const CART_MENUS = [menuRef("items.menuId"), menuRef("split.menuId")]
 
 // A cart as the caller may see it: the diner view, including the notices meant
-// for them (the public table view only has the table-wide ones).
-const forDiner = (cart: ICartDocument | null, req: Request) =>
-    cart && dinerView(cart, (req.user as IUserDocument | undefined)?._id)
+// for them (the public table view only has the table-wide ones), the outcomes
+// of their card payments at the table among them.
+export const forDiner = async (cart: ICartDocument | null, req: Request) => {
+    if (!cart) return cart
+    const viewer = (req.user as IUserDocument | undefined)?._id
+    return dinerView(cart, viewer, await paymentNoticesOrNone(viewer, cart.tableId))
+}
+
+// Best effort: a reply that follows a payment (a PayPal capture, say) must
+// not fail for want of its notices; the next fetch shows them.
+const paymentNoticesOrNone = (viewer: unknown, tableId: string) =>
+    paymentNotices(viewer, tableId).catch((error) => {
+        console.error("Card payment notices not read", { tableId, error })
+        return []
+    })
 
 // Sold-out rule: the kitchen only acts on PAID orders, so an unavailable item
 // can't be added, newly split, or paid for.
@@ -60,7 +75,7 @@ export const getMyCarts: TController = async ( req, res, next) => {
             
         if (!myCarts) return next(createError(404, "Carts Not Found!"))
 
-        res.send(forDiner(myCarts, req))
+        res.send(await forDiner(myCarts, req))
     } catch (error) {
         next(createError(500, error as Error))
     }
@@ -78,7 +93,7 @@ const closedCartNotices = async (tableId: string, viewerId: unknown) => {
     const viewer = String(viewerId)
     const theirs = (cart: ICartDocument) =>
         tookPart(cart, viewer) ? cart.notices : cart.notices.filter((n) => n.forUserId && String(n.forUserId) === viewer)
-    return noticesFor(carts.flatMap(theirs), viewerId)
+    return noticesFor([...carts.flatMap(theirs), ...await paymentNoticesOrNone(viewerId, tableId)], viewerId)
 }
 
 export const getTableCart: TController = async ( req, res, next ) => {
@@ -102,7 +117,7 @@ export const getTableCart: TController = async ( req, res, next ) => {
             return
         }
 
-        res.send(forDiner(cart, req))
+        res.send(await forDiner(cart, req))
     } catch (error) {
         next(createError(500, error as Error))
     }
@@ -123,7 +138,7 @@ export const getSingleCart: TController = async ( req, res, next ) => {
 
         if (!cart) return next(createError(404, `Cart Not Found!`))
         
-        res.send(forDiner(cart, req))
+        res.send(await forDiner(cart, req))
     } catch (error) {
         next(createError(500, error as Error))
     }
@@ -166,11 +181,11 @@ export const addItem: TController = async ( req, res, next ) => {
         // now landing on the first step.
         for (let attempt = 0; attempt < 3; attempt++) {
             const updatedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": item.menuId}, { $inc: { "items.$.qty": req.body.qty }}, { sort: { createdAt: -1 } }).populate(CART_MENUS)
-            if (updatedItem) return res.send(forDiner(updatedItem, req))
+            if (updatedItem) return res.send(await forDiner(updatedItem, req))
 
             try {
                 const addedItem = await CartModel.findOneAndUpdate({tableId: tableId, status: "open", "items.menuId": { $ne: item.menuId }}, { $push: { items: item }, $setOnInsert: { userId: user._id, shopId: req.params.shopId }}, { upsert: true, sort: { createdAt: -1 } }).populate(CART_MENUS)
-                return res.send(forDiner(addedItem, req))
+                return res.send(await forDiner(addedItem, req))
             } catch (error) {
                 if (!isDuplicateKey(error)) throw error
             }
@@ -235,7 +250,7 @@ export const decreaseItem: TController = async ( req, res, next ) => {
         )
 
         const cart = closedCart ?? removedItem ?? decreasedItem
-        res.send(forDiner(cart && await cart.populate(CART_MENUS), req))
+        res.send(await forDiner(cart && await cart.populate(CART_MENUS), req))
     } catch (error) {
         next(createError(500, error as Error))
     }
@@ -348,7 +363,7 @@ export const deleteItem: TController = async ( req, res, next ) => {
             }
         }
 
-        res.send(forDiner(await cart.populate(CART_MENUS), req))
+        res.send(await forDiner(await cart.populate(CART_MENUS), req))
     } catch (error) {
         next(createError(500, error as Error))
     }
@@ -441,13 +456,13 @@ export const addSplitItem: TController = async ( req, res, next ) => {
                 { _id: cartId, tableId, status: "open", split: { $elemMatch: mine }, ...fits },
                 { $inc: { "split.$.qty": qty } }
             ).populate(CART_MENUS)
-            if (grown) return res.send(forDiner(grown, req))
+            if (grown) return res.send(await forDiner(grown, req))
 
             const started = await CartModel.findOneAndUpdate(
                 { _id: cartId, tableId, status: "open", split: { $not: { $elemMatch: mine } }, ...fits },
                 { $push: { split: { userId: user._id, menuId: menuOid, qty, claimedAt: new Date() } } }
             ).populate(CART_MENUS)
-            if (started) return res.send(forDiner(started, req))
+            if (started) return res.send(await forDiner(started, req))
         }
 
         return next(createError(409, "Not enough units left to split"))
@@ -475,7 +490,7 @@ const changeMySplit = (update: () => UpdateQuery<ICartDocument>): TController =>
         const changed = await CartModel.findOneAndUpdate(mine(), update())
         const removed = await CartModel.findOneAndUpdate(mine(), { $pull: { split: { qty: { $lte: 0 } }}})
         const cart = removed ?? changed
-        res.send(forDiner(cart && await cart.populate(CART_MENUS), req))
+        res.send(await forDiner(cart && await cart.populate(CART_MENUS), req))
     } catch (error) {
         next(createError(500, error as Error))
     }
@@ -506,7 +521,7 @@ type PopulatedMenuRef = { _id: mongoose.Types.ObjectId; name: string; price: num
 // The cart must be the one of the table in the URL: a cart id is otherwise
 // enough to act on any table's cart (a stale page after moving tables, or a
 // tampered request).
-const loadOpenCart = (cartId: string, tableId: string) =>
+export const loadOpenCart = (cartId: string, tableId: string) =>
     CartModel.findOne({ _id: cartId, tableId, status: "open" })
         .populate(CART_MENUS)
 
@@ -535,20 +550,42 @@ const availabilityError = (cart: ICartDocument, openSplits: ISplitItem[]): strin
 const soldOutError = (openSplits: ISplitItem[]): string | null =>
     openSplits.some((s) => (s.menuId as unknown as PopulatedMenuRef).available === false) ? SOLD_OUT_CHECKOUT : null
 
-// The PayPal order must be COMPLETED with its capture COMPLETED (or its capture
-// PENDING: taken, held by PayPal for review), in GBP, for exactly the amount
-// due. Returns a message on any mismatch, or null when it verifies.
-const orderVerificationError = (order: PayPalOrder, expectedTotal: number): string | null => {
-    const capture = order.purchase_units?.[0]?.payments?.captures?.[0]
-    if (
-        !(capture?.status === "PENDING" || (order.status === "COMPLETED" && capture?.status === "COMPLETED")) ||
-        capture?.amount?.currency_code !== "GBP" ||
-        capture?.amount?.value !== expectedTotal.toFixed(2)
-    ) {
-        return "PayPal payment does not match the amount due"
-    }
-    return null
+// The checks before any money moves, as createCheckoutOrder makes them: the
+// caller's open cart at this table, their selection, units still unpaid,
+// nothing sold out. A failure as { ok: false, status, message }, else the
+// cart, the selection and the amount due (DB prices).
+export const checkoutCheck = async (cartId: string, tableId: string, userId: mongoose.Types.ObjectId) => {
+    const refused = (status: number, message: string) => ({ ok: false as const, status, message })
+    const cart = await loadOpenCart(cartId, tableId)
+    if (!cart) return refused(404, "Cart Not Found!")
+    const openSplits = callerOpenSplits(cart, userId)
+    if (openSplits.length === 0) return refused(404, "No open split items to pay!")
+    const availError = availabilityError(cart, openSplits)
+    if (availError) return refused(409, availError)
+    const soldOut = soldOutError(openSplits)
+    if (soldOut) return refused(409, soldOut)
+    return { ok: true as const, cart, openSplits, total: expectedTotalFor(openSplits) }
 }
+
+// What a provider took, as a checkout records it: whose payment (`provider`),
+// the id the checkout was keyed on (PayPal's order, Stripe's PaymentIntent),
+// the id refunds go against (the capture, the charge), whether the provider
+// has confirmed it, and the amount and currency taken.
+export type Settlement = {
+    provider: PaymentProvider
+    checkoutId: string
+    paymentId?: string
+    status: "completed" | "pending"
+    amount: number
+    currency: string
+}
+
+// The settlement must be in GBP, for exactly the amount due (compared in
+// pence, never as floats). A message on a mismatch, or null.
+const settlementError = (settlement: Settlement, expectedTotal: number): string | null =>
+    settlement.currency !== "GBP" || toPence(settlement.amount) !== toPence(expectedTotal)
+        ? `${providerName(settlement)} payment does not match the amount due`
+        : null
 
 export const hasPendingPayment = (cart: ICartDocument) => cart.payments.some((p) => p.status === "pending")
 
@@ -563,19 +600,17 @@ export const closeIfPaidOff = (cart: ICartDocument) => {
 // Apply what a settlement does, in memory on the loaded doc, for a single
 // version-checked save(): close the caller's open splits and credit qtyPayed,
 // and record the payment. Prices are the populated menu's, the same ones
-// expectedTotalFor charged and the capture was verified against; `order` is
-// captureCheckout's own capture result. A PENDING capture is recorded as a
-// pending payment: its units are held as paid, and the cart stays open until
-// a manager checks it (checkPayment), so the table still shows it.
+// expectedTotalFor charged and the settlement was verified against. A pending
+// settlement is recorded as a pending payment: its units are held as paid, and
+// the cart stays open until it's confirmed (checkPayment), so the table still
+// shows it.
 const applyCheckout = (
     cart: ICartDocument,
     openSplits: ISplitItem[],
     userId: mongoose.Types.ObjectId,
-    paypalOrderId: string,
-    order: PayPalOrder
+    settlement: Settlement
 ) => {
     const paidAt = new Date()
-    const capture = order.purchase_units?.[0]?.payments?.captures?.[0]
     const lines = []
     for (const split of openSplits) {
         const menu = split.menuId as unknown as PopulatedMenuRef
@@ -587,18 +622,23 @@ const applyCheckout = (
         if (item) item.qtyPayed += split.qty
     }
     cart.payments.push({
-        provider: "paypal",
-        status: capture?.status === "PENDING" ? "pending" : "completed",
-        providerCheckoutId: paypalOrderId,
-        providerPaymentId: capture?.id,
-        currency: capture?.amount?.currency_code ?? "GBP",
+        provider: settlement.provider,
+        status: settlement.status,
+        providerCheckoutId: settlement.checkoutId,
+        providerPaymentId: settlement.paymentId,
+        currency: settlement.currency,
         userId,
         paidAt,
-        amount: Number(capture?.amount?.value ?? expectedTotalFor(openSplits).toFixed(2)),
+        amount: settlement.amount,
         lines,
     })
-    if (!cart.paypalOrderIds) cart.paypalOrderIds = []
-    cart.paypalOrderIds.push(paypalOrderId)
+    if (settlement.provider === "stripe") {
+        if (!cart.stripePaymentIntentIds) cart.stripePaymentIntentIds = []
+        cart.stripePaymentIntentIds.push(settlement.checkoutId)
+    } else {
+        if (!cart.paypalOrderIds) cart.paypalOrderIds = []
+        cart.paypalOrderIds.push(settlement.checkoutId)
+    }
     closeIfPaidOff(cart)
 }
 
@@ -607,49 +647,63 @@ const applyCheckout = (
 const orderAlreadyUsed = (paypalOrderId: string) =>
     CartModel.exists({ $or: [{ paypalOrderIds: paypalOrderId }, { paypalOrderId }] })
 
-// Outcome of a settlement attempt. Returned (not sent) so captureCheckout can
+// Whether the settlement's checkout id was already recorded on any cart.
+const checkoutAlreadyUsed = (settlement: Settlement) =>
+    settlement.provider === "stripe"
+        ? CartModel.exists({ stripePaymentIntentIds: settlement.checkoutId })
+        : orderAlreadyUsed(settlement.checkoutId)
+
+const alreadyUsed = (settlement: Settlement) =>
+    settlement.provider === "paypal" ? "This PayPal order has already been used" : "This payment has already been recorded"
+
+// Outcome of a settlement attempt. Returned (not sent) so the caller can
 // refund the buyer before reporting a failure that happened after money moved.
-type SettleOutcome =
+// `lost`: the caller's beforeSave said not to save (a Stripe finisher whose
+// claim was taken over), so nothing was saved.
+export type SettleOutcome =
     | { ok: true; cart: ICartDocument }
-    | { ok: false; status: number; message: string }
+    | { ok: false; status: number; message: string; lost?: true }
 
 // Apply + persist the settlement under optimistic concurrency. The cart is
-// loaded afresh for every attempt, the first one too: the one captureCheckout
-// loaded is from before the PayPal round trips, and any other diner's tap since
-// would make saving it conflict. Each attempt re-derives everything from the
-// fresh doc, re-checks replay/availability and re-verifies against the
-// already-known (immutable) `order`; a concurrent write's VersionError means
+// loaded afresh for every attempt, the first one too: the one the caller
+// loaded is from before the provider's round trips, and any other diner's tap
+// since would make saving it conflict. Each attempt re-derives everything from
+// the fresh doc, re-checks replay/availability and re-verifies against the
+// already-known (immutable) settlement; a concurrent write's VersionError means
 // another attempt, a bounded number of times (running out refunds the payer, so
-// there are enough for a busy table). `order` is captureCheckout's own capture
-// result.
-const settleCheckout = async (
+// there are enough for a busy table). `beforeSave` runs before each save (false:
+// don't save), and `change` adds to the cart what the caller records with the
+// payment (a log line).
+export const settleCheckout = async (
     cartId: string,
     tableId: string,
     userId: mongoose.Types.ObjectId,
-    paypalOrderId: string,
-    order: PayPalOrder
+    settlement: Settlement,
+    { beforeSave, change }: { beforeSave?: () => Promise<boolean>; change?: (cart: ICartDocument) => void } = {}
 ): Promise<SettleOutcome> => {
     const MAX_ATTEMPTS = 5
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         // Re-check replay too: a payer we conflicted with may have recorded
-        // THIS very order id — on this same cart, where the unique index can't
-        // help (duplicates within one document's array don't violate a
+        // THIS very checkout id — on this same cart, where the unique index
+        // can't help (duplicates within one document's array don't violate a
         // multikey unique index).
-        const [cart, replayed] = await Promise.all([loadOpenCart(cartId, tableId), orderAlreadyUsed(paypalOrderId)])
+        const [cart, replayed] = await Promise.all([loadOpenCart(cartId, tableId), checkoutAlreadyUsed(settlement)])
         if (!cart) return { ok: false, status: 404, message: "Cart Not Found!" }
-        if (replayed) return { ok: false, status: 402, message: "This PayPal order has already been used" }
+        if (replayed) return { ok: false, status: 402, message: alreadyUsed(settlement) }
         const openSplits = callerOpenSplits(cart, userId)
         if (openSplits.length === 0) return { ok: false, status: 404, message: "No open split items to pay!" }
         const availError = availabilityError(cart, openSplits)
         if (availError) return { ok: false, status: 409, message: availError }
-        const verifyError = orderVerificationError(order, expectedTotalFor(openSplits))
+        const verifyError = settlementError(settlement, expectedTotalFor(openSplits))
         if (verifyError) return { ok: false, status: 402, message: verifyError }
 
-        applyCheckout(cart, openSplits, userId, paypalOrderId, order)
+        applyCheckout(cart, openSplits, userId, settlement)
+        change?.(cart)
+        if (beforeSave && !(await beforeSave())) return { ok: false, status: 409, message: "Another finisher took over", lost: true }
         try {
             await cart.save()
         } catch (error) {
-            if (isDuplicateKey(error)) return { ok: false, status: 402, message: "This PayPal order has already been used" }
+            if (isDuplicateKey(error)) return { ok: false, status: 402, message: alreadyUsed(settlement) }
             if (!isVersionConflict(error)) throw error
             continue
         }
@@ -668,22 +722,11 @@ export const createCheckoutOrder: TController = async ( req, res, next ) => {
         const user = req.user as IUserDocument
         const cartId = req.params.cartId
 
-        const cart = await loadOpenCart(cartId, req.params.tableId)
-        if (!cart) return next(createError(404, "Cart Not Found!"))
-
-        const openSplits = callerOpenSplits(cart, user._id)
-        if (openSplits.length === 0) return next(createError(404, "No open split items to pay!"))
-
-        const availError = availabilityError(cart, openSplits)
-        if (availError) return next(createError(409, availError))
-
-        const soldOut = soldOutError(openSplits)
-        if (soldOut) return next(createError(409, soldOut))
-
-        const expectedTotal = expectedTotalFor(openSplits)
+        const check = await checkoutCheck(cartId, req.params.tableId, user._id)
+        if (!check.ok) return next(createError(check.status, check.message))
 
         try {
-            const paypalOrderId = await createOrder(expectedTotal.toFixed(2), `${cartId}:${user._id}`)
+            const paypalOrderId = await createOrder(check.total.toFixed(2), `${cartId}:${user._id}`)
             res.send({ paypalOrderId })
         } catch {
             // Shown to the diner as is (expose), not as "Generic Server Error".
@@ -776,6 +819,15 @@ export const captureCheckout: TController = async ( req, res, next ) => {
             return next(createError(402, "PayPal capture did not complete"))
         }
         const captureId = capture?.id
+        const settlement: Settlement = {
+            provider: "paypal",
+            checkoutId: paypalOrderId,
+            paymentId: captureId,
+            status: pending ? "pending" : "completed",
+            // Missing ones fail the settlement's verification (and are refunded).
+            amount: Number(capture?.amount?.value),
+            currency: capture?.amount?.currency_code ?? "",
+        }
 
         // (f) Settle under optimistic concurrency, re-verifying against our own
         // capture result on any version conflict.
@@ -784,7 +836,7 @@ export const captureCheckout: TController = async ( req, res, next ) => {
         // excuse to keep the buyer's money with nothing recorded.
         let outcome: SettleOutcome
         try {
-            outcome = await settleCheckout(cartId, req.params.tableId, user._id, paypalOrderId, captured)
+            outcome = await settleCheckout(cartId, req.params.tableId, user._id, settlement)
         } catch (settleError) {
             console.error("Settling a captured PayPal payment failed", { paypalOrderId, error: settleError })
             outcome = { ok: false, status: 500, message: "The payment could not be recorded" }
@@ -797,7 +849,7 @@ export const captureCheckout: TController = async ( req, res, next ) => {
             // only logged).
             // applyCheckout pushed it last.
             await keepOrderInStep(outcome.cart, outcome.cart.payments.at(-1)!._id)
-            return res.status(pending ? 202 : 200).send(forDiner(outcome.cart, req))
+            return res.status(pending ? 202 : 200).send(await forDiner(outcome.cart, req))
         }
 
         // (g) The buyer HAS been charged but the settlement is impossible (a

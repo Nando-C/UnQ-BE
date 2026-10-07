@@ -11,7 +11,7 @@ export type RefundReason = (typeof REFUND_REASONS)[number]
 // orders' (services/orders/model.ts).
 export const PAYMENT_STATUSES = ["completed", "pending", "failed"] as const
 export const REFUND_STATUSES = ["pending", "completed", "failed"] as const
-export const PAYMENT_PROVIDERS = ["paypal"] as const
+export const PAYMENT_PROVIDERS = ["paypal", "stripe"] as const
 
 // A table's order. Each table has at most one OPEN cart, shared by everyone
 // sitting there: whoever orders first creates it, the others add to it.
@@ -79,6 +79,17 @@ const CartSchema = new Schema<ICartDocument>(
         // and fail to insert. Leaving the field absent until first settlement lets
         // sparse skip it, and the controller lazily initialises it before pushing.
         paypalOrderIds: {
+            type: [String],
+            unique: true,
+            sparse: true,
+            default: undefined,
+        },
+        // Every Stripe PaymentIntent that has settled part of this cart, as
+        // `paypalOrderIds` for PayPal orders (the same reasons for `unique`,
+        // `sparse` and `default: undefined`; pushed to lazily). Also how the
+        // cart holding an intent is found, whatever its status
+        // (services/carts/stripeFinish.ts).
+        stripePaymentIntentIds: {
             type: [String],
             unique: true,
             sparse: true,
@@ -209,7 +220,8 @@ const CartSchema = new Schema<ICartDocument>(
             {
                 _id: false,
                 at: { type: Date, required: true },
-                byUserId: { type: Schema.Types.ObjectId, required: true },
+                // None: written by the server itself (the Stripe sweep or webhook).
+                byUserId: Schema.Types.ObjectId,
                 action: { type: String, required: true },
                 details: String,
             }
@@ -240,7 +252,7 @@ CartSchema.pre(["findOneAndUpdate", "updateOne", "updateMany"], function () {
 // - A table's recently closed carts: its sheet, diners' notices, deleted
 //   tables. Open-cart lookups use the one-open-cart index below.
 CartSchema.index({ tableId: 1, status: 1, updatedAt: 1 })
-// - Carts awaiting PayPal (AWAITING_PAYPAL): only those are indexed.
+// - Carts awaiting a provider (AWAITING_PROVIDER): only those are indexed.
 CartSchema.index({ "payments.status": 1, tableId: 1 }, { partialFilterExpression: { "payments.status": "pending" } })
 CartSchema.index({ "refunds.status": 1, tableId: 1 }, { partialFilterExpression: { "refunds.status": "pending" } })
 // - A diner's open cart: only open ones are indexed.
@@ -271,10 +283,11 @@ export const OPEN_CART_INDEX = "tableId_1"
 // cart still on a sheet can't be deleted yet.
 export const RECENTLY_CLOSED_MS = 24 * 60 * 60 * 1000
 
-// Carts with money PayPal hasn't confirmed: a payment it holds for review or a
-// refund it didn't clearly answer. Only a manager can settle them (checkPayment,
-// retryRefund), so they stay in reach and hold back deleting their table or shop.
-export const AWAITING_PAYPAL = { $or: [{ "payments.status": "pending" as const }, { "refunds.status": "pending" as const }] }
+// Carts with money a provider hasn't confirmed: a payment it holds for review
+// or a refund it didn't clearly answer. Only a manager can settle them
+// (checkPayment, retryRefund), so they stay in reach and hold back deleting
+// their table or shop. awaitedProvider (lib/payments.ts) names the provider.
+export const AWAITING_PROVIDER = { $or: [{ "payments.status": "pending" as const }, { "refunds.status": "pending" as const }] }
 
 // Diners see notices from the last 2 hours, at most the 5 newest.
 export const NOTICE_MAX_AGE_MS = 2 * 60 * 60 * 1000
@@ -309,14 +322,17 @@ export const tookPart = (cart: ICartDocument, userId: unknown) => {
 // A cart as a diner may see it. The table's cart is public (no login), so the
 // payment and refund records and the manager log never leave the server this
 // way, and of the notices only the table-wide ones do, plus those meant for
-// `viewerId` when the caller is known. Manager endpoints use toObject() instead.
-export const dinerView = (cart: ICartDocument, viewerId?: unknown) => {
+// `viewerId` when the caller is known, with `more` of theirs (their card
+// payments' outcomes) before the newest are picked. Manager endpoints use
+// toObject() instead.
+export const dinerView = (cart: ICartDocument, viewerId?: unknown, more: INotice[] = []) => {
     const view = cart.toObject()
     delete view.__v
     delete view.payments
     delete view.refunds
     delete view.managerLog
-    view.notices = noticesFor(view.notices ?? [], viewerId)
+    delete view.stripePaymentIntentIds
+    view.notices = noticesFor([...(view.notices ?? []), ...more], viewerId)
     return view
 }
 

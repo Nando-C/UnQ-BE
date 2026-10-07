@@ -9,6 +9,7 @@ export interface ICart {
     split: ISplitItem[]
     paypalOrderId?: string // legacy scalar, read-only for pre-multi-payer carts
     paypalOrderIds?: string[] // one recorded PayPal order per payer
+    stripePaymentIntentIds?: string[] // one recorded Stripe PaymentIntent per payer
     payments: IPayment[] // manager-only: never in a diner response (see model dinerView)
     refunds: IRefund[] // manager-only
     notices: INotice[]
@@ -39,7 +40,7 @@ export type RefundReason = import("../services/carts/model").RefundReason
 // A note to the table's diners about a manager's change; `forUserId` makes it
 // one diner's.
 export interface INotice {
-    _id?: Types.ObjectId
+    _id?: Types.ObjectId | string // a string: a card payment's outcome (stripeCheckout.ts)
     at: Date
     forUserId?: Types.ObjectId
     message: string
@@ -47,7 +48,7 @@ export interface INotice {
 
 export interface IManagerLogEntry {
     at: Date
-    byUserId: Types.ObjectId
+    byUserId?: Types.ObjectId // none: written by the server itself (the Stripe sweep or webhook)
     action: string
     details?: string
 }

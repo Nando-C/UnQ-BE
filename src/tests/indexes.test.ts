@@ -9,6 +9,8 @@ jest.mock("../lib/paypal", () => ({
     PayPalRefundRefused: jest.requireActual<typeof import("../lib/paypal")>("../lib/paypal").PayPalRefundRefused,
     PayPalCaptureRefused: jest.requireActual<typeof import("../lib/paypal")>("../lib/paypal").PayPalCaptureRefused,
 }))
+// And Stripe's, by the in-memory fake.
+jest.mock("../lib/stripe", () => jest.requireActual<typeof import("./fakeStripe")>("./fakeStripe").stripeMock())
 
 import request from "supertest"
 import mongoose from "mongoose"
@@ -23,6 +25,9 @@ import OrderModel from "../services/orders/model"
 import { SHOP_DELETION_READ } from "../services/orders/sync"
 import { googleUserFor } from "../services/auth/oauth"
 import { getOrder, captureOrder } from "../lib/paypal"
+import StripeCheckoutModel from "../services/carts/stripeCheckout"
+import { sweepStripeCheckouts } from "../services/carts/stripeFinish"
+import { fakeStripe } from "./fakeStripe"
 
 // Most carts are kept for good, so a query that reads all of them, or all of a
 // table's or a shop's past carts, gets slower with every party served. Each test
@@ -82,7 +87,7 @@ beforeEach(() => {
 
 // The indexes are built before any test runs, as they are long before traffic in production.
 beforeAll(async () => {
-    await Promise.all([CartModel.init(), ShopModel.init(), UserModel.init(), MenuModel.init(), OrderModel.init()])
+    await Promise.all([CartModel.init(), ShopModel.init(), UserModel.init(), MenuModel.init(), OrderModel.init(), StripeCheckoutModel.init()])
 })
 
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000)
@@ -181,6 +186,41 @@ describe("no request reads a whole collection", () => {
         )
         expect(paid.status).toBe(200)
         expect(await OrderModel.countDocuments({ cartId })).toBe(1)
+    })
+
+    it("a diner paying by card, the sweep, and their notices", async () => {
+        fakeStripe.reset()
+        const { shopId, tableId, menuId, customer } = await scaffold()
+        const cartId = (
+            await request(app).post(`/carts/${shopId}/tables/${tableId}/addItem`).set("Cookie", customer.cookies).send({ menuId, qty: 2 })
+        ).body._id
+        await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/${cartId}/addSplitItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 1 })
+        // Another card payment, older, the diner left: the sweep finishes it.
+        const left = (await request(app).post(`/carts/tables/${tableId}/${cartId}/createStripeCheckout`).set("Cookie", customer.cookies)).body.paymentIntentId
+        fakeStripe.authorise(left)
+        await StripeCheckoutModel.collection.updateOne({ _id: left }, { $set: { createdAt: minutesAgo(11) } })
+
+        await noScans(async () => {
+            expect(await sweepStripeCheckouts()).toMatchObject({ finished: 1 })
+            await request(app)
+                .post(`/carts/${shopId}/tables/${tableId}/${cartId}/addSplitItem`)
+                .set("Cookie", customer.cookies)
+                .send({ menuId, qty: 1 })
+            const created = await request(app).post(`/carts/tables/${tableId}/${cartId}/createStripeCheckout`).set("Cookie", customer.cookies)
+            expect(created.status).toBe(200)
+            fakeStripe.authorise(created.body.paymentIntentId)
+            const paid = await request(app)
+                .post(`/carts/tables/${tableId}/${cartId}/captureStripeCheckout`)
+                .set("Cookie", customer.cookies)
+                .send({ paymentIntentId: created.body.paymentIntentId })
+            expect(paid.status).toBe(200)
+            // The table's cart is paid off: the 404 body, with the notice of the one the sweep finished.
+            const view = await request(app).get(`/carts/tables/${tableId}`).set("Cookie", customer.cookies)
+            expect(view.body.notices.map((n: { message: string }) => n.message)).toContain("Your card payment of £3.00 went through")
+        })
     })
 
     it("a manager's table sheets and statuses", async () => {

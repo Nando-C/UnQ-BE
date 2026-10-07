@@ -85,6 +85,7 @@ You can find the Front-End repo of this project in the following link, where mor
 - [express-rate-limit](https://express-rate-limit.mintlify.app/)
 - [Passport.js](https://www.passportjs.org/) (Google OAuth 2.0)
 - [Cloudinary](https://cloudinary.com)
+- [Stripe](https://stripe.com) (the official `stripe` client)
 - [Jest](https://jestjs.io/) + [Supertest](https://github.com/ladjs/supertest) + [mongodb-memory-server](https://github.com/typegoose/mongodb-memory-server)
 
 <p align="right">(<a href="#top">back to top</a>)</p>
@@ -100,6 +101,7 @@ You can find the Front-End repo of this project in the following link, where mor
 - Cloudinary image uploads for user avatars, shop covers, and menu item photos (images only, up to 5 MB; permissions checked before anything is uploaded, and a replaced image is deleted)
 - Request validation (`zod`) on every mutating endpoint, with a consistent `{ message, details }` error shape
 - Server-side PayPal checkout: the API creates the order for the exact amount due (database prices, bound to cart + payer via `custom_id`) and captures it only after reserving the units — a conflict discovered before capture costs the buyer nothing, and one discovered in the window after capture is refunded automatically. Order-id replay protection and multi-payer concurrency safety throughout; the API never takes the client's word that a payment happened
+- Card payments (Apple Pay and Google Pay included) through Stripe, beside PayPal, with the same guarantee: the diner's card is only authorised, the API re-checks the cart and then captures, or cancels the authorisation so nothing is charged. One finisher at a time per payment (the diner's request, Stripe's webhook, or a sweep every 2 minutes), so an authorised payment the diner walked away from is still finished, and they're told the outcome on their next visit to the table
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -134,11 +136,13 @@ flowchart LR
     GOOGLE["🌐 Google OAuth 2.0"]
     CDN["☁️ Cloudinary"]
     PAYPAL["💳 PayPal Orders v2"]
+    STRIPE["💳 Stripe PaymentIntents"]
 
     FE ==>|"HTTPS + httpOnly<br/>JWT cookies"| MW
     AUTH <--> GOOGLE
     USERS & SHOPS & MENUS -->|"image uploads<br/><small>multer StorageEngine</small>"| CDN
     CARTS <-->|"payment verification<br/><small>src/lib/paypal.ts</small>"| PAYPAL
+    CARTS <-->|"authorise, then capture or cancel<br/><small>src/lib/stripe.ts</small>"| STRIPE
     services ==> DB
 ```
 
@@ -149,6 +153,7 @@ The API is organized service-per-domain: each domain under `src/services/<name>/
 - `src/lib/passwordLimit.ts` and `src/middlewares/rateLimits.ts` — the wrong-password and cart-change rate limits (see [REST API](#rest-api))
 - `src/errorMiddlewares.ts` — single error-handling exit point: 4xx errors return `{ message, details? }`, everything else is logged and returns a generic 500
 - `src/settings/` — CORS whitelist and a custom Cloudinary multer `StorageEngine`
+- `src/lib/payments.ts` — refunds and payment checks for either provider; `src/lib/paypal.ts` and `src/lib/stripe.ts` are the providers' clients
 
 ```
 src/
@@ -166,7 +171,7 @@ src/
 │   ├── users/               # profile + avatar
 │   ├── shops/               # shop CRUD + tables
 │   ├── menus/                # menu items
-│   └── carts/                # cart, split-bill flows
+│   └── carts/                # cart, split-bill flows, checkout (stripeFinish.ts: finishing card payments)
 ├── typings/                # shared TS types/interfaces
 └── tests/                  # Jest integration suite
 ```
@@ -211,6 +216,8 @@ Copy `.env.example` to `.env` and fill it in. Configuration is validated at boot
 | `PAYPAL_CLIENT_ID` | PayPal client ID (used for server-side order verification) |
 | `PAYPAL_CLIENT_SECRET` | PayPal client secret (used for server-side order verification) |
 | `PAYPAL_API_BASE` | PayPal API base URL — defaults to the sandbox (`https://api-m.sandbox.paypal.com`) when unset |
+| `STRIPE_SECRET_KEY` | Stripe secret key: `sk_test_…` for test mode, `sk_live_…` for live (the server logs which at boot) |
+| `STRIPE_WEBHOOK_SECRET` | Signing secret (`whsec_…`) of the Stripe webhook endpoint; locally, `stripe listen --print-secret` |
 | `PASSWORD_FAILS_PER_ACCOUNT` | Wrong passwords allowed per account in 15 minutes (default 10) |
 | `CART_EDITS_PER_MINUTE` | Cart changes allowed per diner a minute (default 120) |
 | `BCRYPT_ROUNDS` | bcrypt cost for stored passwords, 10–13 (default 10; lower refused except inside the test suite, which uses 4) |
@@ -229,16 +236,19 @@ Copy `.env.example` to `.env` and fill it in. Configuration is validated at boot
 | `npm test` | Run the Jest integration suite |
 | `npm run lint` | Run ESLint on the `src/` directory |
 | `npx tsx src/scripts/syncOrders.ts` | Write or bring up to date every payment's order (backfill, and repair after "Order not written"); safe to rerun |
+| `npx tsx src/scripts/finishStripeCheckouts.ts` | Finish the card payments left unfinished, as the server does every 2 minutes; safe to run beside it |
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
 ## Testing
 
-The API is covered by a Jest + Supertest integration suite running against an in-memory MongoDB (`mongodb-memory-server`) — no external database or network calls required. It covers the full auth flow including refresh-token rotation and role-escalation attempts, authorization boundaries between users/shops/carts (e.g. a customer can't manage a shop, a user can't read another user's cart), the cart and split-bill flows, table QR-code integrity across renames, and mocked upload wiring for the Cloudinary routes. Run it with:
+The API is covered by a Jest + Supertest integration suite running against an in-memory MongoDB (`mongodb-memory-server`) — no external database or network calls required. It covers the full auth flow including refresh-token rotation and role-escalation attempts, authorization boundaries between users/shops/carts (e.g. a customer can't manage a shop, a user can't read another user's cart), the cart and split-bill flows, table QR-code integrity across renames, and mocked upload wiring for the Cloudinary routes. PayPal is mocked at its client, and Stripe by an in-memory fake (`src/tests/fakeStripe.ts`) that changes payments the way Stripe does, so the card checkout's races (the diner's request against the webhook and the sweep, captures whose outcome is unknown, refunds after a lost race) are played out without the network. Run it with:
 
 ```bash
 npm test
 ```
+
+To try card payments by hand, use a Stripe test key (`sk_test_…`) and Stripe's test cards, with any future expiry date and any CVC: `4242 4242 4242 4242` pays, `4000 0025 0000 3155` asks for the bank's check first, and `4000 0000 0000 0002` is declined.
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -378,16 +388,17 @@ Cart Model:
         // Notes to the diners about a manager's change. Diners get the table-wide
         // ones and their own, from the last 2 hours (at most 5).
         notices: [{ at: Date, forUserId?: ObjectId, message: string }],
-        // Manager-only: what managers did to this cart.
-        managerLog: [{ at: Date, byUserId: ObjectId, action: string, details: string }],
+        // Manager-only: what managers did to this cart (no byUserId: the server
+        // did it, e.g. finished a card payment the diner left).
+        managerLog: [{ at: Date, byUserId?: ObjectId, action: string, details: string }],
         // Manager-only: never included in a diner's cart response.
         // Provider-neutral, so other payment providers can record the same way.
         payments: [
             {
-                provider: "paypal",
+                provider: "paypal" | "stripe",
                 status: "completed" | "pending" | "failed", // pending: taken, not yet confirmed (see payments/:paymentId/check)
-                providerCheckoutId: string, // PayPal: the order id
-                providerPaymentId: string,  // PayPal: the capture id (what a refund is made against)
+                providerCheckoutId: string, // PayPal: the order id; Stripe: the PaymentIntent (pi_…)
+                providerPaymentId: string,  // what a refund is made against: PayPal's capture id, Stripe's charge (ch_…)
                 currency: string,           // "GBP"
                 userId: ObjectId,   // the payer
                 paidAt: Date,
@@ -398,6 +409,27 @@ Cart Model:
                 ],
             }
         ],
+    }
+```
+
+### Card payment (StripeCheckout)
+
+One per Stripe PaymentIntent the API created, written as it's created and kept as an audit trail. It says who is finishing the payment (one at a time: the diner's capture request, the webhook or the sweep, each claiming it with a token and a 2-minute lease) and how it ended. Diners never see it; it's how they're told an outcome their own request didn't answer (see the carts' notices).
+
+```js
+StripeCheckout Model:
+    {
+        _id: string,              // the PaymentIntent id
+        cartId: ObjectId, tableId: string, userId: ObjectId, // who it was made for
+        amount: number,           // in pence, as created
+        state: "open" | "finishing" | "releasing" | "recorded" | "released" | "refunded",
+        token?: string, leaseUntil?: Date, // the current holder's claim
+        checkedAt?: Date,         // the sweep's last look at an open one
+        confirmed: boolean,       // the diner got past entering their card
+        finishedAt?: Date, paymentStatus?: "completed" | "pending" | "failed",
+        answered?: string,        // the outcome the diner's own request gave them ("recorded:completed", "released", …);
+        answeredBy?: string[],    // the ids of the requests that gave it; a notice is shown while the outcome differs from `answered`
+        status?: number, message?: string, // the answer given for a released or refunded one
     }
 ```
 
@@ -420,7 +452,7 @@ Order Model:
         paidAt: Date,
         currency: string,
         amount: number,
-        provider: "paypal",
+        provider: "paypal" | "stripe",
         providerCheckoutId: string,
         providerPaymentId: string,
         lines: [{ menuId, name, category: string | null, unitPrice, qty, refundedQty }],
@@ -497,13 +529,13 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/shops/me
 
-  The manager's shops. Each also carries `deletedTables: [{ _id, name, deletedAt, needsAttention?, recentCartsUntil? }]`, the tables they deleted; `needsAttention: true` while one still has an open cart or a payment or refund `pending` at PayPal, and `recentCartsUntil` (a date) while its carts route still lists a closed cart there: a day after the latest one last changed. The public shop routes leave it out.
+  The manager's shops. Each also carries `deletedTables: [{ _id, name, deletedAt, needsAttention?, recentCartsUntil? }]`, the tables they deleted; `needsAttention: true` while one still has an open cart or a payment or refund `pending` at its provider, and `recentCartsUntil` (a date) while its carts route still lists a closed cart there: a day after the latest one last changed. The public shop routes leave it out.
 
 - [ 'GET', 'PUT', 'DELETE' ]
 
   baseURL-api/shops/:shopId
 
-  `DELETE` deletes the shop with its menu items and its carts. `409` while a table has an open cart, while a payment or refund of the shop is still `pending` at PayPal (the message names the table to check it at), or while a payment with its PayPal capture id and something left to refund is on a closed cart changed in the last 24 hours (it's still on its table's carts, to be refunded).
+  `DELETE` deletes the shop with its menu items and its carts. `409` while a table has an open cart, while a payment or refund of the shop is still `pending` at its provider (the message names the table to check it at, and the provider), or while a payment with its provider's payment id and something left to refund is on a closed cart changed in the last 24 hours (it's still on its table's carts, to be refunded).
 
 - [ 'PUT' ]
 
@@ -517,19 +549,19 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/shops/:shopId/tables/:tableId
 
-  `PUT` `{ name }` renames the table, keeping its QR code; `400` if another of the shop's tables has that name, as on create. `DELETE` moves the table to the shop's `deletedTables`: its QR code takes no more orders and diners no longer see it, but its carts stay reachable through the carts route below. Its name can be used again. `409` while it has an open cart, or a payment or refund `pending` at PayPal.
+  `PUT` `{ name }` renames the table, keeping its QR code; `400` if another of the shop's tables has that name, as on create. `DELETE` moves the table to the shop's `deletedTables`: its QR code takes no more orders and diners no longer see it, but its carts stay reachable through the carts route below. Its name can be used again. `409` while it has an open cart, or a payment or refund `pending` at its provider (named in the message).
 
 - [ 'GET' ]
 
   baseURL-api/shops/:shopId/tables/status
 
-  Shop managers only. One entry per table: `{ tableId, name, state, owed, paid, heldSince?, attention }`. `state` is `free`, `ordering` (items, nothing paid), `waitingToPay` (a diner has items selected) or `partlyPaid`. `attention` flags `soldOut` (unpaid units of an unavailable or deleted item), `staleSelection` (a selection held over 15 minutes), `duplicateCarts` (more than one open cart) and `paymentPending` (a payment PayPal hasn't confirmed: check it). `owed` leaves out sold-out units; `paid` counts units at the price they were paid at.
+  Shop managers only. One entry per table: `{ tableId, name, state, owed, paid, heldSince?, attention }`. `state` is `free`, `ordering` (items, nothing paid), `waitingToPay` (a diner has items selected) or `partlyPaid`. `attention` flags `soldOut` (unpaid units of an unavailable or deleted item), `staleSelection` (a selection held over 15 minutes), `duplicateCarts` (more than one open cart) and `paymentPending` (a payment its provider hasn't confirmed: check it). `owed` leaves out sold-out units; `paid` counts units at the price they were paid at.
 
 - [ 'GET' ]
 
   baseURL-api/shops/:shopId/tables/:tableId/carts
 
-  Shop managers only. `{ open, recentlyClosed }`: the table's open cart(s) and the carts closed in the last 24 hours, newest first, each with its payment records. Diners in selections and payments are shown as `{ _id, name }` (first name only). Works for a deleted table too, and also lists older closed carts with a payment or refund still `pending` at PayPal, to be checked.
+  Shop managers only. `{ open, recentlyClosed }`: the table's open cart(s) and the carts closed in the last 24 hours, newest first, each with its payment records. Diners in selections and payments are shown as `{ _id, name }` (first name only). Works for a deleted table too, and also lists older closed carts with a payment or refund still `pending` at its provider, to be checked.
 
 - [ 'POST' ]
 
@@ -544,19 +576,19 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/shops/:shopId/carts/:cartId/refunds
 
-  Shop managers only; money moves. Body `{ paymentId, lines: [{ menuId, qty }], reason?, reasonNote? }`, `reason` one of `unavailable`, `wrong_item`, `quality`, `long_wait`, `paid_by_mistake`, `changed_mind`, `other`, with `reasonNote` (1–200 characters) required for `other` and refused otherwise (`400`); without a reason the refund is still made, with none recorded: refunds those units of one recorded payment, at the prices it charged, through the payment's provider (PayPal: a partial refund of its capture, with an idempotency key), and takes them out of the cart. Open or closed carts of the shop. A `pending` refund record is saved before the provider is asked, so the same units can't be refunded twice; it then becomes `completed` or `failed`. Answers `{ refund, cart }`; `400` for more than is left to refund, `409` for a payment with no recorded capture (refund it from PayPal) or one that is `pending` or `failed`, `502` with the provider's reason when it refuses (nothing refunded; the record is `failed`), `502` also when the provider gives no clear answer (a timeout, a provider error, or an earlier request for it still in progress: the refund may have gone through, so the record stays `pending`: retry it), `500` if it went through but couldn't be recorded (the refund stays `pending`: retry it). The payer gets a note.
+  Shop managers only; money moves. Body `{ paymentId, lines: [{ menuId, qty }], reason?, reasonNote? }`, `reason` one of `unavailable`, `wrong_item`, `quality`, `long_wait`, `paid_by_mistake`, `changed_mind`, `other`, with `reasonNote` (1–200 characters) required for `other` and refused otherwise (`400`); without a reason the refund is still made, with none recorded: refunds those units of one recorded payment, at the prices it charged, through the payment's provider (PayPal: a partial refund of its capture; Stripe: a refund of its charge, in pence; each with the refund's id as the idempotency key), and takes them out of the cart. Open or closed carts of the shop. A `pending` refund record is saved before the provider is asked, so the same units can't be refunded twice; it then becomes `completed` or `failed`. Answers `{ refund, cart }`; `400` for more than is left to refund, `409` for a payment with no recorded capture or charge (refund it from the provider's dashboard) or one that is `pending` or `failed`, `502` with the provider's reason when it refuses (nothing refunded; the record is `failed`), `502` also when the provider gives no clear answer (a timeout, a provider error, or an earlier request for it still in progress: the refund may have gone through, so the record stays `pending`: retry it), `500` if it went through but couldn't be recorded (the refund stays `pending`: retry it). The payer gets a note.
 
 - [ 'POST' ]
 
   baseURL-api/shops/:shopId/carts/:cartId/refunds/:refundId/retry
 
-  Shop managers only. Settles a `pending` refund. First asks the provider whether it already has it (PayPal: the refund is sent with `custom_id` = the refund's id and looked up on the order); if so, records it as the provider says (`completed`, or `failed`). If not, sends it again under the same id, which the provider can't apply twice. Answers `{ refund, cart }` like the refund route, with the same `502`/`500` cases; `409` if the refund isn't `pending`, `502` if the provider can't be asked (still `pending`).
+  Shop managers only. Settles a `pending` refund. First asks the provider whether it already has it (PayPal: the refund is sent with `custom_id` = the refund's id and looked up on the order; Stripe: with the refund's id in its metadata, looked up through all of the payment's refunds); if so, records it as the provider says (`completed`, or `failed`). If not, sends it again under the same id, which the provider can't apply twice. Answers `{ refund, cart }` like the refund route, with the same `502`/`500` cases; `409` if the refund isn't `pending`, `502` if the provider can't be asked (still `pending`).
 
 - [ 'POST' ]
 
   baseURL-api/shops/:shopId/carts/:cartId/payments/:paymentId/check
 
-  Shop managers only. Asks the provider about a `pending` payment (one PayPal held for review at checkout). Confirmed: it becomes `completed`, and the cart closes if everything on it is paid. Declined or failed: it becomes `failed` and its units are unpaid again, back in the payer's selection (nothing was taken); the cart reopens if it had closed, and a second open cart on the table is flagged `duplicateCarts` for the manager to merge. A cart with a `pending` payment never closes on its own, even when every unit is paid. Answers `{ payment, cart }` and the payer gets a note; `409` if PayPal is still processing it (nothing changes) or it isn't `pending`, `502` if the provider can't be asked.
+  Shop managers only. Asks the provider about a `pending` payment (one PayPal held for review at checkout, or a card payment Stripe was still processing). Confirmed: it becomes `completed`, and the cart closes if everything on it is paid. Declined or failed: it becomes `failed` and its units are unpaid again, back in the payer's selection (nothing was taken); the cart reopens if it had closed, and a second open cart on the table is flagged `duplicateCarts` for the manager to merge. A cart with a `pending` payment never closes on its own, even when every unit is paid. Answers `{ payment, cart }` and the payer is told: a note on the cart (PayPal), or a notice from the card payment's record (Stripe), which outlives the cart; `409` if the provider is still processing it (nothing changes) or it isn't `pending`, `502` if the provider can't be asked.
 
 - [ 'POST', 'GET' ]
 
@@ -622,11 +654,23 @@ These are the available endpoints created for this application. Every mutating r
 
   Server-side checkout, step 2 of 2 — the money-moving endpoint. Body: `{ paypalOrderId }`. Confirms the buyer-approved order was minted for THIS cart + payer (`custom_id` match — `402` otherwise) and still matches the amount due (`409` if the caller changed their selection), re-checks availability (`409`), rejects sold-out items (`409`, same message as `createCheckoutOrder`), and only THEN captures the payment. If a concurrent payer takes the units in the tiny window after capture, the buyer is refunded automatically and the request returns `409` — so a rejection never leaves anyone charged for nothing. Order-id replay is rejected with `402` before any charge. A capture PayPal refuses or declines is `402` (nothing charged); one whose outcome is unknown (no answer, a PayPal error, a request still in progress, or the order already captured by an earlier request) is `502`, asking the diner to contact staff before paying again, with the order id: nothing is recorded for it, so staff check it in PayPal. A capture PayPal holds as `PENDING` (taken, under review) settles like a completed one but answers `202`: its payment record is `pending`, its units are held as paid, and the cart stays open until a manager checks it (`payments/:paymentId/check`). Settlements are recorded per payer in the cart's `paypalOrderIds`, and each one as a provider-neutral payment record (provider, its checkout and payment ids, payer, time, amount and currency, and every line at the price charged; kept out of diner responses). The paid splits carry `unitPrice` and `paidAt`, so what the cart says was paid doesn't change when a menu price is edited later. Together with `createCheckoutOrder` this is **the** checkout flow (charge only after reserving).
 
+- [ 'POST' ]
+
+  baseURL-api/carts/tables/:tableId/:cartId/createStripeCheckout
+
+  Card checkout, step 1 of 2. No body. The same checks as `createCheckoutOrder` (same statuses and messages), then a Stripe PaymentIntent for the caller's amount due in pence (database prices), cards only, with manual capture: the diner's confirmation in Stripe's Payment Element only authorises it. Answers `{ clientSecret, paymentIntentId }`. `502` (`"Could not start a card payment"`) if Stripe can't create it or its record can't be written (it's then cancelled). An intent nobody confirms holds nothing, and is cancelled an hour after it was created.
+
+- [ 'POST' ]
+
+  baseURL-api/carts/tables/:tableId/:cartId/captureStripeCheckout
+
+  Card checkout, step 2 of 2 — money moves. Body: `{ paymentIntentId }`. Only for an intent created for this cart, table and caller (`402 "This payment was not created for this checkout"` otherwise; nothing changes). The API re-checks the cart (as `captureCheckout`, same statuses and messages) and only then captures; a check that fails **cancels the authorisation**, so nothing is charged. `200` with the cart once recorded, `202` for a payment Stripe is still processing (its units held, as PayPal's pending ones). Not authorised: `402 "Payment not completed — nothing was charged"` (declined, or never confirmed: it's cancelled), or, while the bank's check is still open, `502` with `reason: "STILL_CONFIRMING"`. The same `502` when another finisher (Stripe's webhook, or the sweep) is finishing it and hasn't finished within a few seconds, when Stripe's answer to the capture is unclear, when the captured payment can't be saved yet (a database error: retried for an hour, then refunded), or on any other error on the way: the message asks the diner not to pay for those items again, the cart updates once it's confirmed, and they get a notice of the outcome. A race lost after the capture is refunded in full: `409` with `captureCheckout`'s "…your payment was refunded" wording. Asked again, it gives the same answer (the cart for one recorded, even if it has closed since). A payment that went through, or is being confirmed, whose cart has since been deleted (with its table or shop): `404` saying so ("Your card payment went through, but this table's cart is no longer here", or "…is being confirmed, but…"), never an invitation to pay again. `500` with the payment id ("contact staff") only when the card was charged and neither recording nor the refund has worked yet (the refund is retried). Recorded in the cart's `stripePaymentIntentIds` and as a payment record with `provider: "stripe"`. Not rate limited.
+
 - [ 'GET' ]
 
   baseURL-api/carts/tables/:tableId
 
-  Public: the table's open cart, for everyone at the table. When the request carries a valid login, the response also includes that diner's own notices; no login gets the public view; an expired or invalid one gets a `401` (refresh it and ask again). With no open cart it answers `404 { message, notices }`: the recent notices (last 2 hours) of the table's closed carts that the signed-in caller took part in (started, selected on, or paid on), e.g. "The staff closed this table." or their refund; a diner whose only part was a selection the close dropped gets the note addressed to them. Anyone else, and a guest, gets `notices: []`.
+  Public: the table's open cart, for everyone at the table. When the request carries a valid login, the response also includes that diner's own notices, among them the outcome of a card payment of theirs at the table that their own request didn't answer (they closed the tab, or were told it was still being confirmed): "Your card payment of £X went through", "…is being confirmed: your items are held for you", "…didn't go through: nothing was charged", or "…was refunded: <why>". Each such notice has a string `_id` that changes when the outcome does; no login gets the public view; an expired or invalid one gets a `401` (refresh it and ask again). With no open cart it answers `404 { message, notices }`: the recent notices (last 2 hours) of the table's closed carts that the signed-in caller took part in (started, selected on, or paid on), e.g. "The staff closed this table." or their refund; a diner whose only part was a selection the close dropped gets the note addressed to them. Anyone else, and a guest, gets `notices: []`.
 
 - [ 'GET' ]
 

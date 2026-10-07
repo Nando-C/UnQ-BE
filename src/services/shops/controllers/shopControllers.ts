@@ -3,7 +3,8 @@ import { IUserDocument } from "src/typings/users"
 import { IDeletedTable } from "src/typings/shop"
 import ShopModel from "../model"
 import createError from "http-errors"
-import CartModel, { AWAITING_PAYPAL, RECENTLY_CLOSED_MS } from "../../carts/model"
+import CartModel, { AWAITING_PROVIDER, RECENTLY_CLOSED_MS } from "../../carts/model"
+import { awaitedProvider } from "../../../lib/payments"
 import MenuModel from "../../menus/model"
 import { keepShopOrders } from "../../orders/sync"
 import { destroyReplacedImage, discardUpload } from "../../../settings/cloudinary"
@@ -42,7 +43,7 @@ export const getMyShops: TController = async ( req, res, next) => {
 
         // The manager's page lists a deleted table while its sheet has something
         // on it: `needsAttention` when there's something left to do (an open
-        // cart, or money PayPal hasn't confirmed), and until `recentCartsUntil`
+        // cart, or money a provider hasn't confirmed), and until `recentCartsUntil`
         // while it shows a closed cart (refundable there): a day after the
         // latest one last changed.
         const deletedIds = myShops.flatMap((shop) => shop.deletedTables.map((t) => String(t._id)))
@@ -50,7 +51,7 @@ export const getMyShops: TController = async ( req, res, next) => {
         const [needingIds, latest] = deletedIds.length === 0
             ? [[], []]
             : await Promise.all([
-                CartModel.distinct("tableId", { tableId: { $in: deletedIds }, $or: [{ status: "open" }, AWAITING_PAYPAL] }),
+                CartModel.distinct("tableId", { tableId: { $in: deletedIds }, $or: [{ status: "open" }, AWAITING_PROVIDER] }),
                 CartModel.aggregate<{ _id: string; last: Date }>([
                     { $match: { tableId: { $in: deletedIds }, status: "closed", updatedAt: { $gte: since } } },
                     { $group: { _id: "$tableId", last: { $max: "$updatedAt" } } },
@@ -182,7 +183,7 @@ export const deleteMyShop: TController = async ( req, res, next ) => {
         // The shop goes with everything in it: its menu items (deleted ones too)
         // and its carts, by the shop they record or, for older ones, their table,
         // payment records included. So it waits for any money still in flight
-        // (a table with an open cart, a payment or refund PayPal hasn't
+        // (a table with an open cart, a payment or refund its provider hasn't
         // confirmed), which a manager can only settle from this shop's pages,
         // and while a payment with something left to refund is on its table's
         // sheet (a cart closed or changed in the last 24 hours).
@@ -195,9 +196,9 @@ export const deleteMyShop: TController = async ( req, res, next ) => {
             return next(createError(409, "A table in this shop has an open cart — close it first"))
         }
         const tableName = (tableId: string) => allTables.find((t) => String(t._id) === tableId)?.name ?? "(unknown)"
-        const awaiting = itsCarts && await CartModel.findOne({ $and: [itsCarts, AWAITING_PAYPAL] }).select("tableId")
+        const awaiting = itsCarts && await CartModel.findOne({ $and: [itsCarts, AWAITING_PROVIDER] }).select("tableId payments refunds")
         if (awaiting) {
-            return next(createError(409, `A payment or refund at table ${tableName(awaiting.tableId)} is still awaiting PayPal — check it there first`))
+            return next(createError(409, `A payment or refund at table ${tableName(awaiting.tableId)} is still awaiting ${awaitedProvider(awaiting)} — check it there first`))
         }
         const since = new Date(Date.now() - RECENTLY_CLOSED_MS)
         const onSheets = itsCarts

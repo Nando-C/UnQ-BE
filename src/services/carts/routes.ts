@@ -1,9 +1,10 @@
 import { Router } from "express"
 import { JWTAuthMiddleware, optionalJWT } from "../auth/middlewares"
 import * as controllers from "./controllers"
+import * as stripeControllers from "./stripeControllers"
 import { validate } from "../../middlewares/validate"
 import { cartEditLimit } from "../../middlewares/rateLimits"
-import { cartItemSchema, cartItemWithQtySchema, checkOutSplitSchema } from "./schemas"
+import { cartItemSchema, cartItemWithQtySchema, checkOutSplitSchema, stripeCaptureSchema } from "./schemas"
 
 const router = Router()
 
@@ -18,6 +19,9 @@ router.post("/:shopId/tables/:tableId/:cartId/decreaseSplitItem", editing, valid
 router.post("/:shopId/tables/:tableId/:cartId/removeSplitItem", editing, validate(cartItemSchema), controllers.removeSplitItem)
 router.post("/tables/:tableId/:cartId/createCheckoutOrder", JWTAuthMiddleware, controllers.createCheckoutOrder)
 router.post("/tables/:tableId/:cartId/captureCheckout", JWTAuthMiddleware, validate(checkOutSplitSchema), controllers.captureCheckout)
+// Each call creates a Stripe intent (and a record the sweep looks after): limited as edits are.
+router.post("/tables/:tableId/:cartId/createStripeCheckout", editing, stripeControllers.createStripeCheckout)
+router.post("/tables/:tableId/:cartId/captureStripeCheckout", JWTAuthMiddleware, validate(stripeCaptureSchema), stripeControllers.captureStripeCheckout)
 // Public (anyone at the table); a signed-in diner also gets their own notices.
 router.get("/tables/:tableId", optionalJWT, controllers.getTableCart)
 router.get("/", JWTAuthMiddleware, controllers.getMyCarts)

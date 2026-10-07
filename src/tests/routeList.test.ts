@@ -15,6 +15,8 @@ describe("the route list printed at startup", () => {
             "GET /shops/browse",
             "PUT /shops/:shopId/menu/:itemId",
             "POST /carts/tables/:tableId/:cartId/captureCheckout",
+            "POST /carts/tables/:tableId/:cartId/createStripeCheckout",
+            "POST /carts/tables/:tableId/:cartId/captureStripeCheckout",
         ]))
         expect(new Set(rows).size).toBe(rows.length)
     })
