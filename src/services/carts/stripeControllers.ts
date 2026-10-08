@@ -3,7 +3,7 @@ import { TController } from "src/typings/controllers"
 import { IUserDocument } from "src/typings/users"
 import createError from "http-errors"
 import CartModel from "./model"
-import { shopIdOfTable } from "../shops/model"
+import { shopIdOfCart } from "../shops/model"
 import StripeCheckoutModel from "./stripeCheckout"
 import { CART_MENUS, checkoutCheck, forDiner } from "./controllers"
 import { cartGone, finishStripeIntent, stillConfirmingAnswer, takeBackAnswer } from "./stripeFinish"
@@ -37,7 +37,7 @@ export const createStripeCheckout: TController = async ( req, res, next ) => {
         const check = await checkoutCheck(cartId, tableId, user._id)
         if (!check.ok) return next(createError(check.status, check.message))
         const amount = toPence(check.total)
-        const shopId = check.cart.shopId ?? await shopIdOfTable(tableId)
+        const shopId = await shopIdOfCart(check.cart)
         if (!shopId) return next(createError(404, "This table is no longer at a shop"))
         if (!check.cart.shopId) await CartModel.updateOne({ _id: cartId, shopId: { $exists: false } }, { $set: { shopId } })
 

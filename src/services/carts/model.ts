@@ -1,5 +1,5 @@
 import mongoose, { UpdateQuery } from "mongoose"
-import { ICartDocument, INotice } from "src/typings/cart"
+import { ICart, ICartDocument, INotice, PaymentProvider } from "src/typings/cart"
 
 const { Schema, model } = mongoose
 
@@ -342,4 +342,13 @@ CartSchema.methods.toJSON = function () {
     return dinerView(this as ICartDocument)
 }
 
-export default model<ICartDocument>("Cart", CartSchema)
+const CartModel = model<ICartDocument>("Cart", CartSchema)
+export default CartModel
+
+// The cart field that records a provider's checkout ids, one per payer.
+export const CHECKOUT_ID_FIELD = { paypal: "paypalOrderIds", stripe: "stripePaymentIntentIds" } as const satisfies Record<PaymentProvider, keyof ICart>
+
+// Whether a cart records this PaymentIntent as paid (the cart is the truth for
+// paid). Worked out when asked, never stored: it can become true later.
+export const recordedOnCart = async (paymentIntentId: string | undefined) =>
+    !!paymentIntentId && !!(await CartModel.exists({ stripePaymentIntentIds: paymentIntentId }))

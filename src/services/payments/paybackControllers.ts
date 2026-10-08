@@ -4,10 +4,10 @@ import { z } from "zod"
 import { TController } from "src/typings/controllers"
 import { IUserDocument } from "src/typings/users"
 import CartModel from "../carts/model"
-import UserModel from "../users/model"
 import { logEntry } from "../carts/managerControllers"
 import { money } from "../../lib/money"
-import PaybackModel, { dinerName, DONE_AS, DoneAs, forManagers, IPayback, recordedOnCart } from "./payback"
+import { recordedOnCart } from "../carts/model"
+import PaybackModel, { dinerNameOf, DONE_AS, DoneAs, forManagers, IPayback } from "./payback"
 
 // A manager marking a pay-back done (S35). There are no staff roles yet: the
 // shop's managers do it (isShopManager runs first).
@@ -64,7 +64,7 @@ export const markPaybackDone: TController = async (req, res, next) => {
         }
 
         try {
-            const name = dinerName(await UserModel.findById(done.userId).select("name").lean())
+            const name = await dinerNameOf(done.userId)
             const details = `${money(done.amount, done.currency)} ${DONE_WORDS[doneAs]} ${name} ` +
                 `(${done.paymentIntentId ? `payment ${done.paymentIntentId}; ` : ""}pay-back ${done._id})`
             // Its cart gone (closed and deleted: normal for a hand-over): no line.

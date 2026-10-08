@@ -93,3 +93,5 @@ export default ShopModel
 // The shop a table (current or deleted) belongs to, for a record that doesn't
 // carry it; undefined once no shop has the table.
 export const shopIdOfTable = async (tableId: string) => (await ShopModel.findOne(ofTable(tableId)).select("_id").lean())?._id
+// A cart's shop: the one it records or, for a cart saved before carts did, its table's.
+export const shopIdOfCart = async (cart: { shopId?: mongoose.Types.ObjectId; tableId: string }) => cart.shopId ?? shopIdOfTable(cart.tableId)

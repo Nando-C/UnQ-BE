@@ -1,3 +1,4 @@
+import { jest, beforeAll, beforeEach, afterEach } from "@jest/globals"
 import request from "supertest"
 import Stripe from "stripe"
 import app from "../server"
@@ -5,6 +6,25 @@ import { authFor } from "./helpers"
 import { fakeStripe } from "./fakeStripe"
 import CartModel from "../services/carts/model"
 import StripeCheckoutModel from "../services/carts/stripeCheckout"
+import { stripeTiming } from "../services/carts/stripeFinish"
+
+// Every Stripe suite: the route's wait for another finisher shortened, the
+// fake emptied before each test, and a test's mocks undone after it. (The
+// suite's own `jest.mock("../lib/stripe", …)` line stays in its file: hoisted.)
+export const useFakeStripe = () => {
+    beforeAll(() => {
+        stripeTiming.waitMs = 400
+        stripeTiming.pollMs = 50
+    })
+    beforeEach(() => fakeStripe.reset())
+    afterEach(() => { jest.restoreAllMocks() })
+}
+
+// The diner's notices for the suites' £6.00 payment (stripeCheckout.ts's noticeText).
+export const WENT_THROUGH = "Your card payment of £6.00 went through"
+export const BEING_CONFIRMED = "Your card payment of £6.00 is being confirmed: your items are held for you"
+export const FAILED = "Your card payment of £6.00 didn't go through: nothing was taken. Those items are unpaid again."
+export const NOT_CHARGED = "Your card payment of £6.00 didn't go through: nothing was charged"
 
 // For the Stripe suites, which mock lib/stripe with fakeStripe. A shop with a
 // table and an item (`qty` ordered at `price`), Ada's cart with `select` of
@@ -44,7 +64,10 @@ export const stripeTable = async ({ qty = 2, price = 3, select }: { qty?: number
     return { owner, shopId, tableId, latte, ada, cartId, select: select_, create, capture, authorised, record, cart, view, messages }
 }
 
+export type Table = Awaited<ReturnType<typeof stripeTable>>
+
 export const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000)
+export const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000)
 
 // A record's fields written as they'd be later (timestamps included).
 export const setRecord = (pi: string, fields: Record<string, unknown>) =>

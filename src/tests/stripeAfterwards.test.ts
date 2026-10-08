@@ -1,4 +1,4 @@
-import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@jest/globals"
+import { jest, describe, it, expect } from "@jest/globals"
 
 // Stripe replaced by the in-memory fake, before the app is imported.
 jest.mock("../lib/stripe", () => jest.requireActual<typeof import("./fakeStripe")>("./fakeStripe").stripeMock())
@@ -8,25 +8,16 @@ import "./setup"
 import app from "../server"
 import * as stripe from "../lib/stripe"
 import { fakeStripe } from "./fakeStripe"
-import { authFor } from "./helpers"
-import { stripeTable, minutesAgo, setRecord, heldElsewhere } from "./stripeHelpers"
+import { authFor, quiet } from "./helpers"
+import { stripeTable, minutesAgo, setRecord, heldElsewhere, Table, useFakeStripe, WENT_THROUGH, BEING_CONFIRMED, FAILED, NOT_CHARGED } from "./stripeHelpers"
 import CartModel from "../services/carts/model"
-import { stripeTiming, sweepStripeCheckouts } from "../services/carts/stripeFinish"
+import { sweepStripeCheckouts } from "../services/carts/stripeFinish"
 
 const m = jest.mocked(stripe)
 
-beforeAll(() => {
-    stripeTiming.waitMs = 400
-    stripeTiming.pollMs = 50
-})
-beforeEach(() => fakeStripe.reset())
-afterEach(() => { jest.restoreAllMocks() })
+useFakeStripe()
 
-const WENT_THROUGH = "Your card payment of £6.00 went through"
-const BEING_CONFIRMED = "Your card payment of £6.00 is being confirmed: your items are held for you"
-const NOT_CHARGED = "Your card payment of £6.00 didn't go through: nothing was charged"
 
-type Table = Awaited<ReturnType<typeof stripeTable>>
 
 // Ada authorised, then closed the tab before her capture call: the record is
 // `open`, `minutes` old, and only the sweep (or S34's webhook) can finish it.
@@ -101,7 +92,7 @@ describe("the sweep", () => {
         const pi = await t.authorised()
         await heldElsewhere(pi)
         await setRecord(pi, { createdAt: minutesAgo(121) })
-        const errors = jest.spyOn(console, "error").mockImplementation(() => {})
+        const errors = quiet()
 
         await sweepStripeCheckouts()
         await sweepStripeCheckouts()
@@ -168,7 +159,7 @@ describe("the diner hears an outcome their own request didn't answer", () => {
     it("with the pending text for a processing payment", async () => {
         const t = await stripeTable()
         const pi = await leftAuthorised(t)
-        fakeStripe.set(pi, { status: "processing", amount_capturable: 0 })
+        fakeStripe.processing(pi)
 
         await sweepStripeCheckouts()
 
@@ -238,7 +229,7 @@ describe("the diner hears an outcome their own request didn't answer", () => {
         const t = await stripeTable()
         const pi = await t.authorised()
         // Told the release's answer (its cancel failed); the capture had landed.
-        fakeStripe.set(pi, { status: "succeeded", amount_capturable: 0, amount_received: 600 })
+        fakeStripe.captured(pi)
         await heldElsewhere(pi, { expired: true, state: "releasing" })
         await setRecord(pi, { status: 409, message: "Your selection changed since the order was created, please retry", answered: "released", answeredBy: ["their-request"], confirmed: true })
 
@@ -269,7 +260,7 @@ describe("the manager's payment check of a pending card payment", () => {
     const pendingCard = async () => {
         const t = await stripeTable()
         const pi = await leftAuthorised(t)
-        fakeStripe.set(pi, { status: "processing", amount_capturable: 0 })
+        fakeStripe.processing(pi)
         await sweepStripeCheckouts()
         const paymentId = String((await t.cart())!.payments[0]._id)
         const check = () => request(app).post(`/shops/${t.shopId}/carts/${t.cartId}/payments/${paymentId}/check`).set("Cookie", t.owner.cookies)
@@ -280,7 +271,7 @@ describe("the manager's payment check of a pending card payment", () => {
     it("tells a diner who was answered \"being confirmed\" when it completes", async () => {
         const t = await stripeTable()
         const pi = await t.authorised()
-        fakeStripe.set(pi, { status: "processing", amount_capturable: 0 })
+        fakeStripe.processing(pi)
         expect((await t.capture(pi)).status).toBe(202)
         expect(await t.messages()).toEqual([])
         const paymentId = (await t.cart())!.payments[0]._id
@@ -332,7 +323,7 @@ describe("the manager's payment check of a pending card payment", () => {
         expect((await check()).status).toBe(200)
 
         expect((await t.cart())!.items[0].qtyPayed).toBe(0)
-        expect(await t.messages()).toEqual(["Your card payment of £6.00 didn't go through: nothing was taken. Those items are unpaid again."])
+        expect(await t.messages()).toEqual([FAILED])
     })
 
     it("cancels one Stripe sends back for another card before marking it failed, and leaves it pending if it can't", async () => {

@@ -6,6 +6,7 @@
 
 import Stripe from "stripe"
 import env from "../settings/env"
+import { CURRENCY } from "./money"
 
 const stripe = new Stripe(env.STRIPE_SECRET_KEY, {
     // Pinned, so the shapes read here change only when this does.
@@ -44,7 +45,7 @@ export class StripeRefundRefused extends Error {
 export const createIntent = (amount: number, metadata: Record<string, string>) =>
     stripe.paymentIntents.create({
         amount,
-        currency: "gbp",
+        currency: CURRENCY.toLowerCase(),
         capture_method: "manual",
         // Cards (Apple Pay and Google Pay are cards too) settle at once; no
         // bank debits or pay-later methods, which settle days later.
@@ -52,9 +53,12 @@ export const createIntent = (amount: number, metadata: Record<string, string>) =
         metadata,
     })
 
-// The id of an intent's latest charge (what refunds go against), expanded or not.
-export const chargeIdOf = (intent: StripeIntent) =>
-    typeof intent.latest_charge === "string" ? intent.latest_charge : intent.latest_charge?.id
+// The id of something Stripe sends expanded or not.
+export const idOf = (ref: string | { id: string } | null | undefined) => (typeof ref === "string" ? ref : ref?.id)
+// The id of an intent's latest charge (what refunds go against).
+export const chargeIdOf = (intent: StripeIntent) => idOf(intent.latest_charge)
+// A refund that didn't happen: the money is still taken.
+export const refundUndone = (refund: Pick<StripeRefund, "status">) => refund.status === "failed" || refund.status === "canceled"
 
 // The intent with its latest charge (the charge id and what's refunded of it).
 export const retrieveIntent = (id: string) => stripe.paymentIntents.retrieve(id, { expand: ["latest_charge"] })
@@ -89,8 +93,8 @@ export const createRefund = async (
         if (!refused(error)) throw error
         throw new StripeRefundRefused((error as Error).message, (error as { code?: string }).code)
     }
-    if (refund.status === "failed" || refund.status === "canceled") {
-        const reason = refund.failure_reason ?? refund.status
+    if (refundUndone(refund)) {
+        const reason = refund.failure_reason ?? refund.status ?? undefined
         throw new StripeRefundRefused(`Stripe didn't make the refund (${reason})`, reason)
     }
     return refund

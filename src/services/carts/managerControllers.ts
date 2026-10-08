@@ -2,13 +2,13 @@ import mongoose from "mongoose"
 import { TController } from "src/typings/controllers"
 import { ICartDocument, IPayment, PaymentStatus, RefundReason } from "src/typings/cart"
 import CartModel, { AWAITING_PROVIDER, RECENTLY_CLOSED_MS, refId, tookPart } from "./model"
-import { syncRecordFromCart } from "./stripeCheckout"
-import ShopModel, { ofTable } from "../shops/model"
+import { hasCheckoutRecord, isDisputeReason, syncRecordFromCart } from "./stripeCheckout"
+import ShopModel, { ofTable, shopIdOfCart } from "../shops/model"
 import { keepOrderInStep } from "../orders/sync"
 import createError from "http-errors"
 import { CART_MENUS, closeIfPaidOff, hasPendingPayment, removeUnpaidUnits } from "./controllers"
 import { saveChecked } from "../../lib/mongo"
-import PaybackModel, { tablePaybacks } from "../payments/payback"
+import PaybackModel, { tablePaybacks, writePayback } from "../payments/payback"
 import { money } from "../../lib/money"
 import UserModel from "../users/model"
 import { awaitedProvider, checkProviderPayment, findProviderRefund, providerName, refundPayment, RefundRefused } from "../../lib/payments"
@@ -710,7 +710,7 @@ const unsettle = (cart: ICartDocument, payment: IPayment) => {
 // order too). Whether it worked: a failure is logged, and the check goes on
 // without it.
 const syncPaymentRecord = async (cart: ICartDocument, payment: IPayment) => {
-    if (payment.provider !== "stripe") return true
+    if (!hasCheckoutRecord(payment)) return true
     try {
         await syncRecordFromCart(cart, payment.providerCheckoutId, payment)
         return true
@@ -738,7 +738,7 @@ const settlePendingPayment = async (
         if (!p.providerPaymentId && providerPaymentId) p.providerPaymentId = providerPaymentId
         // A card payment's payer hears it from its record's notice (which
         // outlives a deleted or merged cart): no note as well.
-        const tell = (message: string) => { if (p.provider !== "stripe") note(c, message, p.userId) }
+        const tell = (message: string) => { if (!hasCheckoutRecord(p)) note(c, message, p.userId) }
         if (status === "completed") {
             tell(`${providerName(p)} confirmed your payment of ${amount}.`)
             log(c, actor, "checkPayment", `${amount} confirmed (payment ${paymentId})`)
@@ -818,4 +818,62 @@ export const checkPayment: TController = async ( req, res, next ) => {
     } catch (error) {
         next(createError(500, error as Error))
     }
+}
+
+
+// A manager's refund Stripe accepted, then couldn't make (the webhook's
+// refund.failed, S34/S35), by its entry `requestId` on cart `cartId`. Not
+// reversed here (decided 2026-10-07): the diner is owed it, so one the cart
+// has as completed becomes a pay-back (once) and a line for the managers. One
+// still pending here is asked for again ("retry"), once it's settled one way
+// or the other; one marked failed here already (its retry found it) can be
+// refunded again, so nothing is owed. A cart that's gone, or an id that isn't
+// one (metadata edited by hand), is only logged; a cart still here whose
+// refund can't be found on it is told to look at Stripe. `what` says which
+// refund, for the log and the lines.
+export const managerRefundFailed = async (
+    cartId: string, requestId: string, what: string, { intentId, failureReason }: { intentId?: string; failureReason?: string | null }
+): Promise<"done" | "retry"> => {
+    const about = { paymentIntentId: intentId, cartId, refundId: requestId }
+    if (!mongoose.isValidObjectId(cartId)) {
+        console.error(`A card ${what}, with metadata that isn't UnQ's`, about)
+        return "done"
+    }
+    const cart = await CartModel.findById(cartId).select("tableId shopId refunds payments")
+    if (!cart) {
+        console.error(`A card ${what}, and its cart is gone`, about)
+        return "done"
+    }
+    const ours = mongoose.isValidObjectId(requestId) ? cart.refunds.find((r) => String(r._id) === requestId) : undefined
+    if (!ours) {
+        console.error(`A card ${what}, and that refund isn't on its cart`, about)
+        await logOnce(cartId, "stripeRefundFailed", `${what}: it isn't on this cart, so check it in Stripe's dashboard`)
+        return "done"
+    }
+    if (ours.status === "pending") {
+        console.error(`A card ${what} while still pending here: Stripe sends it again`, about)
+        return "retry"
+    }
+    console.error(`A card ${what}`, about)
+    if (ours.status === "failed") {
+        await logOnce(cartId, "stripeRefundFailed", `${what}: it's marked failed here, so refund those items again`)
+        return "done"
+    }
+    const disputed = isDisputeReason(failureReason)
+    const payment = cart.payments.find((p) => String(p._id) === String(ours.paymentId))
+    const shopId = await shopIdOfCart(cart)
+    if (payment && shopId) {
+        await writePayback({
+            kind: "refundFailed", shopId, tableId: cart.tableId, cartId: cart._id, userId: payment.userId,
+            amount: ours.amount, paymentAmount: payment.amount, currency: ours.currency, refundId: ours._id,
+            ...(intentId && { paymentIntentId: intentId }),
+            ...(disputed && { disputed: true }),
+        })
+    } else {
+        console.error("…and its pay-back couldn't be written (no payment or shop)", about)
+    }
+    await logOnce(cartId, "stripeRefundFailed", disputed
+        ? `${what}: the diner disputes the payment with their bank, so don't pay it back yourselves (see the table's pay-backs)`
+        : `${what}: it wasn't reversed here, so pay the diner back another way`)
+    return "done"
 }

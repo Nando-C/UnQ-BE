@@ -6,21 +6,12 @@ import createError from "http-errors"
 import CartModel, { AWAITING_PROVIDER, RECENTLY_CLOSED_MS } from "../../carts/model"
 import { awaitedProvider } from "../../../lib/payments"
 import MenuModel from "../../menus/model"
-import { keepShopOrders, SHOP_DELETION_READ } from "../../orders/sync"
-import StripeCheckoutModel, { CHECKOUT_STATES, FINAL_STATES } from "../../carts/stripeCheckout"
+import { keepShopOrders } from "../../orders/sync"
+import { cardMoneyHolding } from "../../carts/stripeDeletion"
 import PaybackModel from "../../payments/payback"
 import { destroyReplacedImage, discardUpload } from "../../../settings/cloudinary"
 import mongoose, { PipelineStage } from "mongoose"
 import { BrowseShopsQuery } from "../schemas"
-
-// How long after a card refund last moved Stripe may still report it failed
-// (S35's shop deletion waits that long).
-const CARD_REFUND_CAN_FAIL_MS = 30 * 24 * 60 * 60 * 1000
-// A card payment's states while it's being finished (stripeCheckout.ts): not
-// `open` (one nobody confirmed holds nothing, and is cancelled in an hour; one
-// confirmed meanwhile is released, its cart gone).
-const UNFINISHED = CHECKOUT_STATES.filter((state) => state !== "open" && !FINAL_STATES.includes(state))
-const dateOf = (ms: number) => new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })
 
 // The text as a pattern that matches it literally.
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
@@ -200,78 +191,27 @@ export const deleteMyShop: TController = async ( req, res, next ) => {
         // and while a payment with something left to refund is on its table's
         // sheet (a cart closed or changed in the last 24 hours).
         const shop = await ShopModel.findOne({_id: shopId, shopMg: user._id }).select("tables deletedTables")
-        const allTables = shop ? [...shop.tables, ...shop.deletedTables] : []
+        if (!shop) return next(createError(400, "Shop Not Found or you are not authorized!"))
+        const allTables = [...shop.tables, ...shop.deletedTables]
         const tableIds = allTables.map((t) => String(t._id))
         // Its carts, and its card payments' records: by the shop they record
         // or, for older ones, their table.
-        const itsCarts = shop && { $or: [{ shopId: shop._id }, { tableId: { $in: tableIds } }] }
-        if (itsCarts && await CartModel.exists({ $and: [itsCarts, { status: "open" }] })) {
+        const itsCarts = { $or: [{ shopId: shop._id }, { tableId: { $in: tableIds } }] }
+        if (await CartModel.exists({ $and: [itsCarts, { status: "open" }] })) {
             return next(createError(409, "A table in this shop has an open cart — close it first"))
         }
         const tableName = (tableId: string) => allTables.find((t) => String(t._id) === tableId)?.name ?? "(unknown)"
-        const awaiting = itsCarts && await CartModel.findOne({ $and: [itsCarts, AWAITING_PROVIDER] }).select("tableId payments refunds")
+        const awaiting = await CartModel.findOne({ $and: [itsCarts, AWAITING_PROVIDER] }).select("tableId payments refunds")
         if (awaiting) {
             return next(createError(409, `A payment or refund at table ${tableName(awaiting.tableId)} is still awaiting ${awaitedProvider(awaiting)} — check it there first`))
         }
-        // Card payments (S35): one still being finished may yet be handed to
-        // staff, and a card refund can fail at Stripe long after it was made
-        // (even after Stripe said it succeeded): its pay-back then needs the
-        // shop to be seen on. So the shop waits for those, for any diner still
-        // to be paid back (what the manager can do now), and for 30 days after
-        // a card refund last moved.
-        if (shop && itsCarts) {
-            // The refunds Stripe still calls succeeded: the API's own (records
-            // `refunded`; one that failed is handed over, and done with above)
-            // by when they last moved, and the managers' by when they were
-            // made, on the carts changed since the cutoff (a refund's change is
-            // one), a card payment's and without a pay-back (failed already).
-            const cutoff = new Date(Date.now() - CARD_REFUND_CAN_FAIL_MS)
-            const latestRecord = (by: object) => StripeCheckoutModel
-                .findOne({ refunding: true, state: "refunded", updatedAt: { $gte: cutoff }, ...by })
-                .sort({ updatedAt: -1 }).select("updatedAt").lean()
-            const [finishing, owed, byShop, byTable, carts, failed] = await Promise.all([
-                StripeCheckoutModel.findOne({
-                    $and: [
-                        { $or: [{ state: { $in: UNFINISHED } }, { state: "refundFailed", staffToldAt: { $exists: false } }] },
-                        itsCarts,
-                    ],
-                }).select("tableId refunding").lean(),
-                PaybackModel.findOne({ shopId: shop._id, owed: true }).select("tableId").lean(),
-                latestRecord({ shopId: shop._id }),
-                latestRecord({ tableId: { $in: tableIds } }),
-                CartModel.find({ $and: [itsCarts, {
-                    status: "closed", updatedAt: { $gte: cutoff }, "payments.provider": "stripe", "refunds.status": "completed",
-                }] }).select("payments._id payments.provider refunds._id refunds.paymentId refunds.status refunds.at").comment(SHOP_DELETION_READ).lean(),
-                PaybackModel.find({ shopId: shop._id, kind: "refundFailed", at: { $gte: cutoff } }).select("refundId").lean(),
-            ])
-            if (finishing) {
-                // Refunding: Stripe refused it for now, and it's retried (stripeFinish.ts's refund()).
-                return next(createError(409, finishing.refunding
-                    ? `A card refund at Table ${tableName(finishing.tableId)} is being retried at Stripe (every 30 minutes, for up to a day) — try again later`
-                    : `A card payment at Table ${tableName(finishing.tableId)} is still being finished — try again shortly`))
-            }
-            if (owed) {
-                return next(createError(409, `A diner at Table ${tableName(owed.tableId)} is still to be paid back — mark it done first`))
-            }
-            const failedIds = new Set(failed.map((p) => String(p.refundId)))
-            const cardRefunds = carts.flatMap((cart) => {
-                const cards = new Set(cart.payments.filter((p) => p.provider === "stripe").map((p) => String(p._id)))
-                return cart.refunds
-                    .filter((r) => r.status === "completed" && cards.has(String(r.paymentId)) && !failedIds.has(String(r._id)))
-                    .map((r) => r.at.getTime())
-            })
-            const lastRefund = Math.max(byShop?.updatedAt.getTime() ?? 0, byTable?.updatedAt.getTime() ?? 0,
-                ...cardRefunds.filter((at) => at >= cutoff.getTime()))
-            if (lastRefund) {
-                return next(createError(409, `A card refund at this shop on ${dateOf(lastRefund)} can still fail at Stripe until ` +
-                    `${dateOf(lastRefund + CARD_REFUND_CAN_FAIL_MS)}: the shop can be deleted from then`))
-            }
-        }
+        // Card payments (S35): one still being finished, a diner to pay back,
+        // a card refund that can still fail (stripeDeletion.ts).
+        const holding = await cardMoneyHolding(shop._id, itsCarts, tableIds, tableName)
+        if (holding) return next(createError(409, holding))
         const since = new Date(Date.now() - RECENTLY_CLOSED_MS)
-        const onSheets = itsCarts
-            ? await CartModel.find({ $and: [itsCarts, { status: "closed", updatedAt: { $gte: since }, "payments.0": { $exists: true } }] })
-                .select("tableId payments")
-            : []
+        const onSheets = await CartModel.find({ $and: [itsCarts, { status: "closed", updatedAt: { $gte: since }, "payments.0": { $exists: true } }] })
+            .select("tableId payments")
         // As the sheet offers a refund: a completed payment (those from before
         // payments had a status read as completed) with its capture id and
         // something left to refund.
@@ -285,17 +225,15 @@ export const deleteMyShop: TController = async ( req, res, next ) => {
         // their payments: any order missing or older than its cart (a sync
         // that failed earlier) is written first, or nothing is deleted. Reads
         // all its paid carts, as deleting them does.
-        if (itsCarts) {
-            try {
-                await keepShopOrders(itsCarts, shop)
-            } catch (error) {
-                console.error("Shop not deleted: its sales records couldn't be written", { shopId, error })
-                return next(createError(500, "The shop's sales records couldn't be saved, so nothing was deleted. Try again shortly.", { expose: true }))
-            }
+        try {
+            await keepShopOrders(itsCarts, shop)
+        } catch (error) {
+            console.error("Shop not deleted: its sales records couldn't be written", { shopId, error })
+            return next(createError(500, "The shop's sales records couldn't be saved, so nothing was deleted. Try again shortly.", { expose: true }))
         }
 
         const deletedShop = await ShopModel.findOneAndDelete({_id: shopId, shopMg: user._id })
-        if (!deletedShop || !itsCarts) return next(createError(400, "Shop Not Found or you are not authorized!"))
+        if (!deletedShop) return next(createError(400, "Shop Not Found or you are not authorized!"))
 
         await Promise.all([
             MenuModel.deleteMany({ $or: [{ _id: { $in: deletedShop.menu } }, { deletedFrom: deletedShop._id }] }),

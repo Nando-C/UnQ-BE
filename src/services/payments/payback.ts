@@ -1,5 +1,6 @@
 import mongoose from "mongoose"
 import CartModel from "../carts/model"
+import UserModel from "../users/model"
 import { isDuplicateKey } from "../../lib/mongo"
 
 const { Schema, model } = mongoose
@@ -83,6 +84,7 @@ export default PaybackModel
 // A diner as a line for staff names them (first name only).
 export const dinerName = (user: { name?: string } | null | undefined) =>
     user ? user.name || "a diner with no name" : "a diner whose account is gone"
+export const dinerNameOf = async (userId: unknown) => dinerName(await UserModel.findById(userId).select("name").lean())
 
 // A pay-back written once: a repeat is already done.
 export const writePayback = async (payback: Omit<IPayback, "_id" | "owed" | "at">) => {
@@ -96,12 +98,6 @@ export const writePayback = async (payback: Omit<IPayback, "_id" | "owed" | "at"
 // A table's sheet shows its owed pay-backs and those done in the last 30 days.
 export const PAYBACKS_DONE_SHOWN_MS = 30 * 24 * 60 * 60 * 1000
 
-// Whether a cart shows this payment as paid (a holder that stalled past its
-// lease can record it after it was handed over): worked out when read, never
-// stored, as it can become true later.
-export const recordedOnCart = async (paymentIntentId: string | undefined) =>
-    !!paymentIntentId && !!(await CartModel.exists({ stripePaymentIntentIds: paymentIntentId }))
-
 // A pay-back as managers read it: the diner and the manager who marked it by
 // first name (null: account gone), and `recorded` for a hand-over a cart now
 // shows as paid.
@@ -109,17 +105,17 @@ const NAMES = [
     { path: "userId", select: "name", options: { lean: true } },
     { path: "doneByUserId", select: "name", options: { lean: true } },
 ]
+// An owed hand-over: a holder that stalled past its lease can record its
+// payment on a cart after it (then it's checked, not paid back).
+const handedOver = (p: IPayback) => p.owed && p.kind === "refundRefused" && !!p.paymentIntentId
 export const forManagers = async (paybacks: IPayback[]) => {
-    const handedOver = paybacks.filter((p) => p.owed && p.kind === "refundRefused" && p.paymentIntentId).map((p) => p.paymentIntentId!)
-    const onCarts = handedOver.length
-        ? new Set((await CartModel.find({ stripePaymentIntentIds: { $in: handedOver } }).select("stripePaymentIntentIds").lean())
-            .flatMap((c) => c.stripePaymentIntentIds ?? []))
-        : new Set<string>()
-    const named = await PaybackModel.populate(paybacks, NAMES)
-    return named.map((p) => ({
-        ...p,
-        ...(p.owed && p.kind === "refundRefused" && onCarts.has(p.paymentIntentId!) && { recorded: true }),
-    }))
+    const intentIds = paybacks.filter(handedOver).map((p) => p.paymentIntentId!)
+    const [onCarts, named] = await Promise.all([
+        intentIds.length ? CartModel.find({ stripePaymentIntentIds: { $in: intentIds } }).select("stripePaymentIntentIds").lean() : [],
+        PaybackModel.populate(paybacks, NAMES),
+    ])
+    const recorded = new Set(onCarts.flatMap((c) => c.stripePaymentIntentIds ?? []))
+    return named.map((p) => ({ ...p, ...(handedOver(p) && recorded.has(p.paymentIntentId!) && { recorded: true }) }))
 }
 
 // A table's pay-backs for its sheet, newest first. Two queries, each on its

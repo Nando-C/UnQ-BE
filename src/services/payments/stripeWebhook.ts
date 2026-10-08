@@ -1,13 +1,11 @@
 import createError from "http-errors"
-import mongoose from "mongoose"
 import { TController } from "src/typings/controllers"
 import { StripeEvent, verifiedEvent } from "../../lib/stripeWebhook"
-import { money } from "../../lib/money"
-import { cardPaymentOf, finishStripeIntent, isDisputeReason, Outcome, reopenFailedRefund } from "../carts/stripeFinish"
-import CartModel from "../carts/model"
-import { shopIdOfTable } from "../shops/model"
-import { writePayback } from "./payback"
-import { checkPendingPayment, logOnce } from "../carts/managerControllers"
+import type { StripeIntent, StripeRefund } from "../../lib/stripe"
+import { idOf } from "../../lib/stripe"
+import { fromPence, money } from "../../lib/money"
+import { cardPaymentOf, finishStripeIntent, Outcome, reopenFailedRefund } from "../carts/stripeFinish"
+import { checkPendingPayment, managerRefundFailed } from "../carts/managerControllers"
 
 // POST /payments/stripe/webhook: Stripe's events about the card payments UnQ
 // made. Stripe retries one not answered 2xx, for up to 3 days, and may repeat
@@ -17,9 +15,6 @@ import { checkPendingPayment, logOnce } from "../carts/managerControllers"
 // Intents and refunds UnQ didn't make are answered 200 and left alone.
 
 type Handled = "done" | "retry"
-
-type Intent = Extract<StripeEvent, { type: "payment_intent.succeeded" }>["data"]["object"]
-type Refund = Extract<StripeEvent, { type: "refund.failed" }>["data"]["object"]
 
 // The finishing procedure's outcome. Final (even a 500 one: a refund handed
 // to staff), left to a holder with a live lease (it finishes it; the sweep if
@@ -49,7 +44,7 @@ const settleOnCart = async (id: string): Promise<Handled | null> => {
     }
 }
 
-const onIntent = async (type: StripeEvent["type"], intent: Intent): Promise<Handled> => {
+const onIntent = async (type: StripeEvent["type"], intent: StripeIntent): Promise<Handled> => {
     // Authorised: finished for the diner, who may never come back for it.
     // Another finisher on it (the diner's own request) finishes it; one waiting
     // to retry a refund is the sweep's.
@@ -71,11 +66,11 @@ const onIntent = async (type: StripeEvent["type"], intent: Intent): Promise<Hand
 
 // A refund Stripe accepted, then couldn't make (the diner's card closed;
 // rare). Not reversed (decided 2026-10-07): staff pay the diner another way.
-const onRefundFailed = async (refund: Refund): Promise<Handled> => {
-    const intentId = typeof refund.payment_intent === "string" ? refund.payment_intent : refund.payment_intent?.id
+const onRefundFailed = async (refund: StripeRefund): Promise<Handled> => {
+    const intentId = idOf(refund.payment_intent)
     const { cartId, requestId, late } = refund.metadata ?? {}
     const reason = refund.failure_reason ?? "no reason given"
-    const amount = money(refund.amount / 100, refund.currency.toUpperCase())
+    const amount = money(fromPence(refund.amount), refund.currency.toUpperCase())
 
     // The full refund of a payment that couldn't be recorded: the money is
     // still taken, so it's refunded again, or handed to staff when it won't go
@@ -92,57 +87,10 @@ const onRefundFailed = async (refund: Refund): Promise<Handled> => {
         return reopened === "inFlight" ? "retry" : "done"
     }
 
-    // A manager's refund, by its entry on the cart. A cart id that isn't one
-    // (metadata edited by hand), or a cart that's gone, is only logged; a cart
-    // still here whose refund can't be found on it is told to look at Stripe.
+    // A manager's refund, by its entry on the cart (managerControllers.ts).
     if (cartId && requestId) {
         const what = `${amount} refund failed at Stripe (${reason}; refund ${requestId}, Stripe's ${refund.id})`
-        if (!mongoose.isValidObjectId(cartId)) {
-            console.error(`A card ${what}, with metadata that isn't UnQ's`, { paymentIntentId: intentId, cartId, refundId: refund.id })
-            return "done"
-        }
-        const cart = await CartModel.findById(cartId).select("tableId shopId refunds payments")
-        if (!cart) {
-            console.error(`A card ${what}, and its cart is gone`, { paymentIntentId: intentId, cartId, refundId: refund.id })
-            return "done"
-        }
-        const ours = mongoose.isValidObjectId(requestId) ? cart.refunds.find((r) => String(r._id) === requestId) : undefined
-        if (!ours) {
-            console.error(`A card ${what}, and that refund isn't on its cart`, { paymentIntentId: intentId, cartId, refundId: refund.id })
-            await logOnce(cartId, "stripeRefundFailed", `${what}: it isn't on this cart, so check it in Stripe's dashboard`)
-            return "done"
-        }
-        // Accepted, but not saved as completed yet (or its answer was
-        // unclear): asked again, once it's settled one way or the other.
-        if (ours.status === "pending") {
-            console.error(`A card ${what} while still pending here: Stripe sends it again`, { paymentIntentId: intentId, cartId })
-            return "retry"
-        }
-        console.error(`A card ${what}`, { paymentIntentId: intentId, cartId, refundId: refund.id })
-        // Marked failed here already (its retry found it): its items can be
-        // refunded again, so nothing is owed, and staff aren't told to pay it.
-        if (ours.status === "failed") {
-            await logOnce(cartId, "stripeRefundFailed", `${what}: it's marked failed here, so refund those items again`)
-            return "done"
-        }
-        // Completed here: the diner is owed it. A pay-back (once), and the line.
-        const disputed = isDisputeReason(refund.failure_reason)
-        const payment = cart.payments.find((p) => String(p._id) === String(ours.paymentId))
-        const shopId = cart.shopId ?? await shopIdOfTable(cart.tableId)
-        if (payment && shopId) {
-            await writePayback({
-                kind: "refundFailed", shopId, tableId: cart.tableId, cartId: cart._id, userId: payment.userId,
-                amount: ours.amount, paymentAmount: payment.amount, currency: ours.currency, refundId: ours._id,
-                ...(intentId && { paymentIntentId: intentId }),
-                ...(disputed && { disputed: true }),
-            })
-        } else {
-            console.error("…and its pay-back couldn't be written (no payment or shop)", { cartId, refundId: refund.id })
-        }
-        await logOnce(cartId, "stripeRefundFailed", disputed
-            ? `${what}: the diner disputes the payment with their bank, so don't pay it back yourselves (see the table's pay-backs)`
-            : `${what}: it wasn't reversed here, so pay the diner back another way`)
-        return "done"
+        return managerRefundFailed(cartId, requestId, what, { intentId, failureReason: refund.failure_reason })
     }
 
     // Made in Stripe's dashboard (no metadata): seen, nothing to update.

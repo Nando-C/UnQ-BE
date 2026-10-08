@@ -1,17 +1,19 @@
 import { randomUUID } from "crypto"
 import mongoose from "mongoose"
 import CartModel from "./model"
-import UserModel from "../users/model"
-import StripeCheckoutModel, { FINAL_STATES, FinalState, IStripeCheckout, outcomeKey, syncRecordFromCart } from "./stripeCheckout"
+import StripeCheckoutModel, {
+    FINAL_STATES, FinalState, HELD_STATES, isDisputeReason, IStripeCheckout, outcomeKey, owedPence, syncRecordFromCart,
+} from "./stripeCheckout"
 import { checkoutCheck, settleCheckout, Settlement, SettleOutcome } from "./controllers"
 import { keepOrderInStep } from "../orders/sync"
 import {
-    cancelIntent, captureIntent, chargeIdOf, createRefund, listRefunds, retrieveIntent, StripeCaptureRefused, StripeCharge, StripeIntent, StripeRefundRefused,
+    cancelIntent, captureIntent, chargeIdOf, createRefund, listRefunds, refundUndone, retrieveIntent, StripeCaptureRefused, StripeCharge, StripeIntent,
+    StripeRefundRefused,
 } from "../../lib/stripe"
-import { money, toPence } from "../../lib/money"
+import { CURRENCY, fromPence, money, toPence } from "../../lib/money"
 import { log, logOnce } from "./managerControllers"
 import { shopIdOfTable } from "../shops/model"
-import { dinerName, writePayback } from "../payments/payback"
+import { dinerNameOf, writePayback } from "../payments/payback"
 
 // Finishing a card payment: one procedure for the diner's capture call
 // (captureStripeCheckout), the sweep below and the webhook (S34). The diner's
@@ -54,8 +56,8 @@ export type Outcome =
 
 type Answer = { status: number; message: string }
 
-export const CART_GONE = "Your card payment went through, but this table's cart is no longer here"
-export const CART_GONE_PENDING = "Your card payment is being confirmed, but this table's cart is no longer here"
+const CART_GONE = "Your card payment went through, but this table's cart is no longer here"
+const CART_GONE_PENDING = "Your card payment is being confirmed, but this table's cart is no longer here"
 // Its 404, with a machine-readable why (the frontend tells it from the other
 // 404s, which mean nothing was charged).
 export const cartGone = (pending: boolean) => pending
@@ -75,18 +77,18 @@ export const stillConfirmingAnswer = (id: string) => ({
     message: `We're still confirming your payment. Your cart will update once it's confirmed, and you'll get a note if it doesn't go through — until then, please don't pay for these items again (payment ${id})`,
     reason: "STILL_CONFIRMING",
 })
-const stillConfirming = (id: string): Outcome => ({ kind: "answer", ...stillConfirmingAnswer(id), expose: true })
 const contactStaffMessage = (id: string) => `We couldn't finish your payment — please contact staff (payment ${id})`
 // Left for a later finisher (the webhook answers 500, so Stripe retries too).
 const contactStaff = (id: string): Outcome => ({ kind: "answer", status: 500, message: contactStaffMessage(id), expose: true })
-const notRefunded = (id: string) =>
-    ({ kind: "answer" as const, status: 500, message: `Payment captured but could not be recorded or refunded — please contact staff (payment ${id})`, expose: true })
+const notRefundedMessage = (id: string) => `Payment captured but could not be recorded or refunded — please contact staff (payment ${id})`
+const notRefunded = (id: string): Outcome => ({ kind: "answer", status: 500, message: notRefundedMessage(id), expose: true })
 // Handed to staff (refundFailed): as above, or, for one the diner disputes,
 // their bank returns it (staff are told not to pay it back).
 const handedOverAnswer = (id: string, disputed?: boolean): Outcome => ({
-    ...notRefunded(id),
-    ...(disputed ? { message: `Payment captured but couldn't be refunded to your card while you dispute it: your bank returns it (payment ${id})` } : {}),
-    final: "refundFailed",
+    kind: "answer", status: 500, expose: true, final: "refundFailed",
+    message: disputed
+        ? `Payment captured but couldn't be refunded to your card while you dispute it: your bank returns it (payment ${id})`
+        : notRefundedMessage(id),
 })
 
 // The statuses that say the diner got past entering their card (see the
@@ -117,25 +119,15 @@ const FOR_GOOD = new Set([
     "charge_disputed", "refund_disputed_payment", "charge_not_refundable", "canceled",
 ])
 const wontClear = (reason: string | null | undefined) => FOR_GOOD.has(reason ?? "")
-// Those that say the diner disputed the charge with their bank, and the
-// dispute is open (Stripe refuses a refund for it): the dispute, not staff,
-// gives them the money back. (Never the charge's `disputed`, which stays true
-// once a dispute closes, won or lost.)
-const DISPUTED = new Set(["charge_for_pending_refund_disputed", "charge_disputed", "refund_disputed_payment"])
-// Whether Stripe's refund failure reason is the diner's dispute.
-export const isDisputeReason = (reason: string | null | undefined) => DISPUTED.has(reason ?? "")
-
 // What's still taken of intent `id`'s charge (pence), from the refunds Stripe
 // lists for it: those failed or cancelled don't count, nor `failed` (one
 // Stripe just reported failed, whatever its status or the charge's refunded
 // total say yet). Null when it has no charge.
 const stillTaken = async (id: string, failed?: string) => {
-    const charge = chargeOf(await retrieveIntent(id))
+    const [intent, refunds] = await Promise.all([retrieveIntent(id), listRefunds(id)])
+    const charge = chargeOf(intent)
     if (!charge) return null
-    const refunds = await listRefunds(id)
-    const refunded = refunds
-        .filter((r) => r.id !== failed && r.status !== "failed" && r.status !== "canceled")
-        .reduce((sum, r) => sum + r.amount, 0)
+    const refunded = refunds.filter((r) => r.id !== failed && !refundUndone(r)).reduce((sum, r) => sum + r.amount, 0)
     return charge.amount - refunded
 }
 
@@ -144,7 +136,7 @@ const stillTaken = async (id: string, failed?: string) => {
 // diner's dispute is open.
 const handedOverFields = (owed: number | null, reason: string | null | undefined) => ({
     ...(owed !== null ? { refundOwed: owed } : {}),
-    ...(DISPUTED.has(reason ?? "") ? { disputed: true } : {}),
+    ...(isDisputeReason(reason) ? { disputed: true } : {}),
 })
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -177,18 +169,14 @@ const markAnswered = async (id: string, outcome: string, caller: Caller | undefi
     if (!caller?.connected()) return
     const stamps = { $cond: [{ $eq: ["$answered", outcome] }, { $setUnion: [{ $ifNull: ["$answeredBy", []] }, [caller.stamp]] }, [caller.stamp]] }
     await StripeCheckoutModel.collection.updateOne({ _id: id as never, ...matching }, [{ $set: { answeredBy: stamps, answered: outcome } }])
-    await afterAnswer(id, caller)
-}
-
-// The diner left after the answer was marked: taken back.
-const afterAnswer = async (id: string, caller: Caller | undefined) => {
-    if (caller && !caller.connected()) await takeBackAnswer(id, caller.stamp)
+    // They left meanwhile: taken back.
+    if (!caller.connected()) await takeBackAnswer(id, caller.stamp)
 }
 
 // The route answers "still confirming": the diner will want to hear the outcome.
-const stillConfirmingFor = async (id: string) => {
+const stillConfirmingFor = async (id: string): Promise<Outcome> => {
     await StripeCheckoutModel.updateOne({ _id: id }, { $set: { confirmed: true } })
-    return stillConfirming(id)
+    return { kind: "answer", ...stillConfirmingAnswer(id), expose: true }
 }
 
 // The cart that recorded intent `id` (open or closed), and its payment.
@@ -243,7 +231,7 @@ const claim = async (id: string, token: string) => {
     const fresh = { token, leaseUntil: leaseEnd() }
     return (await StripeCheckoutModel.findOneAndUpdate({ _id: id, state: "open" }, { $set: { ...fresh, state: "finishing" } }).lean()) ??
         StripeCheckoutModel.findOneAndUpdate(
-            { _id: id, state: { $in: ["finishing", "releasing"] }, leaseUntil: { $lte: new Date() } },
+            { _id: id, state: { $in: HELD_STATES }, leaseUntil: { $lte: new Date() } },
             { $set: fresh }
         ).lean()
 }
@@ -364,9 +352,20 @@ class Holder {
         return status && message ? { status, message } : null
     }
 
-    // Step 4.
+    // Nothing taken, finished as `released`, with `answer`.
+    private async released(answer: Answer): Promise<Outcome> {
+        await this.finish("released", answer)
+        return this.answer(answer, "released")
+    }
+
+    // Left for a later finisher: the diner hears "still confirming", the
+    // webhook and the sweep a 500 (Stripe retries).
+    private later(): Promise<Outcome> | Outcome {
+        return this.caller ? stillConfirmingFor(this.id) : contactStaff(this.id)
+    }
+
+    // Step 4. (The claim just made is the first renewal of the lease.)
     async run(): Promise<Outcome> {
-        await this.renew()
         const intent = await retrieveIntent(this.id)
         if (CONFIRMED_STATUSES.includes(intent.status) && !this.record.confirmed) await this.write({ confirmed: true })
 
@@ -383,8 +382,7 @@ class Holder {
                 return this.captured(intent)
             case "canceled":
                 // A cancel whose answer was lost, or Stripe's own after 7 days.
-                await this.finish("released", this.stored() ?? NOT_COMPLETED)
-                return this.answer(this.stored() ?? NOT_COMPLETED, "released")
+                return this.released(this.stored() ?? NOT_COMPLETED)
             case "requires_action":
                 // The bank check is still open: an approval can still come.
                 if (!this.by.expire) return this.reopen()
@@ -428,10 +426,7 @@ class Holder {
                 return this.giveUp(error)
             }
             if (CAPTURED_STATUSES.includes(now.status)) return this.captured(now)
-            if (now.status === "canceled") {
-                await this.finish("released", NOT_COMPLETED)
-                return this.answer(NOT_COMPLETED, "released")
-            }
+            if (now.status === "canceled") return this.released(NOT_COMPLETED)
             if (now.status === "requires_capture" && error instanceof StripeCaptureRefused) return this.release(now, CAPTURE_FAILED)
             return this.giveUp(error)
         }
@@ -449,7 +444,7 @@ class Holder {
     // The capture's outcome is unclear.
     private async giveUp(error: unknown): Promise<Outcome> {
         await this.letGo("Stripe capture outcome unknown", error)
-        return this.caller ? stillConfirmingFor(this.id) : contactStaff(this.id)
+        return this.later()
     }
 
     // Nothing is taken: `releasing` first, with the answer, so whoever finishes
@@ -479,8 +474,7 @@ class Holder {
                 }
             }
         }
-        await this.finish("released", answer)
-        return this.answer(answer, "released")
+        return this.released(answer)
     }
 
     // Step 7: captured, not on a cart.
@@ -509,7 +503,7 @@ class Holder {
             paymentId: chargeIdOf(intent),
             status: pending ? "pending" : "completed",
             // Verified against the amount due (amount_received is 0 while processing).
-            amount: intent.amount / 100,
+            amount: fromPence(intent.amount),
             currency: intent.currency.toUpperCase(),
         }
         const { cartId, tableId } = this.record
@@ -529,7 +523,7 @@ class Holder {
                 // sees who did it. (Not the webhook's: Stripe's notice often
                 // comes while the diner's own capture call is on its way.)
                 change: this.by.sweep ? (cart) => log(cart, undefined, "stripeFinished",
-                    `${money(settlement.amount, "GBP")} card payment finished by the server after the diner left (payment ${this.id})`) : undefined,
+                    `${money(settlement.amount)} card payment finished by the server after the diner left (payment ${this.id})`) : undefined,
             })
         } catch (error) {
             // Most likely brief (a database failover): the claim is given up
@@ -543,7 +537,7 @@ class Holder {
             const since = this.record.settleFailingSince ?? new Date()
             if (since.getTime() > Date.now() - SETTLE_RETRY_MS) {
                 await this.letGo("Settling a captured Stripe payment failed: the next finisher retries", error, { set: { settleFailingSince: since } })
-                return this.caller ? stillConfirmingFor(this.id) : contactStaff(this.id)
+                return this.later()
             }
             console.error("Settling a captured Stripe payment keeps failing: refunding it", { paymentIntentId: this.id, error })
             outcome = { ok: false, ...NOT_RECORDED, status: 500 }
@@ -612,13 +606,8 @@ class Holder {
             }
         }
         // The refund that did it, if this holder made it (a failure Stripe
-        // reports later reopens the record: reopenFailedRefund). One reopened
-        // that way keeps its first finishedAt: the same outcome, so the same
-        // notice (one the diner dismissed stays dismissed).
-        await this.finish("refunded", answer, {
-            ...(made ? { refundId: made.id } : {}),
-            ...(this.record.finishedAt ? { finishedAt: this.record.finishedAt } : {}),
-        }, { unset: { refundRefusedSince: 1 } })
+        // reports later reopens the record: reopenFailedRefund).
+        await this.refunded(made ? { refundId: made.id } : {})
         // Accepted residual risk: a holder that stalled past its lease between
         // renewing and saving the cart. Seen, so the manager knows. Best
         // effort: the refund is done whatever happens here.
@@ -636,6 +625,17 @@ class Holder {
         return this.answer(answer, "refunded")
     }
 
+    // Finished as `refunded`, with `answer` (the refund's, by default). One
+    // reopened by a failure Stripe reported later (reopenFailedRefund) keeps
+    // its first finishedAt: the same outcome, so the same notice (one the
+    // diner dismissed stays dismissed).
+    private refunded(set: Record<string, unknown>, answer: Answer | null = null) {
+        return this.finish("refunded", answer, {
+            ...set,
+            ...(this.record.finishedAt ? { finishedAt: this.record.finishedAt } : {}),
+        }, { unset: { refundRefusedSince: 1 } })
+    }
+
     // A refund Stripe won't make: handed to staff, as reopenFailedRefund hands
     // one over. Final first, so nothing refunds it again; staff told then
     // (if that fails, by the sweep).
@@ -648,9 +648,7 @@ class Holder {
         const owed = await stillTaken(this.id)
         if (owed !== null && owed <= 0) {
             const answer = this.stored() ?? NOT_RECORDED
-            await this.finish("refunded", answer, {
-                ...(this.record.finishedAt ? { finishedAt: this.record.finishedAt } : {}),
-            }, { unset: { refundRefusedSince: 1 } })
+            await this.refunded({}, answer)
             return this.answer(answer, "refunded")
         }
         await this.finish("refundFailed", null, handedOverFields(owed, why))
@@ -679,11 +677,12 @@ export const tellStaff = async (id: string) => {
     // or not the cart is still there; once, however often this runs. For the
     // shop that has its table now: the record's may have been deleted since
     // (a refund failing more than 30 days on), and nothing would show it.
-    const shopId = await shopIdOfTable(record.tableId)
+    const owed = fromPence(owedPence(record))
+    const [shopId, diner] = await Promise.all([shopIdOfTable(record.tableId), dinerNameOf(record.userId)])
     if (shopId) {
         await writePayback({
             kind: "refundRefused", shopId, tableId: record.tableId, cartId, userId: record.userId,
-            amount: (record.refundOwed ?? record.amount) / 100, currency: "GBP", paymentIntentId: id,
+            amount: owed, currency: CURRENCY, paymentIntentId: id,
             ...(record.disputed && { disputed: true }),
         })
     } else {
@@ -691,8 +690,7 @@ export const tellStaff = async (id: string) => {
             paymentIntentId: id, tableId: record.tableId,
         })
     }
-    const diner = dinerName(await UserModel.findById(record.userId).select("name").lean())
-    const amount = money((record.refundOwed ?? record.amount) / 100, "GBP")
+    const amount = money(owed)
     const details = record.disputed
         ? `${amount} card payment by ${diner} is disputed with their bank, so Stripe won't refund it (payment ${id}). ` +
             "Don't pay them back yourselves: accept the dispute in Stripe's dashboard (don't contest it), and their bank returns the money. " +
@@ -791,13 +789,10 @@ type Counts = { finished: number; released: number; refunded: number; handedOver
 
 // By the state it ended in; anything not final is left for a later finisher
 // (a failure throws).
+const COUNTED: Record<FinalState, keyof Counts> = { recorded: "finished", released: "released", refunded: "refunded", refundFailed: "handedOver" }
 const tally = (counts: Counts, outcome: Outcome) => {
     const final = outcome.kind === "answer" ? outcome.final : undefined
-    if (final === "recorded") counts.finished++
-    else if (final === "released") counts.released++
-    else if (final === "refunded") counts.refunded++
-    else if (final === "refundFailed") counts.handedOver++
-    else counts.left++
+    counts[final ? COUNTED[final] : "left"]++
 }
 
 const sweep = async (): Promise<Counts> => {
@@ -813,7 +808,7 @@ const sweep = async (): Promise<Counts> => {
     }
 
     // Claims whose holder stopped.
-    const stopped = await StripeCheckoutModel.find({ state: { $in: ["finishing", "releasing"] }, leaseUntil: { $lte: new Date(now) } }).select("_id").lean()
+    const stopped = await StripeCheckoutModel.find({ state: { $in: HELD_STATES }, leaseUntil: { $lte: new Date(now) } }).select("_id").lean()
     for (const { _id } of stopped) await finish(_id)
 
     // Unclaimed ones: looked at (without claiming, so a sheet still in use is
@@ -849,7 +844,7 @@ const sweep = async (): Promise<Counts> => {
 
     // Seen, so someone looks into it: once each (the sweep keeps trying it).
     const unfinished = await StripeCheckoutModel.find({
-        state: { $in: ["open", "finishing", "releasing"] },
+        state: { $in: ["open", ...HELD_STATES] },
         createdAt: { $lte: new Date(now - UNFINISHED_AFTER_MS) },
         reportedAt: { $exists: false },
     }).select("_id state").lean()

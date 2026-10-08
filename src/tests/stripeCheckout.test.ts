@@ -1,4 +1,4 @@
-import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@jest/globals"
+import { jest, describe, it, expect } from "@jest/globals"
 
 // Stripe replaced at the module boundary by an in-memory fake, before the app
 // is imported (PayPal's client is never reached by these routes).
@@ -11,23 +11,18 @@ import mongoose from "mongoose"
 import request from "supertest"
 import * as stripe from "../lib/stripe"
 import { fakeStripe } from "./fakeStripe"
-import { stripeTable, heldElsewhere, setRecord } from "./stripeHelpers"
+import { stripeTable, heldElsewhere, setRecord, Table, useFakeStripe, WENT_THROUGH } from "./stripeHelpers"
+import { quiet } from "./helpers"
 import CartModel from "../services/carts/model"
 import MenuModel from "../services/menus/model"
 import OrderModel from "../services/orders/model"
 import StripeCheckoutModel from "../services/carts/stripeCheckout"
-import { REFUSED_FOR_MS, stripeTiming, sweepStripeCheckouts, takeBackAnswer } from "../services/carts/stripeFinish"
+import { REFUSED_FOR_MS, sweepStripeCheckouts, takeBackAnswer } from "../services/carts/stripeFinish"
 
 const m = jest.mocked(stripe)
 const STILL_CONFIRMING = "STILL_CONFIRMING"
 
-beforeAll(() => {
-    // The route's wait for another finisher, shortened.
-    stripeTiming.waitMs = 400
-    stripeTiming.pollMs = 50
-})
-beforeEach(() => fakeStripe.reset())
-afterEach(() => { jest.restoreAllMocks() })
+useFakeStripe()
 
 const payments = async (cartId: string) => (await CartModel.findById(cartId))!.payments
 
@@ -121,7 +116,7 @@ describe("captureStripeCheckout", () => {
     it("records a processing intent as a pending payment at the intent's amount (202)", async () => {
         const t = await stripeTable()
         const pi = await t.authorised()
-        fakeStripe.set(pi, { status: "processing", amount_capturable: 0 })
+        fakeStripe.processing(pi)
 
         const res = await t.capture(pi)
 
@@ -132,8 +127,7 @@ describe("captureStripeCheckout", () => {
     })
 
     describe("cancels the authorisation (nothing charged) when a check fails before capture", () => {
-        type Table = Awaited<ReturnType<typeof stripeTable>>
-        it.each([
+                it.each([
             ["the cart is gone", async (t: Table) => { await CartModel.updateOne({ _id: t.cartId }, { status: "closed" }) }, 404, "Cart Not Found!"],
             ["the diner has no selection", async (t: Table) => { await CartModel.updateOne({ _id: t.cartId }, { $set: { split: [] } }) }, 404, "No open split items to pay!"],
             ["an item sold out", async (t: Table) => { await MenuModel.updateOne({ _id: t.latte }, { available: false }) },
@@ -321,7 +315,7 @@ describe("captureStripeCheckout", () => {
         it("reads the intent again after claiming: one the last holder captured is settled, not captured twice", async () => {
             const t = await stripeTable()
             const pi = await t.authorised()
-            fakeStripe.set(pi, { status: "succeeded", amount_capturable: 0, amount_received: 600 })
+            fakeStripe.captured(pi)
             await heldElsewhere(pi, { expired: true })
 
             expect((await t.capture(pi)).status).toBe(200)
@@ -409,7 +403,7 @@ describe("captureStripeCheckout", () => {
         it("settles a release that lost to a capture, never leaving it releasing", async () => {
             const t = await stripeTable()
             const pi = await t.authorised()
-            fakeStripe.set(pi, { status: "succeeded", amount_capturable: 0, amount_received: 600 })
+            fakeStripe.captured(pi)
             await setRecord(pi, { state: "releasing", token: "someone-else", leaseUntil: new Date(Date.now() - 1000), status: 409, message: "x" })
 
             expect((await t.capture(pi)).status).toBe(200)
@@ -440,7 +434,7 @@ describe("captureStripeCheckout", () => {
             const t = await stripeTable()
             const pi = await t.authorised()
             jest.spyOn(StripeCheckoutModel, "find").mockImplementation((() => { throw new Error("connection reset") }) as never)
-            jest.spyOn(console, "error").mockImplementation(() => {})
+            quiet()
 
             const res = await t.capture(pi)
 
@@ -452,7 +446,7 @@ describe("captureStripeCheckout", () => {
             const t = await stripeTable()
             const pi = await t.authorised()
             jest.spyOn(CartModel, "findById").mockImplementationOnce((() => { throw new Error("connection reset") }) as never)
-            jest.spyOn(console, "error").mockImplementation(() => {})
+            quiet()
 
             const res = await t.capture(pi)
 
@@ -461,7 +455,7 @@ describe("captureStripeCheckout", () => {
             const record = await t.record(pi)
             expect(record).toMatchObject({ state: "recorded" })
             expect(record!.answered).toBeUndefined()
-            expect(await t.messages()).toEqual(["Your card payment of £6.00 went through"])
+            expect(await t.messages()).toEqual([WENT_THROUGH])
         })
 
         it("says it went through when its cart is gone by the time the reply is built", async () => {
@@ -508,7 +502,7 @@ describe("captureStripeCheckout", () => {
             }).mockImplementation(function (this: InstanceType<typeof CartModel>, ...args: unknown[]) {
                 return save.apply(this, args as never)
             } as never)
-            jest.spyOn(console, "error").mockImplementation(() => {})
+            quiet()
 
             const res = await t.capture(pi)
 
@@ -525,7 +519,7 @@ describe("captureStripeCheckout", () => {
             // Captured late in the intent's life: its hour starts at the first failure.
             await setRecord(pi, { createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000) })
             jest.spyOn(CartModel.prototype, "save").mockRejectedValue(new Error("not primary") as never)
-            jest.spyOn(console, "error").mockImplementation(() => {})
+            quiet()
 
             const first = await t.capture(pi)
             expect([first.status, first.body.reason]).toEqual([502, STILL_CONFIRMING])
@@ -543,7 +537,7 @@ describe("captureStripeCheckout", () => {
             const t = await stripeTable()
             const pi = await t.authorised()
             m.retrieveIntent.mockRejectedValueOnce(new Error("timeout"))
-            jest.spyOn(console, "error").mockImplementation(() => {})
+            quiet()
 
             const res = await t.capture(pi)
 
@@ -556,7 +550,7 @@ describe("captureStripeCheckout", () => {
             const pi = await t.authorised()
             await setRecord(pi, { answered: "recorded:completed", answeredBy: ["another-request"] })
             m.retrieveIntent.mockRejectedValueOnce(new Error("timeout"))
-            jest.spyOn(console, "error").mockImplementation(() => {})
+            quiet()
 
             expect((await t.capture(pi)).status).toBe(502)
             expect(await t.record(pi)).toMatchObject({ answered: "recorded:completed", answeredBy: ["another-request"] })
@@ -656,7 +650,7 @@ describe("captureStripeCheckout", () => {
                 return captured
             })
             m.createRefund.mockRejectedValueOnce(new Error("socket hang up"))
-            jest.spyOn(console, "error").mockImplementation(() => {})
+            quiet()
 
             const unclear = await t.capture(pi)
             expect([unclear.status, unclear.body.message]).toEqual([500, `Payment captured but could not be recorded or refunded — please contact staff (payment ${pi})`])
@@ -717,7 +711,7 @@ describe("captureStripeCheckout", () => {
                 await CartModel.updateOne({ _id: t.cartId }, { $set: { stripePaymentIntentIds: [pi] } })
                 return done
             })
-            const errors = jest.spyOn(console, "error").mockImplementation(() => {})
+            const errors = quiet()
 
             await t.capture(pi)
 
@@ -733,11 +727,11 @@ describe("captureStripeCheckout", () => {
         it("completes a refund once decided even if a stalled holder put it on a cart, and tells the manager", async () => {
             const t = await stripeTable()
             const pi = await t.authorised()
-            fakeStripe.set(pi, { status: "succeeded", amount_capturable: 0, amount_received: 600 })
+            fakeStripe.captured(pi)
             await heldElsewhere(pi, { expired: true })
             await setRecord(pi, { refunding: true, status: 409, message: "The table's cart changed while you were paying — your payment was refunded" })
             await CartModel.updateOne({ _id: t.cartId }, { $set: { stripePaymentIntentIds: [pi] } })
-            jest.spyOn(console, "error").mockImplementation(() => {})
+            quiet()
 
             const res = await t.capture(pi)
 
@@ -771,7 +765,7 @@ describe("captureStripeCheckout", () => {
                 return captured
             })
             m.createRefund.mockRejectedValueOnce(new stripe.StripeRefundRefused("Insufficient funds in Stripe account", "balance_insufficient"))
-            jest.spyOn(console, "error").mockImplementation(() => {})
+            quiet()
 
             const res = await t.capture(pi)
 
@@ -809,7 +803,7 @@ describe("captureStripeCheckout", () => {
                     return captured
                 })
                 m.createRefund.mockRejectedValueOnce(refused(code))
-                jest.spyOn(console, "error").mockImplementation(() => {})
+                quiet()
                 const res = await t.capture(pi)
                 expect([res.status, res.body.message]).toEqual([500, ["charge_disputed", "refund_disputed_payment"].includes(code)
                     ? `Payment captured but couldn't be refunded to your card while you dispute it: your bank returns it (payment ${pi})`
@@ -1021,7 +1015,7 @@ describe("captureStripeCheckout", () => {
                 const { pi } = await refusedOnce("balance_insufficient")
                 const record = (await StripeCheckoutModel.findById(pi).lean())!
                 await CartModel.deleteOne({ _id: record.cartId })
-                const error = jest.spyOn(console, "error").mockImplementation(() => {})
+                const error = quiet()
                 m.createRefund.mockRejectedValueOnce(refused("expired_or_canceled_card"))
 
                 await retried(pi)

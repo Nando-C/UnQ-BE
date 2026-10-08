@@ -1,4 +1,4 @@
-import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@jest/globals"
+import { jest, describe, it, expect } from "@jest/globals"
 
 // Stripe replaced by the in-memory fake, before the app is imported.
 jest.mock("../lib/stripe", () => jest.requireActual<typeof import("./fakeStripe")>("./fakeStripe").stripeMock())
@@ -8,37 +8,29 @@ import mongoose from "mongoose"
 import "./setup"
 import app from "../server"
 import * as stripe from "../lib/stripe"
-import { authFor } from "./helpers"
+import { authFor, quiet } from "./helpers"
 import { fakeStripe } from "./fakeStripe"
-import { stripeTable, minutesAgo, setRecord, deliver, failedRefund } from "./stripeHelpers"
+import { stripeTable, minutesAgo, setRecord, deliver, failedRefund, Table, daysAgo, useFakeStripe } from "./stripeHelpers"
 import CartModel from "../services/carts/model"
 import ShopModel from "../services/shops/model"
 import UserModel from "../services/users/model"
 import StripeCheckoutModel from "../services/carts/stripeCheckout"
 import PaybackModel from "../services/payments/payback"
-import { stripeTiming, sweepStripeCheckouts } from "../services/carts/stripeFinish"
+import { sweepStripeCheckouts } from "../services/carts/stripeFinish"
 import { writePayback } from "../services/payments/payback"
 
 // Pay-backs (S35): money staff must give back another way, one record each,
 // shown on the table until a manager marks it done.
 
-beforeAll(() => {
-    stripeTiming.waitMs = 400
-    stripeTiming.pollMs = 50
-})
-beforeEach(() => fakeStripe.reset())
-afterEach(() => { jest.restoreAllMocks() })
+useFakeStripe()
 
-type Table = Awaited<ReturnType<typeof stripeTable>>
-const quiet = () => jest.spyOn(console, "error").mockImplementation(() => {})
-const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000)
 
 // Captured, then the cart changed: refunded in full by the finisher (a late
 // refund, `late` metadata).
 const refundedLate = async (t?: Table) => {
     t ??= await stripeTable()
     const pi = await t.authorised()
-    fakeStripe.set(pi, { status: "succeeded", amount_received: 600, amount_capturable: 0 })
+    fakeStripe.captured(pi)
     await CartModel.updateOne({ _id: t.cartId }, { $set: { "items.0.qtyPayed": 2 } })
     await deliver("payment_intent.succeeded", fakeStripe.get(pi))
     expect(await t.record(pi)).toMatchObject({ state: "refunded" })
@@ -651,7 +643,7 @@ describe("a card payment whose cart was deleted (reason codes)", () => {
     it("says CART_GONE_PENDING for one being confirmed", async () => {
         const t = await stripeTable()
         const pi = await t.authorised()
-        fakeStripe.set(pi, { status: "processing", amount_capturable: 0 })
+        fakeStripe.processing(pi)
         await deliver("payment_intent.amount_capturable_updated", fakeStripe.get(pi))
         await CartModel.deleteOne({ _id: t.cartId })
 

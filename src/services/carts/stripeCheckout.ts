@@ -1,7 +1,7 @@
 import mongoose from "mongoose"
-import { ICartDocument, INotice, IPayment } from "src/typings/cart"
-import { NOTICE_MAX_AGE_MS } from "./model"
-import { money } from "../../lib/money"
+import { ICartDocument, INotice, IPayment, PaymentStatus } from "src/typings/cart"
+import { NOTICE_MAX_AGE_MS, PAYMENT_STATUSES } from "./model"
+import { fromPence, money } from "../../lib/money"
 import { keepOrderInStep } from "../orders/sync"
 
 const { Schema, model } = mongoose
@@ -54,6 +54,8 @@ export const CHECKOUT_STATES = ["open", "finishing", "releasing", "recorded", "r
 export type CheckoutState = (typeof CHECKOUT_STATES)[number]
 export type FinalState = "recorded" | "released" | "refunded" | "refundFailed"
 export const FINAL_STATES: CheckoutState[] = ["recorded", "released", "refunded", "refundFailed"]
+// Held by a finisher (its token and lease): being finished.
+export const HELD_STATES: CheckoutState[] = ["finishing", "releasing"]
 
 export interface IStripeCheckout {
     _id: string
@@ -69,7 +71,7 @@ export interface IStripeCheckout {
     reportedAt?: Date
     confirmed: boolean
     finishedAt?: Date
-    paymentStatus?: "completed" | "pending" | "failed"
+    paymentStatus?: PaymentStatus
     answered?: string
     answeredBy?: string[]
     status?: number
@@ -104,7 +106,7 @@ const StripeCheckoutSchema = new Schema<IStripeCheckout>(
         reportedAt: Date,
         confirmed: { type: Boolean, default: false },
         finishedAt: Date,
-        paymentStatus: { type: String, enum: ["completed", "pending", "failed"] },
+        paymentStatus: { type: String, enum: PAYMENT_STATUSES },
         answered: String,
         answeredBy: { type: [String], default: undefined },
         status: Number,
@@ -141,9 +143,24 @@ StripeCheckoutSchema.index(
 const StripeCheckoutModel = model<IStripeCheckout>("StripeCheckout", StripeCheckoutSchema)
 export default StripeCheckoutModel
 
+// What's still taken of a handed-over record, in pence (staff may have
+// refunded part by hand; the whole amount until Stripe has been asked).
+export const owedPence = (record: Pick<IStripeCheckout, "refundOwed" | "amount">) => record.refundOwed ?? record.amount
+
+// Stripe's refund failure reasons that say the diner disputed the charge with
+// their bank, and the dispute is open (Stripe refuses a refund for it): the
+// dispute, not staff, gives them the money back. (Never the charge's
+// `disputed`, which stays true once a dispute closes, won or lost.)
+const DISPUTED = new Set(["charge_for_pending_refund_disputed", "charge_disputed", "refund_disputed_payment"])
+export const isDisputeReason = (reason: string | null | undefined) => DISPUTED.has(reason ?? "")
+
+// Whether a payment has one of these records, which tracks its status and
+// carries the diner's notice (a PayPal payment has neither).
+export const hasCheckoutRecord = (payment: Pick<IPayment, "provider">) => payment.provider === "stripe"
+
 // What the diner is told of an outcome they didn't hear from their own request.
 const noticeText = (record: IStripeCheckout) => {
-    const amount = money(record.amount / 100, "GBP")
+    const amount = money(fromPence(record.amount))
     switch (record.state) {
         case "recorded":
             if (record.paymentStatus === "pending") return `Your card payment of ${amount} is being confirmed: your items are held for you`
@@ -153,7 +170,7 @@ const noticeText = (record: IStripeCheckout) => {
             return `Your card payment of ${amount} didn't go through: nothing was charged`
         case "refundFailed": {
             // What's still taken (staff may have refunded part by hand).
-            const owed = money((record.refundOwed ?? record.amount) / 100, "GBP")
+            const owed = money(fromPence(owedPence(record)))
             if (record.disputed) return `Your card payment of ${owed} couldn't be refunded to your card while you dispute it: your bank returns it (payment ${record._id})`
             return `Your card payment of ${owed} couldn't be refunded to your card: please contact staff about it (payment ${record._id})`
         }
@@ -203,7 +220,7 @@ export const paymentNotices = async (viewerId: unknown, tableId: string): Promis
 // stalled past its lease after the refund was decided: the refund stands, and
 // the manager is told.) A payment only moves on from pending, so never back
 // to it: a sync from a copy of the cart read before a settle can't undo it.
-const syncCheckoutRecord = (intentId: string, paymentStatus: "completed" | "pending" | "failed") =>
+const syncCheckoutRecord = (intentId: string, paymentStatus: PaymentStatus) =>
     StripeCheckoutModel.updateOne(
         {
             _id: intentId,

@@ -1,3 +1,4 @@
+import { jest } from "@jest/globals"
 import { Response } from "supertest"
 import request from "supertest"
 import app from "../server"
@@ -40,6 +41,9 @@ export const loginCookies = async (email: string, password: string): Promise<str
     const res = await request(app).post("/auth/login").send({ email, password })
     return cookiesFrom(res)
 }
+
+// Server errors a test expects, muted (the spy, to assert on them).
+export const quiet = () => jest.spyOn(console, "error").mockImplementation(() => {})
 
 // Convenience: create a user with a role and return usable auth cookies.
 export const authFor = async (role: "customer" | "shopMg" = "customer") => {

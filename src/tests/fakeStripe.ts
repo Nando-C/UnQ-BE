@@ -63,6 +63,14 @@ export const fakeStripe = {
         intent.amount_capturable = intent.amount
         intent.latest_charge = { id: `ch_${++seq}`, object: "charge", amount: intent.amount, amount_refunded: 0 }
     },
+    // Captured (as captureIntent leaves it), or still processing at the bank.
+    captured(id: string) {
+        const intent = intentOf(id)
+        Object.assign(intent, { status: "succeeded", amount_received: intent.amount, amount_capturable: 0 })
+    },
+    processing(id: string) {
+        Object.assign(intentOf(id), { status: "processing", amount_capturable: 0 })
+    },
     set(id: string, patch: Partial<Intent>) {
         Object.assign(intentOf(id), patch)
     },
@@ -146,6 +154,8 @@ export const stripeMock = () => ({
     StripeCaptureRefused: actual.StripeCaptureRefused,
     StripeRefundRefused: actual.StripeRefundRefused,
     chargeIdOf: actual.chargeIdOf,
+    idOf: actual.idOf,
+    refundUndone: actual.refundUndone,
     createIntent,
     retrieveIntent,
     captureIntent,

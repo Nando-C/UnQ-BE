@@ -4,7 +4,7 @@
 
 import { ICart, IPayment, PaymentStatus } from "src/typings/cart"
 import { findRefund, getOrder, PayPalRefundRefused, refundCapture } from "./paypal"
-import { cancelIntent, chargeIdOf, createRefund, listRefunds, retrieveIntent, StripeRefundRefused } from "./stripe"
+import { cancelIntent, chargeIdOf, createRefund, listRefunds, refundUndone, retrieveIntent, StripeRefundRefused } from "./stripe"
 import { toPence } from "./money"
 
 // The provider's name as people know it, for messages.
@@ -91,7 +91,7 @@ export const findProviderRefund = async (
             // new request, safe only because the whole list showed none.
             const refund = (await listRefunds(payment.providerCheckoutId)).find((r) => r.metadata?.requestId === requestId)
             return refund
-                ? { providerRefundId: refund.id, failed: refund.status === "failed" || refund.status === "canceled" }
+                ? { providerRefundId: refund.id, failed: refundUndone(refund) }
                 : null
         }
         default:

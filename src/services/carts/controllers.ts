@@ -1,7 +1,7 @@
 import { TController } from "src/typings/controllers"
 import { IUserDocument } from "src/typings/users"
-import { ICartDocument, ISplitItem, PaymentProvider } from "src/typings/cart"
-import CartModel, { dinerView, noticesFor, NOTICE_MAX_AGE_MS, refId, tookPart } from "./model"
+import { ICartDocument, ISplitItem, PaymentProvider, PaymentStatus } from "src/typings/cart"
+import CartModel, { CHECKOUT_ID_FIELD, dinerView, noticesFor, NOTICE_MAX_AGE_MS, recordedOnCart, refId, tookPart } from "./model"
 import { paymentNotices } from "./stripeCheckout"
 import { keepOrderInStep } from "../orders/sync"
 import { Request } from "express"
@@ -11,7 +11,7 @@ import { getOrder, createOrder, captureOrder, refundCapture, PayPalOrder, PayPal
 import MenuModel from "../menus/model"
 import ShopModel from "../shops/model"
 import { isDuplicateKey, isVersionConflict, saveChecked } from "../../lib/mongo"
-import { toPence } from "../../lib/money"
+import { CURRENCY, toPence } from "../../lib/money"
 import { providerName } from "../../lib/payments"
 
 // The diner's side of a table's cart: ordering, selecting what to pay for, and
@@ -575,7 +575,7 @@ export type Settlement = {
     provider: PaymentProvider
     checkoutId: string
     paymentId?: string
-    status: "completed" | "pending"
+    status: Exclude<PaymentStatus, "failed">
     amount: number
     currency: string
 }
@@ -583,7 +583,7 @@ export type Settlement = {
 // The settlement must be in GBP, for exactly the amount due (compared in
 // pence, never as floats). A message on a mismatch, or null.
 const settlementError = (settlement: Settlement, expectedTotal: number): string | null =>
-    settlement.currency !== "GBP" || toPence(settlement.amount) !== toPence(expectedTotal)
+    settlement.currency !== CURRENCY || toPence(settlement.amount) !== toPence(expectedTotal)
         ? `${providerName(settlement)} payment does not match the amount due`
         : null
 
@@ -632,13 +632,10 @@ const applyCheckout = (
         amount: settlement.amount,
         lines,
     })
-    if (settlement.provider === "stripe") {
-        if (!cart.stripePaymentIntentIds) cart.stripePaymentIntentIds = []
-        cart.stripePaymentIntentIds.push(settlement.checkoutId)
-    } else {
-        if (!cart.paypalOrderIds) cart.paypalOrderIds = []
-        cart.paypalOrderIds.push(settlement.checkoutId)
-    }
+    // Through the document's getter each time, so Mongoose sees the push.
+    const field = CHECKOUT_ID_FIELD[settlement.provider]
+    if (!cart[field]) cart[field] = []
+    cart[field]!.push(settlement.checkoutId)
     closeIfPaidOff(cart)
 }
 
@@ -649,9 +646,7 @@ const orderAlreadyUsed = (paypalOrderId: string) =>
 
 // Whether the settlement's checkout id was already recorded on any cart.
 const checkoutAlreadyUsed = (settlement: Settlement) =>
-    settlement.provider === "stripe"
-        ? CartModel.exists({ stripePaymentIntentIds: settlement.checkoutId })
-        : orderAlreadyUsed(settlement.checkoutId)
+    settlement.provider === "stripe" ? recordedOnCart(settlement.checkoutId) : orderAlreadyUsed(settlement.checkoutId)
 
 const alreadyUsed = (settlement: Settlement) =>
     settlement.provider === "paypal" ? "This PayPal order has already been used" : "This payment has already been recorded"
