@@ -4,6 +4,8 @@ import { adminOnly, isShopManager, JWTAuthMiddleware } from "../auth/middlewares
 import * as shopControllers from "./controllers/shopControllers"
 import * as tableControllers from "./controllers/tableControllers"
 import * as managerControllers from "../carts/managerControllers"
+import * as paybackControllers from "../payments/paybackControllers"
+import { paybackDoneSchema } from "../payments/paybackControllers"
 import { validate } from "../../middlewares/validate"
 import { createShopSchema, editShopSchema, createTableSchema, editTableSchema, browseShopsSchema } from "./schemas"
 import { cartItemSchema, releaseSelectionSchema, refundSchema } from "../carts/schemas"
@@ -38,6 +40,8 @@ router.post("/:shopId/carts/:cartId/refunds", JWTAuthMiddleware, isShopManager, 
 router.post("/:shopId/carts/:cartId/refunds/:refundId/retry", JWTAuthMiddleware, isShopManager, managerControllers.retryRefund)
 // A payment its provider hadn't confirmed at checkout: ask it again.
 router.post("/:shopId/carts/:cartId/payments/:paymentId/check", JWTAuthMiddleware, isShopManager, managerControllers.checkPayment)
+// Money Stripe won't give back, which staff pay back another way: marked done.
+router.post("/:shopId/paybacks/:paybackId/done", JWTAuthMiddleware, isShopManager, validate(paybackDoneSchema), paybackControllers.markPaybackDone)
 router.post("/:shopId/tables", JWTAuthMiddleware, isShopManager, validate(createTableSchema), tableControllers.createTable)
 router.get("/:shopId/tables", JWTAuthMiddleware, tableControllers.getTableList)
 router.get("/:shopId/tables/:tableId",  tableControllers.getSingleTable)

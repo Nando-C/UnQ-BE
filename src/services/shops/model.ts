@@ -76,6 +76,10 @@ ShopSchema.index({ shopMg: 1 })
 // A filter for the shop with this table, current or deleted (for carts saved
 // before they recorded their shop).
 export const ofTable = (tableId: string) => ({ $or: [{ "tables._id": tableId }, { "deletedTables._id": tableId }] })
+// Each side of it indexed: a card payment on an older cart finds its shop by
+// its table (stripeControllers.ts).
+ShopSchema.index({ "tables._id": 1 })
+ShopSchema.index({ "deletedTables._id": 1 })
 
 ShopSchema.methods.toJSON = function () {
     const shop = this.toObject()
@@ -83,4 +87,9 @@ ShopSchema.methods.toJSON = function () {
     return shop
 }
 
-export default model<IShopDocument>("Shop", ShopSchema)
+const ShopModel = model<IShopDocument>("Shop", ShopSchema)
+export default ShopModel
+
+// The shop a table (current or deleted) belongs to, for a record that doesn't
+// carry it; undefined once no shop has the table.
+export const shopIdOfTable = async (tableId: string) => (await ShopModel.findOne(ofTable(tableId)).select("_id").lean())?._id

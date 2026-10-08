@@ -101,7 +101,7 @@ You can find the Front-End repo of this project in the following link, where mor
 - Cloudinary image uploads for user avatars, shop covers, and menu item photos (images only, up to 5 MB; permissions checked before anything is uploaded, and a replaced image is deleted)
 - Request validation (`zod`) on every mutating endpoint, with a consistent `{ message, details }` error shape
 - Server-side PayPal checkout: the API creates the order for the exact amount due (database prices, bound to cart + payer via `custom_id`) and captures it only after reserving the units — a conflict discovered before capture costs the buyer nothing, and one discovered in the window after capture is refunded automatically. Order-id replay protection and multi-payer concurrency safety throughout; the API never takes the client's word that a payment happened
-- Card payments (Apple Pay and Google Pay included) through Stripe, beside PayPal, with the same guarantee: the diner's card is only authorised, the API re-checks the cart and then captures, or cancels the authorisation so nothing is charged. One finisher at a time per payment (the diner's request, Stripe's webhook, or a sweep every 2 minutes), so an authorised payment the diner walked away from is still finished, and they're told the outcome on their next visit to the table
+- Card payments (Apple Pay and Google Pay included) through Stripe, beside PayPal, with the same guarantee: the diner's card is only authorised, the API re-checks the cart and then captures, or cancels the authorisation so nothing is charged. One finisher at a time per payment (the diner's request, Stripe's webhook, or a sweep every 2 minutes), so an authorised payment the diner walked away from is still finished, and they're told the outcome on their next visit to the table. Money Stripe won't give back (a refund that failed for good) becomes a pay-back on the table, flagged to the shop's managers until one marks it done
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -171,7 +171,8 @@ src/
 │   ├── users/               # profile + avatar
 │   ├── shops/               # shop CRUD + tables
 │   ├── menus/                # menu items
-│   └── carts/                # cart, split-bill flows, checkout (stripeFinish.ts: finishing card payments)
+│   ├── carts/                # cart, split-bill flows, checkout (stripeFinish.ts: finishing card payments)
+│   └── payments/             # Stripe's webhook; pay-backs (money staff give a diner back by hand)
 ├── typings/                # shared TS types/interfaces
 └── tests/                  # Jest integration suite
 ```
@@ -427,6 +428,7 @@ StripeCheckout Model:
     {
         _id: string,              // the PaymentIntent id
         cartId: ObjectId, tableId: string, userId: ObjectId, // who it was made for
+        shopId?: ObjectId,        // the table's shop when created (older records: found by the table), for its pay-back once the cart is gone
         amount: number,           // in pence, as created
         state: "open" | "finishing" | "releasing" | "recorded" | "released" | "refunded" | "refundFailed",
         token?: string, leaseUntil?: Date, // the current holder's claim
@@ -444,6 +446,29 @@ StripeCheckout Model:
         staffToldAt?: Date,       // a refundFailed one: when staff were told on its cart (the sweep retries until then)
         refundOwed?: number,      // a refundFailed one: in pence, what was still taken (staff may have refunded part by hand)
         disputed?: boolean,       // a refundFailed one: Stripe refused it for the diner's open dispute, which pays them back
+    }
+```
+
+### Pay-back (Payback)
+
+Money staff must give a diner back another way, because Stripe won't: one per card payment handed to staff (`refundRefused`: the API's own refund of a payment it couldn't record failed for good, see `refund.failed` under [Payments](#payments)), and one per manager's card refund that Stripe accepted and then failed (`refundFailed`). Kept apart from the cart, which may be closed and deleted by then. Shown on the table's sheet (the owed ones, and those marked done in the last 30 days), flagged on the table until a manager marks it done, and the shop can't be deleted while one is owed. Diners never see it.
+
+```js
+Payback Model:
+    {
+        _id: ObjectId,
+        shopId: ObjectId, tableId: string, cartId: ObjectId, // where it was owed (the cart may be gone)
+        kind: "refundRefused" | "refundFailed",
+        userId: ObjectId,         // the diner to pay back
+        amount: number,           // owed, in pounds (as the cart's money fields)
+        currency: string,         // "GBP"
+        paymentIntentId?: string, // Stripe's payment, to find it in the dashboard
+        refundId?: ObjectId,      // a refundFailed one: the cart's refund record
+        paymentAmount?: number,   // a refundFailed one: the whole payment (a dispute is of all of it)
+        disputed?: boolean,       // Stripe refused it for the diner's open dispute: their bank returns the money, staff don't
+        owed?: boolean,           // true until marked done, then absent
+        at: Date,
+        doneAt?: Date, doneByUserId?: ObjectId, doneAs?: "paidBack" | "handled" | "checked", // who marked it, when, and as what
     }
 ```
 
@@ -543,13 +568,13 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/shops/me
 
-  The manager's shops. Each also carries `deletedTables: [{ _id, name, deletedAt, needsAttention?, recentCartsUntil? }]`, the tables they deleted; `needsAttention: true` while one still has an open cart or a payment or refund `pending` at its provider, and `recentCartsUntil` (a date) while its carts route still lists a closed cart there: a day after the latest one last changed. The public shop routes leave it out.
+  The manager's shops. Each also carries `deletedTables: [{ _id, name, deletedAt, needsAttention?, recentCartsUntil? }]`, the tables they deleted; `needsAttention: true` while one still has an open cart, a payment or refund `pending` at its provider, or a diner still to be paid back (a pay-back owed), and `recentCartsUntil` (a date) while its carts route still lists a closed cart there: a day after the latest one last changed. The public shop routes leave it out.
 
 - [ 'GET', 'PUT', 'DELETE' ]
 
   baseURL-api/shops/:shopId
 
-  `DELETE` deletes the shop with its menu items and its carts. `409` while a table has an open cart, while a payment or refund of the shop is still `pending` at its provider (the message names the table to check it at, and the provider), or while a payment with its provider's payment id and something left to refund is on a closed cart changed in the last 24 hours (it's still on its table's carts, to be refunded).
+  `DELETE` deletes the shop with its menu items, its carts and its pay-backs. `409` while a table has an open cart, while a payment or refund of the shop is still `pending` at its provider (the message names the table to check it at, and the provider), while a card payment is still being finished (authorised and not yet recorded or released, or handed to staff but not yet shown; one nobody confirmed holds nothing and doesn't count: "A card payment at Table X is still being finished — try again shortly", or, for the API's own refund Stripe refused for now, "A card refund at Table X is being retried at Stripe (every 30 minutes, for up to a day) — try again later"), while a diner is still to be paid back ("A diner at Table X is still to be paid back — mark it done first"), for 30 days after a card refund of the shop last moved (a refund Stripe accepted can still fail that long after, and its pay-back needs the shop to be shown on: "A card refund at this shop on <date> can still fail at Stripe until <date>: the shop can be deleted from then"; the API's own refunds by when they last moved, a manager's by when it was made; card payments with no refund, refunds of PayPal payments, and refunds that have already failed and become pay-backs, don't hold it), or while a payment with its provider's payment id and something left to refund is on a closed cart changed in the last 24 hours (it's still on its table's carts, to be refunded). Accepted and logged as server errors (pay the diner back from Stripe's dashboard): a pay-back written in the moment between those checks and the deletion, and a card refund Stripe reports failed more than 30 days after it last moved, once the shop is gone.
 
 - [ 'PUT' ]
 
@@ -569,13 +594,19 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/shops/:shopId/tables/status
 
-  Shop managers only. One entry per table: `{ tableId, name, state, owed, paid, heldSince?, attention }`. `state` is `free`, `ordering` (items, nothing paid), `waitingToPay` (a diner has items selected) or `partlyPaid`. `attention` flags `soldOut` (unpaid units of an unavailable or deleted item), `staleSelection` (a selection held over 15 minutes), `duplicateCarts` (more than one open cart) and `paymentPending` (a payment its provider hasn't confirmed: check it). `owed` leaves out sold-out units; `paid` counts units at the price they were paid at.
+  Shop managers only. One entry per table: `{ tableId, name, state, owed, paid, heldSince?, attention }`. `state` is `free`, `ordering` (items, nothing paid), `waitingToPay` (a diner has items selected) or `partlyPaid`. `attention` flags `soldOut` (unpaid units of an unavailable or deleted item), `staleSelection` (a selection held over 15 minutes), `duplicateCarts` (more than one open cart), `paymentPending` (a payment its provider hasn't confirmed: check it) and `payBack` (a diner at the table is still to be paid back: see the carts route's `paybacks`). `owed` leaves out sold-out units; `paid` counts units at the price they were paid at.
 
 - [ 'GET' ]
 
   baseURL-api/shops/:shopId/tables/:tableId/carts
 
-  Shop managers only. `{ open, recentlyClosed }`: the table's open cart(s) and the carts closed in the last 24 hours, newest first, each with its payment records. Diners in selections and payments are shown as `{ _id, name }` (first name only). Works for a deleted table too, and also lists older closed carts with a payment or refund still `pending` at its provider, to be checked.
+  Shop managers only. `{ open, recentlyClosed, paybacks }`: the table's open cart(s) and the carts closed in the last 24 hours, newest first, each with its payment records. Diners in selections and payments are shown as `{ _id, name }` (first name only). Works for a deleted table too, and also lists older closed carts with a payment or refund still `pending` at its provider, to be checked. `paybacks` are the table's [pay-backs](#pay-back-payback), owed or marked done in the last 30 days, newest first, whichever cart they came from (it may be gone): each as the model, with `userId` and `doneByUserId` as `{ _id, name }` (`null` for an account that's gone), and `recorded: true` on an owed `refundRefused` one whose payment a cart now shows as paid (it was recorded after being handed over: check the cart before paying it back).
+
+- [ 'POST' ]
+
+  baseURL-api/shops/:shopId/paybacks/:paybackId/done
+
+  Shop managers only; no money moves. Body `{ as }`: `paidBack`, `handled` (a disputed one: the diner's bank returns the money, staff accept the dispute in Stripe's dashboard instead) or `checked` (a hand-over whose payment a cart shows as paid). `as` must be what the pay-back calls for now (a disputed one `handled`; a `refundRefused` one a cart shows as paid, `checked`; else `paidBack`): `409 "This pay-back changed: here it is again"` otherwise, so what's stored is what the manager saw. Answers `{ payback }` as the carts route lists it, with `doneAt`, `doneByUserId` and `doneAs` set and `owed` gone, and a `paybackDone` line on its cart's `managerLog` (without changing the cart's `updatedAt`; no line when the cart is gone). One already marked done answers as it was marked, whatever `as` was sent. `404` for a pay-back that isn't this shop's, `400` for another `as`.
 
 - [ 'POST' ]
 
@@ -672,13 +703,13 @@ These are the available endpoints created for this application. Every mutating r
 
   baseURL-api/carts/tables/:tableId/:cartId/createStripeCheckout
 
-  Card checkout, step 1 of 2. No body. The same checks as `createCheckoutOrder` (same statuses and messages), then a Stripe PaymentIntent for the caller's amount due in pence (database prices), cards only, with manual capture: the diner's confirmation in Stripe's Payment Element only authorises it. Answers `{ clientSecret, paymentIntentId }`. `502` (`"Could not start a card payment"`) if Stripe can't create it or its record can't be written (it's then cancelled). An intent nobody confirms holds nothing, and is cancelled an hour after it was created.
+  Card checkout, step 1 of 2. No body. The same checks as `createCheckoutOrder` (same statuses and messages), then a Stripe PaymentIntent for the caller's amount due in pence (database prices), cards only, with manual capture: the diner's confirmation in Stripe's Payment Element only authorises it. Answers `{ clientSecret, paymentIntentId, amount }` (`amount` in pence, as the intent was created: confirm it only if it's the total the diner saw). The payment's record keeps the table's shop (a cart that doesn't record it is given it, found by its table); `404 "This table is no longer at a shop"` when no shop has the table any more, before anything is created. `502` (`"Could not start a card payment"`) if Stripe can't create it or its record can't be written (it's then cancelled). An intent nobody confirms holds nothing, and is cancelled an hour after it was created.
 
 - [ 'POST' ]
 
   baseURL-api/carts/tables/:tableId/:cartId/captureStripeCheckout
 
-  Card checkout, step 2 of 2 — money moves. Body: `{ paymentIntentId }`. Only for an intent created for this cart, table and caller (`402 "This payment was not created for this checkout"` otherwise; nothing changes). The API re-checks the cart (as `captureCheckout`, same statuses and messages) and only then captures; a check that fails **cancels the authorisation**, so nothing is charged. `200` with the cart once recorded, `202` for a payment Stripe is still processing (its units held, as PayPal's pending ones). Not authorised: `402 "Payment not completed — nothing was charged"` (declined, or never confirmed: it's cancelled), or, while the bank's check is still open, `502` with `reason: "STILL_CONFIRMING"`. The same `502` when another finisher (Stripe's webhook, or the sweep) is finishing it and hasn't finished within a few seconds, when Stripe's answer to the capture is unclear, when the captured payment can't be saved yet (a database error: retried for an hour, then refunded), or on any other error on the way: the message asks the diner not to pay for those items again, the cart updates once it's confirmed, and they get a notice of the outcome. A race lost after the capture is refunded in full: `409` with `captureCheckout`'s "…your payment was refunded" wording. Asked again, it gives the same answer (the cart for one recorded, even if it has closed since). A payment that went through, or is being confirmed, whose cart has since been deleted (with its table or shop): `404` saying so ("Your card payment went through, but this table's cart is no longer here", or "…is being confirmed, but…"), never an invitation to pay again. `500` with the payment id ("contact staff") only when the card was charged and neither recording nor the refund has worked yet (the refund is retried; one Stripe refuses, every 30 minutes for a day), or the refund failed for good (staff pay the diner back: told on the table's cart as below, at once when Stripe's reason means a new refund would fail too, or after a day of refusals; one refused for the diner's open dispute answers "…couldn't be refunded to your card while you dispute it: your bank returns it (payment <id>)" instead). Recorded in the cart's `stripePaymentIntentIds` and as a payment record with `provider: "stripe"`. Not rate limited.
+  Card checkout, step 2 of 2 — money moves. Body: `{ paymentIntentId }`. Only for an intent created for this cart, table and caller (`402 "This payment was not created for this checkout"` otherwise; nothing changes). The API re-checks the cart (as `captureCheckout`, same statuses and messages) and only then captures; a check that fails **cancels the authorisation**, so nothing is charged. `200` with the cart once recorded, `202` for a payment Stripe is still processing (its units held, as PayPal's pending ones). Not authorised: `402 "Payment not completed — nothing was charged"` (declined, or never confirmed: it's cancelled), or, while the bank's check is still open, `502` with `reason: "STILL_CONFIRMING"`. The same `502` when another finisher (Stripe's webhook, or the sweep) is finishing it and hasn't finished within a few seconds, when Stripe's answer to the capture is unclear, when the captured payment can't be saved yet (a database error: retried for an hour, then refunded), or on any other error on the way: the message asks the diner not to pay for those items again, the cart updates once it's confirmed, and they get a notice of the outcome. A race lost after the capture is refunded in full: `409` with `captureCheckout`'s "…your payment was refunded" wording. Asked again, it gives the same answer (the cart for one recorded, even if it has closed since). A payment that went through, or is being confirmed, whose cart has since been deleted (with its table or shop): `404` saying so ("Your card payment went through, but this table's cart is no longer here", or "…is being confirmed, but…"), with `reason: "CART_GONE"` or `"CART_GONE_PENDING"` to tell it from the other `404`s (which mean nothing was charged), never an invitation to pay again. `500` with the payment id ("contact staff") only when the card was charged and neither recording nor the refund has worked yet (the refund is retried; one Stripe refuses, every 30 minutes for a day), or the refund failed for good (staff pay the diner back: a pay-back on the table, and a line on its cart, as below, at once when Stripe's reason means a new refund would fail too, or after a day of refusals; one refused for the diner's open dispute answers "…couldn't be refunded to your card while you dispute it: your bank returns it (payment <id>)" instead). Recorded in the cart's `stripePaymentIntentIds` and as a payment record with `provider: "stripe"`. Not rate limited.
 
 - [ 'GET' ]
 
@@ -707,7 +738,7 @@ These are the available endpoints created for this application. Every mutating r
   - `payment_intent.amount_capturable_updated` (a card authorised): finished as the diner's capture call would finish it (checked, then captured, or cancelled so nothing is charged), for a diner who never came back for it; they're told the outcome on their next visit to the table. Another finisher already on it (the diner's own request): `200`, it finishes it.
   - `payment_intent.succeeded`: one captured but not on a cart (a crash after the capture) is finished the same way.
   - `payment_intent.succeeded`, `payment_failed`, `canceled`, for a payment on a cart: a `pending` one is settled as the manager's payment check settles it (completed, or failed with its items unpaid again), its log line with no manager; the diner gets one notice.
-  - `refund.failed` (a refund Stripe accepted, then couldn't make): a manager's refund is logged on its cart (`stripeRefundFailed`, once) and as a server error, not reversed: the manager pays the diner back another way. The API's own full refund of a payment it couldn't record is made again (in 30 minutes, by the sweep), up to 3 times; when Stripe's reason means a new one would fail too (`expired_or_canceled_card`, `lost_or_stolen_card`, `charge_for_pending_refund_disputed`, `merchant_request`), or it has failed 3 times already, it's handed to staff instead: logged on the cart it was made for (`stripeRefundFailed`, once, with the diner's first name, what's still taken and the payment id; a closed cart is listed again for a day), for staff to pay the diner back another way (unless the diner disputed the charge with their bank: then staff accept the dispute in Stripe's dashboard instead, so their bank returns the money, and pay back only if it closes without that), and the diner gets a notice to contact staff if they're at the table within the notices' 2 hours. Nothing is done when Stripe has the charge refunded in full by then (a stale event: staff refunded it by hand since). One made in Stripe's dashboard: a server error only.
+  - `refund.failed` (a refund Stripe accepted, then couldn't make): a manager's refund is not reversed here. One the cart has as `completed` becomes a [pay-back](#pay-back-payback) (`refundFailed`, once, with the refund's and the whole payment's amounts; `disputed` when Stripe's reason is the diner's dispute) and a line on its cart (`stripeRefundFailed`, once: pay the diner back another way, or, disputed, don't: their bank returns it); one still `pending` here answers `500` so Stripe sends it again once it's settled; one already `failed` here is only logged (refund those items again: nothing is owed); one that isn't on its cart (metadata edited, or the refund gone) gets a line telling managers to check it in Stripe's dashboard. A cart id that isn't one, or a cart that's gone, is logged as a server error only. The API's own full refund of a payment it couldn't record is made again (in 30 minutes, by the sweep), up to 3 times; when Stripe's reason means a new one would fail too (`expired_or_canceled_card`, `lost_or_stolen_card`, `charge_for_pending_refund_disputed`, `merchant_request`), or it has failed 3 times already, it's handed to staff instead: a pay-back on its table (`refundRefused`, once, for what's still taken) and a line on the cart it was made for (`stripeRefundFailed`, once, with the diner's first name, what's still taken and the payment id; a closed cart is listed again for a day), for staff to pay the diner back another way (unless the diner disputed the charge with their bank: then staff accept the dispute in Stripe's dashboard instead, so their bank returns the money, and pay back only if it closes without that), and the diner gets a notice to contact staff if they're at the table within the notices' 2 hours. Nothing is done when Stripe has the charge refunded in full by then (a stale event: staff refunded it by hand since). One made in Stripe's dashboard: a server error only.
 
   `500` (Stripe retries) when the outcome isn't settled yet: Stripe or the database erred, the capture's outcome is unclear, or a refund failed. The sweep (every 2 minutes) finishes what the webhook doesn't.
 

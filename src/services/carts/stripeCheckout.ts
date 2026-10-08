@@ -59,6 +59,7 @@ export interface IStripeCheckout {
     _id: string
     cartId: mongoose.Types.ObjectId
     tableId: string
+    shopId?: mongoose.Types.ObjectId
     userId: mongoose.Types.ObjectId
     amount: number
     state: CheckoutState
@@ -91,6 +92,9 @@ const StripeCheckoutSchema = new Schema<IStripeCheckout>(
         _id: { type: String, required: true },
         cartId: { type: Schema.Types.ObjectId, required: true },
         tableId: { type: String, required: true },
+        // The table's shop, when the intent was created (S35: a pay-back
+        // needs it, and the cart may be gone by then). Set for every new one.
+        shopId: Schema.Types.ObjectId,
         userId: { type: Schema.Types.ObjectId, required: true },
         amount: { type: Number, required: true },
         state: { type: String, enum: CHECKOUT_STATES, default: "open" },
@@ -122,6 +126,12 @@ const StripeCheckoutSchema = new Schema<IStripeCheckout>(
 // three states needs $in, which partial indexes take only from MongoDB 6.0, and
 // the collection stays small.
 StripeCheckoutSchema.index({ state: 1, createdAt: 1 })
+// A shop's card refunds by when they last moved: a shop isn't deleted while
+// one could still fail at Stripe (deleteMyShop). By the shop, and by the table
+// for records from before they kept their shop (one query each: an $or over
+// two partial indexes can't be planned).
+StripeCheckoutSchema.index({ shopId: 1, updatedAt: 1 }, { partialFilterExpression: { refunding: true } })
+StripeCheckoutSchema.index({ tableId: 1, updatedAt: 1 }, { partialFilterExpression: { refunding: true } })
 // A diner's outcomes at a table, for their notices: only finished ones.
 StripeCheckoutSchema.index(
     { userId: 1, tableId: 1, finishedAt: 1 },

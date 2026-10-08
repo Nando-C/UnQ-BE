@@ -10,6 +10,8 @@ import {
 } from "../../lib/stripe"
 import { money, toPence } from "../../lib/money"
 import { log, logOnce } from "./managerControllers"
+import { shopIdOfTable } from "../shops/model"
+import { dinerName, writePayback } from "../payments/payback"
 
 // Finishing a card payment: one procedure for the diner's capture call
 // (captureStripeCheckout), the sweep below and the webhook (S34). The diner's
@@ -54,6 +56,11 @@ type Answer = { status: number; message: string }
 
 export const CART_GONE = "Your card payment went through, but this table's cart is no longer here"
 export const CART_GONE_PENDING = "Your card payment is being confirmed, but this table's cart is no longer here"
+// Its 404, with a machine-readable why (the frontend tells it from the other
+// 404s, which mean nothing was charged).
+export const cartGone = (pending: boolean) => pending
+    ? { status: 404, message: CART_GONE_PENDING, reason: "CART_GONE_PENDING" }
+    : { status: 404, message: CART_GONE, reason: "CART_GONE" }
 const NOT_THIS_CHECKOUT: Outcome = { kind: "answer", status: 402, message: "This payment was not created for this checkout" }
 const PAYMENT_FAILED: Answer = { status: 402, message: "This payment didn't go through: nothing was taken" }
 const NOT_COMPLETED: Answer = { status: 402, message: "Payment not completed — nothing was charged" }
@@ -115,6 +122,8 @@ const wontClear = (reason: string | null | undefined) => FOR_GOOD.has(reason ?? 
 // gives them the money back. (Never the charge's `disputed`, which stays true
 // once a dispute closes, won or lost.)
 const DISPUTED = new Set(["charge_for_pending_refund_disputed", "charge_disputed", "refund_disputed_payment"])
+// Whether Stripe's refund failure reason is the diner's dispute.
+export const isDisputeReason = (reason: string | null | undefined) => DISPUTED.has(reason ?? "")
 
 // What's still taken of intent `id`'s charge (pence), from the refunds Stripe
 // lists for it: those failed or cancelled don't count, nor `failed` (one
@@ -219,7 +228,7 @@ const finalAnswer = async (record: IStripeCheckout, caller?: Caller): Promise<Ou
         // Its cart was since deleted (with its shop): the money was still taken.
         await markAnswered(record._id, outcomeKey(record), caller, { state: record.state, paymentStatus: record.paymentStatus })
         if (record.paymentStatus === "failed") return { kind: "answer", ...PAYMENT_FAILED, final: "recorded" }
-        return { kind: "answer", status: 404, message: record.paymentStatus === "pending" ? CART_GONE_PENDING : CART_GONE, final: "recorded" }
+        return { kind: "answer", ...cartGone(record.paymentStatus === "pending"), final: "recorded" }
     }
     await markAnswered(record._id, outcomeKey(record), caller, { state: record.state })
     // Captured, and its refund failed for good: staff pay the diner back.
@@ -663,11 +672,26 @@ class Holder {
 // a server error only. One not told (an error) is told by the sweep.
 export const tellStaff = async (id: string) => {
     const record = await StripeCheckoutModel.findOne({ _id: id, state: "refundFailed", staffToldAt: { $exists: false } })
-        .select("cartId userId amount refundOwed disputed").lean()
+        .select("cartId tableId userId amount refundOwed disputed").lean()
     if (!record) return
     const { cartId } = record
-    const user = await UserModel.findById(record.userId).select("name").lean()
-    const diner = user ? user.name || "a diner with no name" : "a diner whose account is gone"
+    // The pay-back first (S35): what's shown and marked done. Written whether
+    // or not the cart is still there; once, however often this runs. For the
+    // shop that has its table now: the record's may have been deleted since
+    // (a refund failing more than 30 days on), and nothing would show it.
+    const shopId = await shopIdOfTable(record.tableId)
+    if (shopId) {
+        await writePayback({
+            kind: "refundRefused", shopId, tableId: record.tableId, cartId, userId: record.userId,
+            amount: (record.refundOwed ?? record.amount) / 100, currency: "GBP", paymentIntentId: id,
+            ...(record.disputed && { disputed: true }),
+        })
+    } else {
+        console.error("A card payment Stripe won't refund has no shop left to show its pay-back on: pay the diner back from Stripe's dashboard", {
+            paymentIntentId: id, tableId: record.tableId,
+        })
+    }
+    const diner = dinerName(await UserModel.findById(record.userId).select("name").lean())
     const amount = money((record.refundOwed ?? record.amount) / 100, "GBP")
     const details = record.disputed
         ? `${amount} card payment by ${diner} is disputed with their bank, so Stripe won't refund it (payment ${id}). ` +

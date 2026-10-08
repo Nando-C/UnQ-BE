@@ -8,6 +8,7 @@ import { keepOrderInStep } from "../orders/sync"
 import createError from "http-errors"
 import { CART_MENUS, closeIfPaidOff, hasPendingPayment, removeUnpaidUnits } from "./controllers"
 import { saveChecked } from "../../lib/mongo"
+import PaybackModel, { tablePaybacks } from "../payments/payback"
 import { money } from "../../lib/money"
 import UserModel from "../users/model"
 import { awaitedProvider, checkProviderPayment, findProviderRefund, providerName, refundPayment, RefundRefused } from "../../lib/payments"
@@ -35,7 +36,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100
 // someone has a selection open; partlyPaid: some units paid, none selected
 // now.
 type TableState = "free" | "ordering" | "waitingToPay" | "partlyPaid"
-type Attention = "soldOut" | "duplicateCarts" | "staleSelection" | "paymentPending"
+type Attention = "soldOut" | "duplicateCarts" | "staleSelection" | "paymentPending" | "payBack"
 
 // A table's state from its open carts (newest first; more than one only for
 // legacy duplicates). Money as the diner's cart counts it: the unpaid units of a
@@ -87,18 +88,21 @@ export const getTablesStatus: TController = async ( req, res, next ) => {
         if (!shop) return next(createError(404, "Shop Not Found!"))
 
         const tableIds = shop.tables.map((t) => String(t._id))
-        const openCarts = await CartModel.find({ tableId: { $in: tableIds }, status: "open" })
-            .sort({ createdAt: -1 })
-            .populate(CART_MENUS)
+        const [openCarts, owedAt] = await Promise.all([
+            CartModel.find({ tableId: { $in: tableIds }, status: "open" })
+                .sort({ createdAt: -1 })
+                .populate(CART_MENUS),
+            // A diner still to be paid back there (S35), whatever its carts.
+            PaybackModel.distinct("tableId", { shopId: shop._id, owed: true }),
+        ])
+        const owed = new Set(owedAt)
 
         const now = Date.now()
         res.send(shop.tables.map((table) => {
             const tableId = String(table._id)
-            return {
-                tableId,
-                name: table.name,
-                ...tableSummary(openCarts.filter((c) => c.tableId === tableId), now),
-            }
+            const summary = tableSummary(openCarts.filter((c) => c.tableId === tableId), now)
+            if (owed.has(tableId)) summary.attention.push("payBack")
+            return { tableId, name: table.name, ...summary }
         }))
     } catch (error) {
         next(createError(500, error as Error))
@@ -140,21 +144,27 @@ export const getTableCarts: TController = async ( req, res, next ) => {
         if (!onShop) return next(createError(404, "Table Not Found!"))
 
         const since = new Date(Date.now() - RECENTLY_CLOSED_MS)
-        const carts = await CartModel.find({
-            tableId,
-            $or: [
-                { status: "open" },
-                { status: "closed", updatedAt: { $gte: since } },
-                { status: "closed", ...AWAITING_PROVIDER },
-            ],
-        })
-            .sort({ createdAt: -1 })
-            .populate(CART_MENUS)
-            .populate(DINER_NAMES)
+        const [carts, paybacks] = await Promise.all([
+            CartModel.find({
+                tableId,
+                $or: [
+                    { status: "open" },
+                    { status: "closed", updatedAt: { $gte: since } },
+                    { status: "closed", ...AWAITING_PROVIDER },
+                ],
+            })
+                .sort({ createdAt: -1 })
+                .populate(CART_MENUS)
+                .populate(DINER_NAMES),
+            // Owed, and done in the last 30 days (S35): the table's, whichever
+            // cart they came from (it may be gone).
+            tablePaybacks(tableId),
+        ])
 
         res.send({
             open: carts.filter((c) => c.status === "open").map(plain),
             recentlyClosed: carts.filter((c) => c.status !== "open").map(plain),
+            paybacks,
         })
     } catch (error) {
         next(createError(500, error as Error))

@@ -3,9 +3,10 @@ import { TController } from "src/typings/controllers"
 import { IUserDocument } from "src/typings/users"
 import createError from "http-errors"
 import CartModel from "./model"
+import { shopIdOfTable } from "../shops/model"
 import StripeCheckoutModel from "./stripeCheckout"
 import { CART_MENUS, checkoutCheck, forDiner } from "./controllers"
-import { CART_GONE, CART_GONE_PENDING, finishStripeIntent, stillConfirmingAnswer, takeBackAnswer } from "./stripeFinish"
+import { cartGone, finishStripeIntent, stillConfirmingAnswer, takeBackAnswer } from "./stripeFinish"
 import { cancelIntent, createIntent } from "../../lib/stripe"
 import { toPence } from "../../lib/money"
 
@@ -23,7 +24,11 @@ const COULD_NOT_START = "Could not start a card payment"
 // Step 1, with createCheckoutOrder's checks. The intent's record is written
 // right after Stripe creates it, so no intent exists the sweep can't see: if
 // it can't be, the intent is cancelled. An intent nobody confirms holds
-// nothing, and the sweep cancels it an hour after it was created.
+// nothing, and the sweep cancels it an hour after it was created. Answers the
+// intent's amount (pence) too: the frontend confirms only the amount it showed.
+// The record keeps the table's shop (a pay-back may need it after the cart is
+// gone): an older cart that doesn't record it finds it by its table, and gets
+// it; a table no shop has any more is refused before anything is created.
 export const createStripeCheckout: TController = async ( req, res, next ) => {
     try {
         const user = req.user as IUserDocument
@@ -32,6 +37,9 @@ export const createStripeCheckout: TController = async ( req, res, next ) => {
         const check = await checkoutCheck(cartId, tableId, user._id)
         if (!check.ok) return next(createError(check.status, check.message))
         const amount = toPence(check.total)
+        const shopId = check.cart.shopId ?? await shopIdOfTable(tableId)
+        if (!shopId) return next(createError(404, "This table is no longer at a shop"))
+        if (!check.cart.shopId) await CartModel.updateOne({ _id: cartId, shopId: { $exists: false } }, { $set: { shopId } })
 
         let intent
         try {
@@ -41,7 +49,7 @@ export const createStripeCheckout: TController = async ( req, res, next ) => {
             return next(createError(502, COULD_NOT_START, { expose: true }))
         }
         try {
-            await StripeCheckoutModel.create({ _id: intent.id, cartId, tableId, userId: user._id, amount })
+            await StripeCheckoutModel.create({ _id: intent.id, cartId, tableId, shopId, userId: user._id, amount })
         } catch (error) {
             console.error("Stripe intent's record not written: cancelling it", { paymentIntentId: intent.id, error })
             await cancelIntent(intent.id).catch((cancelError) =>
@@ -49,7 +57,7 @@ export const createStripeCheckout: TController = async ( req, res, next ) => {
             return next(createError(502, COULD_NOT_START, { expose: true }))
         }
 
-        res.send({ clientSecret: intent.client_secret, paymentIntentId: intent.id })
+        res.send({ clientSecret: intent.client_secret, paymentIntentId: intent.id, amount })
     } catch (error) {
         next(createError(500, error as Error))
     }
@@ -101,7 +109,10 @@ export const captureStripeCheckout: TController = async ( req, res, next ) => {
             try {
                 const cart = await CartModel.findById(outcome.cartId).populate(CART_MENUS)
                 // Deleted since it was recorded (with its table or shop).
-                if (!cart) return next(createError(404, outcome.status === 202 ? CART_GONE_PENDING : CART_GONE))
+                if (!cart) {
+                    const { status, message, reason } = cartGone(outcome.status === 202)
+                    return next(createError(status, message, { reason }))
+                }
                 return res.status(outcome.status).send(await forDiner(cart, req))
             } catch (error) {
                 // Recorded, but the reply can't be built.

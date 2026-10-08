@@ -11,7 +11,7 @@ import "./setup"
 import app from "../server"
 import * as stripe from "../lib/stripe"
 import { fakeStripe } from "./fakeStripe"
-import { stripeTable, minutesAgo, setRecord, heldElsewhere } from "./stripeHelpers"
+import { stripeTable, minutesAgo, setRecord, heldElsewhere, deliver, failedRefund } from "./stripeHelpers"
 import CartModel from "../services/carts/model"
 import StripeCheckoutModel, { syncRecordFromCart } from "../services/carts/stripeCheckout"
 import OrderModel from "../services/orders/model"
@@ -32,21 +32,6 @@ const FAILED = "Your card payment of £6.00 didn't go through: nothing was taken
 
 type Table = Awaited<ReturnType<typeof stripeTable>>
 
-// An event as Stripe posts it: `object` is the intent or refund, signed with
-// the endpoint's secret unless a `signature` is given (null: none sent).
-let sent = 0
-const deliver = (type: string, object: unknown, { signature, id }: { signature?: string | null; id?: string } = {}) => {
-    const payload = JSON.stringify({
-        id: id ?? `evt_${++sent}`, object: "event", type, api_version: "2026-09-30.endive",
-        created: Math.floor(Date.now() / 1000), livemode: false, pending_webhooks: 1, request: null, data: { object },
-    })
-    const header = signature === undefined
-        ? Stripe.webhooks.generateTestHeaderString({ payload, secret: process.env.STRIPE_WEBHOOK_SECRET! })
-        : signature
-    const req = request(app).post("/payments/stripe/webhook").set("Content-Type", "application/json")
-    if (header !== null) req.set("Stripe-Signature", header)
-    return req.send(payload)
-}
 // An event about intent `pi`, with the intent as Stripe has it now.
 const aboutIntent = (type: string, pi: string) => deliver(type, fakeStripe.get(pi))
 
@@ -484,10 +469,7 @@ describe("a pending card payment", () => {
 // --------------------------------------------------------------------------
 
 describe("a refund Stripe accepted, then couldn't make (refund.failed)", () => {
-    const failed = (
-        refund: { id: string; metadata: Record<string, string>; payment_intent: string; amount: number },
-        reason: string | null = "expired_or_canceled_card"
-    ) => ({ ...refund, object: "refund", status: "failed", currency: "gbp", failure_reason: reason })
+    const failed = failedRefund
 
     it("a manager's: logged on its cart (once) and as a server error, not reversed", async () => {
         const t = await stripeTable()

@@ -10,6 +10,7 @@ import UserModel from "./services/users/model"
 import MenuModel from "./services/menus/model"
 import OrderModel from "./services/orders/model"
 import StripeCheckoutModel from "./services/carts/stripeCheckout"
+import PaybackModel from "./services/payments/payback"
 import { sweepStripeCheckouts } from "./services/carts/stripeFinish"
 
 const PORT = env.PORT
@@ -37,7 +38,7 @@ mongoose.connect(env.MONGO_CONNECTION)
             : err.code === 11000 ? " — values repeat that the named unique index must keep apart"
             : err.code === 85 || err.code === 86 ? ` — the database already has an index with that name or those keys and other options: compare db.${collection}.getIndexes() with the schema before changing either`
             : ""
-        for (const model of [CartModel, ShopModel, UserModel, MenuModel, OrderModel, StripeCheckoutModel] as const) {
+        for (const model of [CartModel, ShopModel, UserModel, MenuModel, OrderModel, StripeCheckoutModel, PaybackModel] as const) {
             model.init().catch((err: Error & { code?: unknown }) => {
                 console.error(` ⚠️  ${model.modelName} indexes not built (${err.message})${hint(model.modelName, model.collection.name, err)}`)
             })

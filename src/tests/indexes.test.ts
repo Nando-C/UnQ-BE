@@ -26,7 +26,8 @@ import { SHOP_DELETION_READ } from "../services/orders/sync"
 import { googleUserFor } from "../services/auth/oauth"
 import { getOrder, captureOrder } from "../lib/paypal"
 import StripeCheckoutModel from "../services/carts/stripeCheckout"
-import { sweepStripeCheckouts } from "../services/carts/stripeFinish"
+import { sweepStripeCheckouts, tellStaff } from "../services/carts/stripeFinish"
+import PaybackModel from "../services/payments/payback"
 import { fakeStripe } from "./fakeStripe"
 
 // Most carts are kept for good, so a query that reads all of them, or all of a
@@ -87,7 +88,7 @@ beforeEach(() => {
 
 // The indexes are built before any test runs, as they are long before traffic in production.
 beforeAll(async () => {
-    await Promise.all([CartModel.init(), ShopModel.init(), UserModel.init(), MenuModel.init(), OrderModel.init(), StripeCheckoutModel.init()])
+    await Promise.all([CartModel.init(), ShopModel.init(), UserModel.init(), MenuModel.init(), OrderModel.init(), StripeCheckoutModel.init(), PaybackModel.init()])
 })
 
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000)
@@ -263,6 +264,34 @@ describe("no request reads a whole collection", () => {
         })
         expect(await CartModel.countDocuments()).toBe(0)
         expect(await MenuModel.countDocuments()).toBe(0)
+    })
+
+    it("pay-backs: handed over, listed, flagged, marked done, and holding a shop's deletion", async () => {
+        const { owner, shopId, tableId, otherTableId, menuId, customer } = await scaffold()
+        const cartId = (await request(app).post(`/carts/${shopId}/tables/${tableId}/addItem`).set("Cookie", customer.cookies)
+            .send({ menuId, qty: 1 })).body._id
+        await request(app).post(`/carts/${shopId}/tables/${tableId}/${cartId}/addSplitItem`).set("Cookie", customer.cookies).send({ menuId, qty: 1 })
+        const pi = (await request(app).post(`/carts/tables/${tableId}/${cartId}/createStripeCheckout`).set("Cookie", customer.cookies)).body.paymentIntentId
+        // Its late refund failed for good: handed to staff, not told yet.
+        await StripeCheckoutModel.collection.updateOne({ _id: pi }, { $set: { state: "refundFailed", refunding: true, finishedAt: new Date() } })
+        await CartModel.deleteOne({ _id: cartId })
+
+        await noScans(async () => {
+            await tellStaff(pi)
+            expect((await request(app).get(`/shops/${shopId}/tables/status`).set("Cookie", owner.cookies)).body
+                .find((t: { tableId: string }) => t.tableId === tableId).attention).toContain("payBack")
+            const sheet = await request(app).get(`/shops/${shopId}/tables/${tableId}/carts`).set("Cookie", owner.cookies)
+            expect(sheet.body.paybacks).toHaveLength(1)
+            // Refused while a card refund can still fail, and while the diner is owed.
+            expect((await request(app).delete(`/shops/${shopId}`).set("Cookie", owner.cookies)).status).toBe(409)
+            expect((await request(app).post(`/shops/${shopId}/paybacks/${sheet.body.paybacks[0]._id}/done`)
+                .set("Cookie", owner.cookies).send({ as: "paidBack" })).status).toBe(200)
+            expect((await request(app).get(`/shops/${shopId}/tables/${tableId}/carts`).set("Cookie", owner.cookies)).body.paybacks).toHaveLength(1)
+            expect((await request(app).delete(`/shops/${shopId}/tables/${otherTableId}`).set("Cookie", owner.cookies)).status).toBe(204)
+            expect((await request(app).get("/shops/me").set("Cookie", owner.cookies)).status).toBe(200)
+            // Paid back, and its refund already failed: nothing holds the shop.
+            expect((await request(app).delete(`/shops/${shopId}`).set("Cookie", owner.cookies)).status).toBe(204)
+        })
     })
 
     it("signing in with Google", async () => {

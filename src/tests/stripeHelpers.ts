@@ -1,4 +1,5 @@
 import request from "supertest"
+import Stripe from "stripe"
 import app from "../server"
 import { authFor } from "./helpers"
 import { fakeStripe } from "./fakeStripe"
@@ -53,3 +54,26 @@ export const setRecord = (pi: string, fields: Record<string, unknown>) =>
 // stopped without finishing.
 export const heldElsewhere = (pi: string, { expired = false, state = "finishing" } = {}) =>
     setRecord(pi, { state, token: "someone-else", leaseUntil: new Date(Date.now() + (expired ? -1000 : 60_000)) })
+
+// An event as Stripe posts it to the webhook: `object` is the intent or refund,
+// signed with the endpoint's secret unless a `signature` is given (null: none
+// sent).
+let sent = 0
+export const deliver = (type: string, object: unknown, { signature, id }: { signature?: string | null; id?: string } = {}) => {
+    const payload = JSON.stringify({
+        id: id ?? `evt_${++sent}`, object: "event", type, api_version: "2026-09-30.endive",
+        created: Math.floor(Date.now() / 1000), livemode: false, pending_webhooks: 1, request: null, data: { object },
+    })
+    const header = signature === undefined
+        ? Stripe.webhooks.generateTestHeaderString({ payload, secret: process.env.STRIPE_WEBHOOK_SECRET! })
+        : signature
+    const req = request(app).post("/payments/stripe/webhook").set("Content-Type", "application/json")
+    if (header !== null) req.set("Stripe-Signature", header)
+    return req.send(payload)
+}
+
+// A refund as Stripe reports it in refund.failed, for `reason`.
+export const failedRefund = (
+    refund: { id: string; metadata: Record<string, string>; payment_intent: string; amount: number },
+    reason: string | null = "expired_or_canceled_card"
+) => ({ ...refund, object: "refund", status: "failed", currency: "gbp", failure_reason: reason })
