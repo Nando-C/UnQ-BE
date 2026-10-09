@@ -10,20 +10,26 @@
 <h3 align="center">UnQ — Back-End</h3>
 
   <p align="center">
-    QR-code-based table ordering for bars & restaurants — scan, order, split the bill.
+    The API behind a QR-code table-ordering app: diners scan, order into a shared cart, and each pay for exactly what they picked, by card, Apple Pay, Google Pay or PayPal.
+    <br />
+    Express 5 · TypeScript 6 · MongoDB · Stripe + PayPal · 484 integration tests
     <br />
     <br />
     <a href="https://github.com/Nando-C/UnQ-FE">Front-End Repo</a>
     ·
     <a href="https://github.com/Nando-C/UnQ-FE#try-customer-interface">View Demo</a>
+    ·
+    <a href="./CHANGELOG.md">Changelog</a>
   </p>
 
   <p align="center">
+    <a href="https://github.com/Nando-C/UnQ-BE/actions/workflows/ci.yml"><img src="https://github.com/Nando-C/UnQ-BE/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <img src="https://img.shields.io/badge/version-2.0.0-635bff" alt="Version 2.0.0">
     <img src="https://img.shields.io/badge/Node.js-%3E%3D20.19-339933?logo=node.js&logoColor=white" alt="Node >=20.19">
     <img src="https://img.shields.io/badge/TypeScript-6.0-3178C6?logo=typescript&logoColor=white" alt="TypeScript 6.0">
     <img src="https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white" alt="Express 5">
     <img src="https://img.shields.io/badge/MongoDB-Mongoose%209-47A248?logo=mongodb&logoColor=white" alt="MongoDB / Mongoose 9">
-    <img src="https://img.shields.io/badge/tested%20with-Jest-C21325?logo=jest&logoColor=white" alt="Tested with Jest">
+    <img src="https://img.shields.io/badge/tests-484%20passing-C21325?logo=jest&logoColor=white" alt="484 tests passing (Jest)">
   </p>
 </div>
 
@@ -38,8 +44,15 @@
       </ul>
     </li>
     <li><a href="#features">Features</a></li>
+    <li><a href="#engineering-decisions">Engineering decisions</a></li>
     <li><a href="#architecture">Architecture</a></li>
-    <li><a href="#setup">Setup</a></li>
+    <li><a href="#setup">Setup</a>
+      <ul>
+        <li><a href="#environment-variables">Environment Variables</a></li>
+        <li><a href="#available-scripts">Available Scripts</a></li>
+        <li><a href="#versioning-and-releases">Versioning and releases</a></li>
+      </ul>
+    </li>
     <li><a href="#testing">Testing</a></li>
     <li><a href="#models">Models</a>
      <ul>
@@ -47,14 +60,19 @@
         <li><a href="#shop">Shop</a></li>
         <li><a href="#menu">Menu</a></li>
         <li><a href="#cart">Cart</a></li>
+        <li><a href="#card-payment-stripecheckout">Card payment (StripeCheckout)</a></li>
+        <li><a href="#pay-back-payback">Pay-back (Payback)</a></li>
+        <li><a href="#order">Order</a></li>
       </ul>
     </li>
     <li><a href="#rest-api">REST API</a>
      <ul>
+        <li><a href="#checkout-at-a-glance">Checkout at a glance</a></li>
         <li><a href="#authorization">Authorization</a></li>
         <li><a href="#users">Users</a></li>
         <li><a href="#shops">Shops</a></li>
         <li><a href="#carts">Carts</a></li>
+        <li><a href="#payments">Payments</a></li>
       </ul>
     </li>
     <li><a href="#contact">Contact</a></li>
@@ -65,13 +83,11 @@
 
 ## About The Project
 
-UnQ lets customers scan a QR code on their table, browse a shop's menu, place an order, and split the bill per item with the rest of the table — no app install, no waiting for a waiter to take the order. On the other side, shop managers run their shop's profile, tables, and menu from the same API.
+UnQ gives every table in a venue a QR code. Diners scan it, order from the live menu into one shared cart, and split the bill per item, with no app to install and no waiter to wait for. This repository is the API: the data model, authentication, the manager's tools, and the money. The React client lives in [UnQ-FE](https://github.com/Nando-C/UnQ-FE).
 
-This is the Back-End of my solo capstone project for Strive School's Full-Stack program, built concept-to-deployment in 5 weeks — designing the data model, the REST API, and the authentication/authorization layer, and implementing both the Front-End and Back-End from scratch in that time.
+The money is the hard part. Several people pay against one cart at the same time, prices change mid-order, items sell out, and a diner can close the tab halfway through a card payment. The API's rule is simple to state and took most of the work to keep: **nothing is charged until the units are reserved, and nobody stays charged for units they didn't get.** Payments are created server-side for a database-priced total, captured only after the cart is re-checked, and refunded automatically if a concurrent payer wins the race after capture. A card payment the diner walks away from is finished by Stripe's webhook or a two-minute sweep, with one finisher at a time, and the diner is told the outcome on their next visit to the table. Money Stripe refuses to return becomes a pay-back the manager has to mark done.
 
-**Recently modernized (2026):** the codebase went through a staged security and quality pass — mass-assignment whitelisting, working refresh-token rotation, short-lived (15m) access tokens, sanitized error responses, `zod` request validation on every mutating endpoint, an integration test suite (Jest + Supertest + an in-memory MongoDB), ESLint, and a dependency refresh that brought `npm audit` to 0 findings.
-
-You can find the Front-End repo of this project in the following link, where more information about the use of this app is shared: [UnQ's Front-End](https://github.com/Nando-C/UnQ-FE)
+The first version was a five-week solo capstone (2021). The 2026 rebuild brought it to Express 5, TypeScript 6 and Mongoose 9, added zod validation on every write, refresh-token rotation, per-account rate limits, a fail-fast environment schema, and an integration suite of 484 tests against an in-memory MongoDB. `npm audit` reports 0 findings. Every release is listed in the [changelog](./CHANGELOG.md).
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -102,6 +118,22 @@ You can find the Front-End repo of this project in the following link, where mor
 - Request validation (`zod`) on every mutating endpoint, with a consistent `{ message, details }` error shape
 - Server-side PayPal checkout: the API creates the order for the exact amount due (database prices, bound to cart + payer via `custom_id`) and captures it only after reserving the units — a conflict discovered before capture costs the buyer nothing, and one discovered in the window after capture is refunded automatically. Order-id replay protection and multi-payer concurrency safety throughout; the API never takes the client's word that a payment happened
 - Card payments (Apple Pay and Google Pay included) through Stripe, beside PayPal, with the same guarantee: the diner's card is only authorised, the API re-checks the cart and then captures, or cancels the authorisation so nothing is charged. One finisher at a time per payment (the diner's request, Stripe's webhook, or a sweep every 2 minutes), so an authorised payment the diner walked away from is still finished, and they're told the outcome on their next visit to the table. Money Stripe won't give back (a refund that failed for good) becomes a pay-back on the table, flagged to the shop's managers until one marks it done
+- Manager tools for the live floor: each table's status and attention flags, its carts with payments and a log of what managers and the server did, releasing selections, closing and merging carts, refunds with a reason, retries of unclear refunds, and checks of payments a provider holds as pending
+- An order per payment as the sales record, rebuilt from the cart and kept when the cart, table or shop is deleted; a paged, server-searched shop list; per-account rate limits on wrong passwords and cart edits
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+## Engineering decisions
+
+- **The client never names an amount.** Both PayPal orders and Stripe PaymentIntents are created by the API from database prices and bound to the cart and payer (PayPal's `custom_id`, Stripe's own `StripeCheckout` record). The front end only relays the buyer's approval. A tampered total, a replayed order id, or an order minted for another cart is refused before any money moves.
+- **Reserve, then charge, with optimistic concurrency instead of locks.** Every cart write checks the document's version (`__v`). Two diners claiming the last unit of an item resolve at the database, not in application memory, so no request depends on which process served the one before it (the in-memory rate counters are the one exception, noted under the REST API).
+- **One finisher per card payment.** The diner's request, Stripe's webhook and a two-minute sweep can all try to finish the same payment. Each claims its record with a token and a short lease, so a capture happens exactly once, and a payment the diner abandoned is still settled.
+- **Orders are a separate collection, rebuilt from the cart.** The cart stays the source of truth for the live table. The order is the sales record, so it outlives the cart, the table, the menu item and the shop. A sync that fails after the money moved is logged and repaired by a script, never surfaced to the diner as a failed payment.
+- **Pay-backs are their own collection.** A refund can fail days after the cart was closed and deleted. Keeping the debt on the cart would lose it with the cart.
+- **Configuration fails at boot, not at first use.** One zod schema parses the environment once. A missing variable prints every problem by name and exits, rather than turning into the string `undefined` inside Google's callback URL.
+- **Rate limits count per account, not per IP.** Behind the front end's proxy, client addresses aren't reliable. Wrong passwords and cart edits are limited per user, and checkout is never limited.
+- **Deletions are soft where money can still move.** A deleted table stays under its shop's `deletedTables` so its carts can be refunded; a deleted menu item stays, unavailable, so carts holding it still show its name; a shop can't be deleted while a payment, refund or pay-back is still in flight.
+- **Tests run the real stack.** The suite drives the Express app through Supertest against an in-memory MongoDB, with a fake Stripe that changes payments the way Stripe does, so the races between the diner's request, the webhook and the sweep are replayed on every run. An index test fails if any route scans a collection.
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -247,6 +279,21 @@ Copy `.env.example` to `.env` and fill it in. Configuration is validated at boot
 | `npm run lint` | Run ESLint on the `src/` directory |
 | `npx tsx src/scripts/syncOrders.ts` | Write or bring up to date every payment's order (backfill, and repair after "Order not written"); safe to rerun |
 | `npx tsx src/scripts/finishStripeCheckouts.ts` | Finish the card payments left unfinished, as the server does every 2 minutes; safe to run beside it |
+| `npx tsx src/scripts/findDuplicateOpenCarts.ts` | List the tables with more than one open cart, when the startup index build reports duplicates |
+
+### Versioning and releases
+
+UnQ ships as two repositories that release together, each with its own [Semantic Versioning](https://semver.org/) number and a [changelog](./CHANGELOG.md).
+
+- A front-end release `x.y.*` needs this API at `x.y.0` or later. The shared MINOR says which pair belong together; patches are independent.
+- The MAJOR changes only when a release needs a change on the deployment host (new variables, a new webhook, a deploy order) or breaks a route the front end uses. 2.0.0 is one: see the changelog's deploy notes.
+- Within a pair, the API deploys first.
+
+```bash
+npm version minor --no-git-tag-version   # or patch / major; then write the CHANGELOG entry
+git tag -a v2.1.0 -m "UnQ API 2.1.0"
+git push --follow-tags
+```
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -266,7 +313,7 @@ To try card payments by hand, use a Stripe test key (`sk_test_…`) and Stripe's
 
 ## Models
 
-I have used MongoDB with Mongoose to model the data for this application, creating five main models as shown below.
+MongoDB through Mongoose, in seven collections. The cart is the live record of a table; the payment records on it, the `StripeCheckout` audit trail, the orders and the pay-backs are the money's records, kept where a deletion of the cart, table or shop can't reach them.
 
 ### User
 
@@ -363,7 +410,7 @@ Cart Model:
             {
                 menuId: {
                     type: ObjectId,
-                    ref: "Menu",
+                    ref: "MenuItem",
                 },
                 qty: number,
                 qtyPayed: number,
@@ -377,7 +424,7 @@ Cart Model:
                 },
                 menuId: {
                     type: ObjectId,
-                    ref: "Menu",
+                    ref: "MenuItem",
                 },
                 qty: number,
                 splitStatus: {
@@ -506,7 +553,38 @@ Order Model:
 
 ## REST API
 
-These are the available endpoints created for this application. Every mutating request is validated (`zod`) and responds `400 { message: "Validation failed", details: [...] }` on bad input.
+Every mutating request is validated (`zod`) and responds `400 { message: "Validation failed", details: [...] }` on bad input. The entries below are the contract the front end is built against, so they spell out every status and message; the diagram first shows how the two-step checkout fits together.
+
+### Checkout at a glance
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Diner
+    participant FE as UnQ-FE
+    participant API as UnQ-BE
+    participant DB as MongoDB
+    participant P as Stripe / PayPal
+
+    Diner->>FE: Pay for my selection
+    FE->>API: POST createStripeCheckout / createCheckoutOrder
+    API->>DB: load cart, check availability, price from the menu
+    API->>P: create PaymentIntent (manual capture) / Order for that exact amount
+    P-->>API: id + client secret
+    API-->>FE: { paymentIntentId, amount } / { paypalOrderId }
+    FE->>P: diner confirms in the Payment Element / PayPal popup (card only authorised)
+    FE->>API: POST captureStripeCheckout / captureCheckout
+    API->>DB: re-check cart, reserve units (version check)
+    alt still consistent
+        API->>P: capture
+        API->>DB: record payment, mark splits paid, sync order
+        API-->>FE: 200 cart
+    else another payer took the units
+        API->>P: cancel authorisation (nothing charged) / refund the capture
+        API-->>FE: 409 "...your payment was refunded"
+    end
+    Note over API,P: A capture the diner never came back for is finished by Stripe's webhook or the 2-minute sweep, one finisher at a time.
+```
 
 **Rate limits.** Over a limit, a request gets `429 { message }`. Limits count per account, not per IP: behind the front-end's proxy the server can't tell visitors' addresses apart reliably.
 - Wrong passwords: 10 per account in 15 minutes (`PASSWORD_FAILS_PER_ACCOUNT`), counted together at `POST /auth/login` (`401`) and wherever the current password is confirmed (`PUT /users/me` changing the email or password, `DELETE /users/me`; `403`). Over it, every password check for that account answers `429` until the 15 minutes are up, the right password included; other changes to the account still work. Only real comparisons count: an email with no account, or a Google-only one, isn't counted.
