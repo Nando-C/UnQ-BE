@@ -10,13 +10,12 @@
 // created, updated, and found already up to date.
 import "dotenv/config"
 import mongoose from "mongoose"
+import env from "../settings/env"
 import OrderModel from "../services/orders/model"
 import { syncAllOrders } from "../services/orders/sync"
 
 const main = async () => {
-    const uri = process.env.MONGO_CONNECTION
-    if (!uri) throw new Error("MONGO_CONNECTION is not set (.env)")
-    await mongoose.connect(uri)
+    await mongoose.connect(env.MONGO_CONNECTION)
     // One order per payment rests on its unique index: built before any write.
     await OrderModel.init()
 

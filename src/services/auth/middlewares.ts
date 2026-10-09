@@ -73,7 +73,7 @@ export const isShopManager: TController = async ( req, res, next ) => {
         const user = req.user as IUserDocument
         const shopId = req.params.shopId
 
-        const myShop = await ShopModel.findById(shopId)
+        const myShop = await ShopModel.findById(shopId).select("shopMg")
 
         if (myShop) {
             if ( myShop.shopMg.some((managerId) => managerId.equals(String(user._id)))){

@@ -749,21 +749,17 @@ export const captureCheckout: TController = async ( req, res, next ) => {
         // is rejected uncharged.
         if (await orderAlreadyUsed(paypalOrderId)) return next(createError(402, "This PayPal order has already been used"))
 
-        // (b) Load the open cart + the caller's open splits.
-        const cart = await loadOpenCart(cartId, req.params.tableId)
-        if (!cart) return next(createError(404, "Cart Not Found!"))
-
-        const openSplits = callerOpenSplits(cart, user._id)
-        if (openSplits.length === 0) return next(createError(404, "No open split items to pay!"))
-
-        // Sold-out check, still before any money moves: a buyer who approved in
-        // the popup while the item sold out is rejected uncharged and the order
-        // simply expires. Checked here rather than in (d) so a deleted menu item
-        // (menuRef's sold-out stand-in) is never priced in (c). Deliberately
-        // NOT re-checked in settleCheckout: an item that sells out in the instant
-        // after capture has already been paid for, and is not refunded for that.
-        const soldOut = soldOutError(openSplits)
-        if (soldOut) return next(createError(409, soldOut))
+        // (b) The checks before any money moves, as createCheckoutOrder made
+        // them: the open cart, the caller's open splits, units still unpaid,
+        // nothing sold out. A buyer who approved in the popup while the item
+        // sold out is rejected uncharged and the order simply expires; a deleted
+        // menu item (menuRef's sold-out stand-in) is never priced in (c).
+        // Deliberately NOT re-checked in settleCheckout: an item that sells out
+        // in the instant after capture has already been paid for, and is not
+        // refunded for that.
+        const check = await checkoutCheck(cartId, req.params.tableId, user._id)
+        if (!check.ok) return next(createError(check.status, check.message))
+        const expectedTotal = check.total
 
         // (c) Fetch the order and confirm it is a buyer-approved order minted for
         // THIS cart + payer, for exactly the amount still due. Nothing is charged.
@@ -780,17 +776,12 @@ export const captureCheckout: TController = async ( req, res, next ) => {
         if (order.purchase_units?.[0]?.custom_id !== `${cartId}:${user._id}`) {
             return next(createError(402, "PayPal order was not created for this checkout"))
         }
-        const expectedTotal = expectedTotalFor(openSplits)
         const amount = order.purchase_units?.[0]?.amount
         if (amount?.currency_code !== "GBP" || amount?.value !== expectedTotal.toFixed(2)) {
             return next(createError(409, "Your selection changed since the order was created, please retry"))
         }
 
-        // (d) Availability guard — still nothing charged.
-        const availError = availabilityError(cart, openSplits)
-        if (availError) return next(createError(409, availError))
-
-        // (e) Only now capture the money.
+        // (d) Only now capture the money.
         let captured: PayPalOrder
         try {
             captured = await captureOrder(paypalOrderId)
@@ -824,7 +815,7 @@ export const captureCheckout: TController = async ( req, res, next ) => {
             currency: capture?.amount?.currency_code ?? "",
         }
 
-        // (f) Settle under optimistic concurrency, re-verifying against our own
+        // (e) Settle under optimistic concurrency, re-verifying against our own
         // capture result on any version conflict.
         // Any failure from here on happens AFTER the money moved, so it must
         // reach the refund below: a database error while saving is not an
@@ -847,7 +838,7 @@ export const captureCheckout: TController = async ( req, res, next ) => {
             return res.status(pending ? 202 : 200).send(await forDiner(outcome.cart, req))
         }
 
-        // (g) The buyer HAS been charged but the settlement is impossible (a
+        // (f) The buyer HAS been charged but the settlement is impossible (a
         // concurrent payer took the units, a replay was hit, or attempts were
         // exhausted). Make them whole with a refund, then report the conflict.
         try {

@@ -6,10 +6,10 @@ import { hasCheckoutRecord, isDisputeReason, syncRecordFromCart } from "./stripe
 import ShopModel, { ofTable, shopIdOfCart } from "../shops/model"
 import { keepOrderInStep } from "../orders/sync"
 import createError from "http-errors"
-import { CART_MENUS, closeIfPaidOff, hasPendingPayment, removeUnpaidUnits } from "./controllers"
+import { CART_MENUS, closeIfPaidOff, hasPendingPayment, loadOpenCart, removeUnpaidUnits } from "./controllers"
 import { saveChecked } from "../../lib/mongo"
 import PaybackModel, { tablePaybacks, writePayback } from "../payments/payback"
-import { money } from "../../lib/money"
+import { fromPence, money, toPence } from "../../lib/money"
 import UserModel from "../users/model"
 import { awaitedProvider, checkProviderPayment, findProviderRefund, providerName, refundPayment, RefundRefused } from "../../lib/payments"
 import { IUserDocument } from "src/typings/users"
@@ -26,7 +26,8 @@ const STALE_SELECTION_MS = 15 * 60 * 1000
 
 type Menu = { price?: number; available?: boolean } | null
 const menuOf = (ref: unknown) => ref as Menu
-const round2 = (n: number) => Math.round(n * 100) / 100
+// To the penny, as money.ts rounds.
+const round2 = (n: number) => fromPence(toPence(n))
 
 // -------------------------------------------------------------------------
 
@@ -191,7 +192,7 @@ type Params = { shopId: string; tableId: string; cartId: string }
 const loadManagedCart = async ({ shopId, tableId, cartId }: Params) => {
     const onShop = await ShopModel.exists({ _id: shopId, ...ofTable(tableId) })
     if (!onShop) return null
-    return CartModel.findOne({ _id: cartId, tableId, status: "open" }).populate(CART_MENUS)
+    return loadOpenCart(cartId, tableId)
 }
 
 // Deletes a cart that neverPaid() said could go, only if it's unchanged since it

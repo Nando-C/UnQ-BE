@@ -11,13 +11,12 @@
 // kept either way.
 import "dotenv/config"
 import mongoose from "mongoose"
+import env from "../settings/env"
 import CartModel from "../services/carts/model"
 
 const main = async () => {
-    const uri = process.env.MONGO_CONNECTION
-    if (!uri) throw new Error("MONGO_CONNECTION is not set (.env)")
     // Don't try to build the index this script exists to unblock.
-    await mongoose.connect(uri, { autoIndex: false })
+    await mongoose.connect(env.MONGO_CONNECTION, { autoIndex: false })
 
     const tables = await CartModel.aggregate<{ _id: string; count: number }>([
         { $match: { status: "open" } },

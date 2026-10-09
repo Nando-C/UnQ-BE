@@ -10,6 +10,7 @@ import UserModel from "./services/users/model"
 import MenuModel from "./services/menus/model"
 import OrderModel from "./services/orders/model"
 import StripeCheckoutModel from "./services/carts/stripeCheckout"
+import { isDuplicateKey } from "./lib/mongo"
 import PaybackModel from "./services/payments/payback"
 import { sweepStripeCheckouts } from "./services/carts/stripeFinish"
 
@@ -33,9 +34,9 @@ mongoose.connect(env.MONGO_CONNECTION)
         //   name, or those keys, and other options. Some are unique guards
         //   (replays, one open cart per table): never drop one to make room.
         const hint = (model: string, collection: string, err: Error & { code?: unknown }) =>
-            err.code === 11000 && model === "Cart" && err.message.includes(`index: ${OPEN_CART_INDEX} dup key`)
+            isDuplicateKey(err) && model === "Cart" && err.message.includes(`index: ${OPEN_CART_INDEX} dup key`)
                 ? " — list the tables with two open carts: npx tsx src/scripts/findDuplicateOpenCarts.ts"
-            : err.code === 11000 ? " — values repeat that the named unique index must keep apart"
+            : isDuplicateKey(err) ? " — values repeat that the named unique index must keep apart"
             : err.code === 85 || err.code === 86 ? ` — the database already has an index with that name or those keys and other options: compare db.${collection}.getIndexes() with the schema before changing either`
             : ""
         for (const model of [CartModel, ShopModel, UserModel, MenuModel, OrderModel, StripeCheckoutModel, PaybackModel] as const) {
