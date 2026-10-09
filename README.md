@@ -197,8 +197,11 @@ src/
 
 3. To receive Stripe's webhook events locally, forward them to the dev server with the [Stripe CLI](https://docs.stripe.com/stripe-cli) (its signing secret, from `stripe listen --print-secret`, is `STRIPE_WEBHOOK_SECRET`; it stays the same for this machine and account):
    ```bash
-   stripe listen --forward-to localhost:3001/payments/stripe/webhook
+   stripe listen \
+     --events payment_intent.amount_capturable_updated,payment_intent.succeeded,payment_intent.payment_failed,payment_intent.canceled,refund.failed \
+     --forward-to localhost:3001/payments/stripe/webhook
    ```
+   Recent Stripe CLI versions require `--events`; these are the five the API acts on.
    Deployed, the endpoint is added in Stripe's dashboard (Developers → Webhooks) with the events `payment_intent.amount_capturable_updated`, `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.canceled` and `refund.failed`, and its signing secret set on the host before the API deploys (the API won't start without it).
 
 Configuration is centralised in `src/settings/env.ts` — a single zod schema parsed once at import time, exported as a typed frozen object. No other file reads `process.env`.
