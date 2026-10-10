@@ -15,6 +15,7 @@ import shopRouter from "./services/shops/routes"
 import menuRouter from "./services/menus/routes"
 import cartRouter from "./services/carts/routes"
 import paymentRouter from "./services/payments/routes"
+import systemRouter from "./openapi/routes"
 import { isStripeWebhook } from "./lib/stripeWebhook"
 
 
@@ -37,7 +38,8 @@ app.use(passport.initialize())
 
 // ===================== ENDPOINTS  =================================
 // Each service's router and where it's mounted. Menu routes live under
-// /shops/:shopId/menu, next to the shop routes.
+// /shops/:shopId/menu, next to the shop routes. The API's own routes (health,
+// the OpenAPI document and its UI) are at the root.
 export const mounts: [string, Router][] = [
     ["/auth", authRouter],
     ["/users", userRouter],
@@ -45,6 +47,7 @@ export const mounts: [string, Router][] = [
     ["/shops", menuRouter],
     ["/carts", cartRouter],
     ["/payments", paymentRouter],
+    ["/", systemRouter],
 ]
 for (const [path, router] of mounts) app.use(path, router)
 
@@ -56,7 +59,8 @@ export const routeList = () =>
     mounts.flatMap(([base, router]) =>
         router.stack.flatMap((layer) => {
             if (!layer.route) return []
-            const path = layer.route.path === "/" ? base : base + layer.route.path
+            const prefix = base === "/" ? "" : base
+            const path = layer.route.path === "/" ? base : prefix + layer.route.path
             // A route's `all()` layers have no method.
             const methods = new Set(layer.route.stack.map((l) => (l.method ?? "all").toUpperCase()))
             return [...methods].map((method) => ({ method, path }))

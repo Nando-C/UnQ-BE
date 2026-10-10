@@ -76,6 +76,10 @@ const envSchema = z
         FRONTEND_PROD_URL: optional,
     })
 
+// The variables, for the docs drift check (tests/docs.test.ts: the README's
+// table and .env.example list exactly these).
+export const ENV_KEYS = Object.keys(envSchema.shape)
+
 const parsed = envSchema.safeParse(process.env)
 
 // The two front-end rules are checked here rather than as object-level .refine()s:
