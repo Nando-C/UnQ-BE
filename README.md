@@ -308,6 +308,11 @@ The contract is an OpenAPI 3.1 document the server builds from its own code: req
 
 - [docs/api.md](./docs/api.md): the conventions (cookies, roles, ids, money, errors), the rate limits, what each checkout step guards, and Stripe's webhook.
 - [docs/data-model.md](./docs/data-model.md): the seven collections field by field, and the rules and indexes the code keeps.
+- [docs/payments.md](./docs/payments.md): how money moves: reserve then charge, the rules that hold everywhere, one finisher per card payment, pending payments, refunds and pay-backs, the accepted residual risks.
+- [docs/auth.md](./docs/auth.md): the two cookies, refresh rotation, passwords and their limit, Google sign-in and account linking, roles and the three guards, CORS.
+- [docs/operations.md](./docs/operations.md): how the server starts, the configuration that catches people out, where it runs, the deploy order, gates and CI, the repair scripts, what to look at when something is wrong.
+- [docs/decisions.md](./docs/decisions.md): the choices that shape the API, each with its context and consequences.
+- [docs/known-gaps.md](./docs/known-gaps.md): accepted residuals, open bugs, deferred work and the roadmap.
 
 ### Checkout at a glance
 

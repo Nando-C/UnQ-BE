@@ -183,8 +183,6 @@ const cartFields = {
     tableId: objectId,
     status: { type: "string", enum: ["open", "splitted", "closed"], description: '"splitted" is a legacy value nothing sets any more' },
     items: array(ref("CartItem")),
-    paypalOrderId: { type: "string", description: "Legacy: the one PayPal order of a cart settled before multi-payer support" },
-    paypalOrderIds: { ...array({ type: "string" }), description: "Every PayPal order that settled part of this cart" },
     ...timestamps,
 }
 const cartRequired = ["_id", "userId", "tableId", "status", "items", "split", "notices", "createdAt", "updatedAt"]
@@ -193,10 +191,12 @@ const Cart = object({
     ...cartFields,
     split: array(ref("Split")),
     notices: { ...array(ref("Notice")), description: "Recent (2 hours), newest first, at most 5: the table's, plus the caller's own when signed in" },
-}, cartRequired, "A table's cart as a diner sees it (carts/model.ts dinerView): no payment or refund records, no manager log")
+}, cartRequired, "A table's cart as a diner sees it (carts/model.ts dinerView): no payment or refund records, no manager log, no provider ids")
 
 const ManagerCart = object({
     ...cartFields,
+    paypalOrderId: { type: "string", description: "Legacy: the one PayPal order of a cart settled before multi-payer support" },
+    paypalOrderIds: { ...array({ type: "string" }), description: "Every PayPal order that settled part of this cart" },
     stripePaymentIntentIds: { ...array({ type: "string" }), description: "Every Stripe PaymentIntent that settled part of this cart" },
     split: array(ref("ManagerSplit")),
     payments: array(ref("Payment")),

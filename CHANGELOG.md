@@ -12,10 +12,14 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 - `GET /health`: `{ status, version, uptime }`.
 - `docs/api.md` (conventions, rate limits, checkout, Stripe's webhook) and `docs/data-model.md` (the seven collections, field by field) replace the README's Models and REST API sections.
 - `src/scripts/validateOpenApi.mjs`: validates a served or saved OpenAPI document.
+- `docs/payments.md` (how money moves and the rules that hold), `docs/auth.md` (sessions, passwords, Google sign-in, roles), `docs/operations.md` (start-up, configuration, deploying, repair scripts), `docs/decisions.md` (the choices behind the API) and `docs/known-gaps.md` (accepted residuals, open bugs, deferred work).
 - Docs drift tests: the README's variable table and `.env.example` list exactly the environment schema's keys, and every relative link and anchor in the Markdown files resolves (`src/tests/docs.test.ts`).
 
 ### Fixed
 
+- The four cart routes that answered their 404 as plain text (`removeItem`, `deleteItem`, `decreaseSplitItem`, `removeSplitItem`) now answer `{ message }` like every other error, so the front end can show the message.
+- The public diner view of a cart no longer carries `paypalOrderId` or `paypalOrderIds` (Stripe's ids were already stripped).
+- Two unreachable "Shops Not Found!" branches removed from the shop list routes.
 - CORS refused the server's own origin, so Swagger UI's Try it out failed with a 500 on a dev server or on the API's host directly (through the front end's proxy it worked). A request whose Origin is the host it was sent to is allowed.
 - Docs: the README said checkout is never rate limited; starting a card payment (`createStripeCheckout`) counts as a cart edit, capturing never does. The README's model listings named the menu model `MenuItem`; it is `Menu`.
 
