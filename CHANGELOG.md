@@ -6,6 +6,19 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ## [Unreleased]
 
+### Added
+
+- The API's contract as an OpenAPI 3.1 document built from the code (request bodies from the routes' zod schemas), served at `GET /openapi.json` with Swagger UI at `GET /docs`. A test keeps it listing exactly the routes the server serves and validating against the OpenAPI schema (`src/openapi/`, `src/tests/openapi.test.ts`).
+- `GET /health`: `{ status, version, uptime }`.
+- `docs/api.md` (conventions, rate limits, checkout, Stripe's webhook) and `docs/data-model.md` (the seven collections, field by field) replace the README's Models and REST API sections.
+- `src/scripts/validateOpenApi.mjs`: validates a served or saved OpenAPI document.
+- Docs drift tests: the README's variable table and `.env.example` list exactly the environment schema's keys, and every relative link and anchor in the Markdown files resolves (`src/tests/docs.test.ts`).
+
+### Fixed
+
+- CORS refused the server's own origin, so Swagger UI's Try it out failed with a 500 on a dev server or on the API's host directly (through the front end's proxy it worked). A request whose Origin is the host it was sent to is allowed.
+- Docs: the README said checkout is never rate limited; starting a card payment (`createStripeCheckout`) counts as a cart edit, capturing never does. The README's model listings named the menu model `MenuItem`; it is `Menu`.
+
 ## [2.0.0] - 2026-10-09
 
 The rebuild of the 2021 API. Deploying it needs new environment variables, a Stripe webhook, and the back end deployed before the front end: see the README's Setup.
