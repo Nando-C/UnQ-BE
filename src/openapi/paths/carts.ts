@@ -1,4 +1,4 @@
-import { Paths, PUBLIC, empty, error, fromZod, json, jsonBody, param, ref, sharedResponse, text } from "../helpers"
+import { Paths, PUBLIC, empty, error, fromZod, json, jsonBody, param, ref, sharedResponse } from "../helpers"
 import { cartItemSchema, cartItemWithQtySchema, checkOutSplitSchema, stripeCaptureSchema } from "../../services/carts/schemas"
 
 // services/carts/routes.ts: controllers.ts (ordering, selecting, PayPal
@@ -51,7 +51,7 @@ export const cartPaths: Paths = {
                 204: empty("The cart was emptied and deleted"),
                 400: sharedResponse("ValidationFailed"),
                 ...editing,
-                404: text('Plain text "Item Not Found in Cart!": the table has no open cart with that item (or JSON "User not found!")'),
+                404: error('"Item Not Found in Cart!": the table has no open cart with that item; "User not found!"'),
                 409: error('"Those units are already paid for or selected for payment"'),
                 500: sharedResponse("ServerError"),
             },
@@ -69,7 +69,7 @@ export const cartPaths: Paths = {
                 204: empty("The cart was emptied and deleted"),
                 400: sharedResponse("ValidationFailed"),
                 ...editing,
-                404: text('Plain text "Item Not Found in Cart!": the table has no open cart with that item (or JSON "User not found!")'),
+                404: error('"Item Not Found in Cart!": the table has no open cart with that item; "User not found!"'),
                 409: error('"Someone at the table is paying for those": nothing the caller may remove; "The cart changed, please retry"'),
                 500: sharedResponse("ServerError"),
             },
@@ -103,7 +103,7 @@ export const cartPaths: Paths = {
                 200: sharedResponse("DinerCart"),
                 400: sharedResponse("ValidationFailed"),
                 ...editing,
-                404: text('Plain text "Item Not Found!": the caller has no open selection of that item on this cart (or JSON "User not found!")'),
+                404: error('"Item Not Found!": the caller has no open selection of that item on this cart; "User not found!"'),
                 500: sharedResponse("ServerError"),
             },
         },
@@ -119,7 +119,7 @@ export const cartPaths: Paths = {
                 200: sharedResponse("DinerCart"),
                 400: sharedResponse("ValidationFailed"),
                 ...editing,
-                404: text('Plain text "Item Not Found!": the caller has no open selection of that item on this cart (or JSON "User not found!")'),
+                404: error('"Item Not Found!": the caller has no open selection of that item on this cart; "User not found!"'),
                 500: sharedResponse("ServerError"),
             },
         },

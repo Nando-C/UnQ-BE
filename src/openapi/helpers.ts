@@ -96,7 +96,3 @@ export const jsonBody = (schema: JsonSchema): Operation["requestBody"] =>
 
 // Open to everyone: no cookie needed (the document's default is cookieAuth).
 export const PUBLIC: Operation["security"] = []
-
-// A text answer (four cart routes answer their 404 as plain text, not JSON).
-export const text = (description: string): Response =>
-    ({ description, content: { "text/html": { schema: { type: "string" } } } })

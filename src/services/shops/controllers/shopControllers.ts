@@ -41,7 +41,6 @@ export const getMyShops: TController = async ( req, res, next) => {
         const user = req.user as IUserDocument
 
         const myShops = await ShopModel.find({ shopMg: user._id }).populate("menu")
-        if (!myShops) return next(createError(404, "Shops Not Found!"))
 
         // The manager's page lists a deleted table while its sheet has something
         // on it: `needsAttention` when there's something left to do (an open
@@ -84,7 +83,6 @@ export const getAllShops: TController = async ( req, res, next) => {
     try {
         // Deleted tables are the manager's alone (GET /shops/me).
         const shopList = await ShopModel.find().select("-deletedTables").populate("menu")
-        if (!shopList) return next(createError(404, "Shops Not Found!"))
 
         res.send(shopList)
     } catch (error) {

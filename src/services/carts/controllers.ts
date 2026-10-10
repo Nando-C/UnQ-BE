@@ -208,10 +208,7 @@ export const decreaseItem: TController = async ( req, res, next ) => {
         const newest = { sort: { createdAt: -1 as const } }
 
         const isItemThere = await CartModel.findOne(theLine()).sort({ createdAt: -1 })
-        if (!isItemThere) {
-            res.status(404).send("Item Not Found in Cart!")
-            return
-        }
+        if (!isItemThere) return next(createError(404, "Item Not Found in Cart!"))
 
         // Never decrease into units that are paid for (erasing the payment
         // record) or held in someone's open split (stranding their checkout).
@@ -334,10 +331,7 @@ export const deleteItem: TController = async ( req, res, next ) => {
             CartModel.findOne({tableId: tableId, status: "open", "items.menuId": menuId}).sort({ createdAt: -1 }),
             MenuModel.findById(menuId).select("available"),
         ])
-        if (!cart) {
-            res.status(404).send("Item Not Found in Cart!")
-            return
-        }
+        if (!cart) return next(createError(404, "Item Not Found in Cart!"))
 
         // A sold-out or deleted item can't be paid for, so others' selections
         // of it would only be stranded: it goes entirely.
@@ -482,10 +476,7 @@ const changeMySplit = (update: () => UpdateQuery<ICartDocument>): TController =>
         const mine = () => ({ _id: req.params.cartId, tableId: req.params.tableId, split: { $elemMatch: { userId: user._id, menuId, splitStatus: "open" } } })
 
         const isItemThere = await CartModel.findOne(mine())
-        if (!isItemThere) {
-            res.status(404).send("Item Not Found!")
-            return
-        }
+        if (!isItemThere) return next(createError(404, "Item Not Found!"))
 
         const changed = await CartModel.findOneAndUpdate(mine(), update())
         const removed = await CartModel.findOneAndUpdate(mine(), { $pull: { split: { qty: { $lte: 0 } }}})

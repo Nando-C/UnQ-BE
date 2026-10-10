@@ -206,6 +206,58 @@ describe("carts", () => {
         // serverCheckout.test.ts's createCheckoutOrder/captureCheckout suites.
     })
 
+    it("answers a missing line or selection with a JSON 404 like every other error", async () => {
+        const { shopId, tableId, menuId, customer } = await scaffold()
+
+        // No open cart on the table yet.
+        const removed = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/removeItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 1 })
+        expect(removed.status).toBe(404)
+        expect(removed.body).toEqual({ message: "Item Not Found in Cart!" })
+
+        const deleted = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/deleteItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId })
+        expect(deleted.status).toBe(404)
+        expect(deleted.body).toEqual({ message: "Item Not Found in Cart!" })
+
+        // A cart with the line, but the caller has not selected any of it.
+        const created = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/addItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 1 })
+        const cartId = created.body._id
+        for (const route of ["decreaseSplitItem", "removeSplitItem"]) {
+            const res = await request(app)
+                .post(`/carts/${shopId}/tables/${tableId}/${cartId}/${route}`)
+                .set("Cookie", customer.cookies)
+                .send({ menuId })
+            expect(res.status).toBe(404)
+            expect(res.body).toEqual({ message: "Item Not Found!" })
+        }
+    })
+
+    it("keeps the payment providers' ids out of the diner view", async () => {
+        const { shopId, tableId, menuId, customer } = await scaffold()
+        const created = await request(app)
+            .post(`/carts/${shopId}/tables/${tableId}/addItem`)
+            .set("Cookie", customer.cookies)
+            .send({ menuId, qty: 1 })
+        await CartModel.updateOne(
+            { _id: created.body._id },
+            { $set: { paypalOrderId: "ORDER-0", paypalOrderIds: ["ORDER-1"], stripePaymentIntentIds: ["pi_1"] } }
+        )
+
+        const res = await request(app).get(`/carts/tables/${tableId}`).set("Cookie", customer.cookies)
+        expect(res.status).toBe(200)
+        for (const field of ["paypalOrderId", "paypalOrderIds", "stripePaymentIntentIds", "payments", "refunds", "managerLog"]) {
+            expect(res.body).not.toHaveProperty(field)
+        }
+    })
+
     it("rejects an addSplitItem that would claim more units than the item has (409)", async () => {
         const { shopId, tableId, menuId, customer } = await scaffold()
 

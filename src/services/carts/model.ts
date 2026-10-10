@@ -320,17 +320,19 @@ export const tookPart = (cart: ICartDocument, userId: unknown) => {
 }
 
 // A cart as a diner may see it. The table's cart is public (no login), so the
-// payment and refund records and the manager log never leave the server this
-// way, and of the notices only the table-wide ones do, plus those meant for
-// `viewerId` when the caller is known, with `more` of theirs (their card
-// payments' outcomes) before the newest are picked. Manager endpoints use
-// toObject() instead.
+// payment and refund records, the manager log and the providers' ids never
+// leave the server this way, and of the notices only the table-wide ones do,
+// plus those meant for `viewerId` when the caller is known, with `more` of
+// theirs (their card payments' outcomes) before the newest are picked. Manager
+// endpoints use toObject() instead.
 export const dinerView = (cart: ICartDocument, viewerId?: unknown, more: INotice[] = []) => {
     const view = cart.toObject()
     delete view.__v
     delete view.payments
     delete view.refunds
     delete view.managerLog
+    delete view.paypalOrderId
+    delete view.paypalOrderIds
     delete view.stripePaymentIntentIds
     view.notices = noticesFor([...(view.notices ?? []), ...more], viewerId)
     return view
