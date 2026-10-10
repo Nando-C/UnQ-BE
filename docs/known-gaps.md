@@ -16,12 +16,12 @@ Reviewed and left as they are, each with its reason.
 - **A typo in `PAYPAL_API_BASE`'s name** silently selects the sandbox; the boot log's `SANDBOX`/`LIVE` line is the mitigation.
 - **A diner disconnected behind the host's proxy** may not be seen as gone (Node only sees it if the proxy closes its upstream connection); such a diner, already told nothing, may get no notice. To be checked on the deployed test mode.
 - **`mergeInto` retried after a 409** can double units; merges are unused by the front end.
-- **The suite can flake** on the in-memory MongoDB stalling under load (a timeout, `socket hang up`); a red run is re-run once before it is believed.
+- **The suite can flake** on the in-memory MongoDB stalling under load (a timeout, `socket hang up`); the failing file is re-run on its own before a failure is treated as real.
 
 ## Open bugs
 
-- **`checkPayment` may answer `500` when it reopens a cart.** When a provider declines a pending payment, the check makes its units unpaid again and sets the cart `open`, even one that had closed. If the table has a newer open cart since, the one-open-cart-per-table index should reject that save with a duplicate key, and the manager would get a `500` instead of the two carts to merge the code's comment promises. Not reproduced yet; needs a test and a decision (keep the cart closed and move the units, or merge them). Tracked as finding f-002 (2026-09-29).
-- **The front end matches six checkout messages by their English wording** (`lib/paymentOutcome.ts`) to tell a refund from a plain refusal. Rewording any of them breaks it. Fix: reason codes (below). Finding f-003.
+- **`checkPayment` may answer `500` when it reopens a cart.** When a provider declines a pending payment, the check makes its units unpaid again and sets the cart `open`, even one that had closed. If the table has a newer open cart since, the one-open-cart-per-table index should reject that save with a duplicate key, and the manager would get a `500` instead of the two carts to merge the code's comment promises. Noticed 2026-09-29, not reproduced yet; needs a test and a decision (keep the cart closed and move the units, or merge them).
+- **The front end matches six checkout messages by their English wording** (`lib/paymentOutcome.ts`) to tell a refund from a plain refusal. Rewording any of them breaks it. Fix: reason codes, deferred item 1 below.
 
 ## Deferred
 
@@ -36,9 +36,9 @@ Each changes behaviour, a contract, stored data or several layers at once, so ea
 7. **`decreaseSplitItem` takes one unit per call**; an additive `qty` would let the front end send one request.
 8. **The Stripe webhook's raw body** is a per-route exception inside the global JSON parser, with a hand-rolled URL check; mounting `express.raw()` on that path would be cleaner but the startup route listing forbids app-level routes. Decide the two together.
 9. **Cart archiving**: once orders hold the history, closed carts should expire about 30 days after closing, through an `expiresAt` set on close and unset while a payment or refund awaits a provider (a TTL filter can't express the `$or`). Decided, not built.
-10. **Contract findings deferred to the end of the docs plan** (the user decides with the front end's handling in view): `"Shop Not Found or you are not authorized!"` is a `400` where `404`/`403` would fit (f-006); `PUT /shops/:shopId/tables/:tableId` answers the shop's whole tables array, not the table (f-007).
+10. **Two contract wrinkles**, kept until the front end's handling changes with them: `"Shop Not Found or you are not authorized!"` is a `400` where `404`/`403` would fit; `PUT /shops/:shopId/tables/:tableId` answers the shop's whole tables array, not the table.
 11. Smaller: `decreaseItem` runs an unconditional delete-and-close after every `−`; `changeMySplit`'s precheck repeats the update's 404; `optionalJWT` loads the whole user for the public cart; `GET /shops` still answers every shop with its menu though the front end moved to `/shops/browse`; `heldSince` in the table status is sent but never read; the test files' `scaffold` could be shared.
 
 ## Roadmap
 
-In the order decided with the product roadmap: the **sales reports** route over orders (with a shop time-zone setting), then the **sales dashboard**; **staff roles** narrowing what a shop's managers can do; **kitchen** (queue, prep states, live push); **several devices per account**; **live payment keys** when the user decides. A demo seed (several shops, 90 days of payments, refunds and pay-backs) is a step of the docs plan.
+In the order decided with the product roadmap: the **sales reports** route over orders (with a shop time-zone setting), then the **sales dashboard**; **staff roles** narrowing what a shop's managers can do; **kitchen** (queue, prep states, live push); **several devices per account**; **live payment keys**, a deliberate switch rather than a release step. A demo seed (several shops, 90 days of payments, refunds and pay-backs) is planned alongside.

@@ -28,7 +28,7 @@ The variables, with what they are for, are in the README's [Environment Variable
 | Front end | Vercel, `https://un-q.vercel.app` | Rewrites `/api/*` to the API, so the browser sees one origin; Swagger UI is at `/api/docs` |
 | Database | MongoDB Atlas | **MongoDB 5.0 or later**: the shop search uses `$lookup` with `localField` and a `pipeline`; the test suite runs on a local `mongod` |
 | Images | Cloudinary | configured by `CLOUDINARY_URL` alone |
-| Payments | PayPal (Orders v2), Stripe (PaymentIntents, manual capture) | sandbox / test mode until the user switches the keys |
+| Payments | PayPal (Orders v2), Stripe (PaymentIntents, manual capture) | sandbox / test mode; going live is a separate step (below) |
 
 ### Deploying a release
 
@@ -45,7 +45,7 @@ curl -s https://unq-be.onrender.com/health
 node src/scripts/validateOpenApi.mjs https://unq-be.onrender.com/openapi.json
 ```
 
-Live PayPal and Stripe keys, and the live webhook, when the user decides; the boot log must then say `LIVE` for both.
+Going live is a deliberate step of its own, not part of a release: live PayPal and Stripe keys and the live webhook on the host, after which the boot log must say `LIVE` for both.
 
 ## Local development
 
