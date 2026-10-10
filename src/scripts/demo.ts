@@ -99,51 +99,53 @@ type ShopDef = {
 
 // A photo per shop and dish, from Wikimedia Commons (each freely licensed:
 // public domain, CC0, CC BY or CC BY-SA; the author and licence are on the
-// file's page, commons.wikimedia.org/wiki/File:<name>). Served resized by the
-// Commons thumbnailer. Managers replace them from the app.
+// file's page, commons.wikimedia.org/wiki/File:<the file name in the URL>).
+// The direct thumbnail URLs, not the Special:FilePath redirect: the redirect
+// sends no CORS header, and a cover drawn into a table's QR code needs one.
+// Managers replace them from the app.
 const PHOTOS: Record<string, string> = {
-    "Rocketlit": "Beale Street Brews Counter (26499287821).jpg",
-    "Marlow Street Kitchen": "DZ6 2644 Cozy candlelit dinner tables set for an intimate evening at a charming Thai restaurant.jpg",
-    "Saturday Market Pop-up": "Jedburgh Easter Market 2022 street food stall and stallholder.jpg",
-    "Flat White": "Flat white coffee with pretty feather pattern.jpg",
-    "Latte": "Caffe Latte cup.jpg",
-    "Espresso": "Afternoon Coffee -11 366- (6682090613).jpg",
-    "Chai": "Chai Latte and Latte - The Mad Hatter.jpg",
-    "Fresh Orange Juice": "Orange juice 1 edit1.jpg",
-    "Sparkling Water": "Ice water with lemon.jpg",
-    "Avocado Toast": "Smashed avocado & poached eggs - M&S Café 2023-12-28.jpg",
-    "Sourdough Toastie": "Grilled Cheese with Texas Toast @ Horne's.jpg",
-    "Shakshuka": "Shakshuka by Calliopejen1.jpg",
-    "Granola Bowl": "Yogurt, fruit, granola bowl (34999358091).jpg",
-    "Pastel de Nata": "Pastel De Nata.jpg",
-    "Carrot Cake": "Carrot cake slice and latte - Saltmarsh Farmhouse & Cafe 2024-12-19.jpg",
-    "Pumpkin Soup": "-2021-11-01 Bowl of homemade pumpkin soup, Trimingham, Norfolk.JPG",
-    "House Red": "Wine being poured into a glass.jpg",
-    "House White": "Celebrating with a glass of white wine in a lively bar setting.jpg",
-    "Pale Ale": "Ærø India Pale Ale (28592484470).jpg",
-    "Negroni": "Negroni served in Vancouver BC.jpg",
-    "Lemonade": "Limonata (karaf).jpg",
-    "Burrata": "Salade caprese burrata.jpg",
-    "Crab Linguine": "RedDot Linguine Crab Meat Pasta.jpg",
-    "Lamb Shoulder": "Roasted lamb shoulder in a pot, Brisbane, 2025, 01.jpg",
-    "Roast Chicken": "Whole spiced chicken (roasted).jpg",
-    "Mushroom Risotto": "Risotto ai funghi porcini.JPG",
-    "Chips": "Hesburger French fries on a plate.jpg",
-    "Tiramisu": "Tiramisu cake - Trading Post Coffee Roasters 2026-01-26.jpg",
-    "Affogato": "Affogato al Caffe.jpg",
-    "Sea Bass": "Grilled sea bass (7906690230).jpg",
-    "Bao Bun": "Taiwanese burger .jpg",
-    "Dumplings": "Gyoza (52769973678).jpg",
-    "Kimchi Fries": "Vegan BBQ Boss Loaded Waffle Fries - Brewhouse & Kitchen, Worthing 2026-06-08.jpg",
-    "Mochi": "Mochi Ice Cream.jpg",
-    "Miso Soup": "Miso soup overhead.jpg",
-    "Iced Tea": "NCI iced tea.jpg",
-    "Yuzu Lemonade": "Lemonade with strawberry.jpg",
+    "Rocketlit": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c4/Beale_Street_Brews_Counter_%2826499287821%29.jpg/1280px-Beale_Street_Brews_Counter_%2826499287821%29.jpg",
+    "Marlow Street Kitchen": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b4/DZ6_2644_Cozy_candlelit_dinner_tables_set_for_an_intimate_evening_at_a_charming_Thai_restaurant.jpg/1280px-DZ6_2644_Cozy_candlelit_dinner_tables_set_for_an_intimate_evening_at_a_charming_Thai_restaurant.jpg",
+    "Saturday Market Pop-up": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/52/Jedburgh_Easter_Market_2022_street_food_stall_and_stallholder.jpg/1280px-Jedburgh_Easter_Market_2022_street_food_stall_and_stallholder.jpg",
+    "Flat White": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6b/Flat_white_coffee_with_pretty_feather_pattern.jpg/960px-Flat_white_coffee_with_pretty_feather_pattern.jpg",
+    "Latte": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9f/Caffe_Latte_cup.jpg/960px-Caffe_Latte_cup.jpg",
+    "Espresso": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7d/Afternoon_Coffee_-11_366-_%286682090613%29.jpg/960px-Afternoon_Coffee_-11_366-_%286682090613%29.jpg",
+    "Chai": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/80/Chai_Latte_and_Latte_-_The_Mad_Hatter.jpg/960px-Chai_Latte_and_Latte_-_The_Mad_Hatter.jpg",
+    "Fresh Orange Juice": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/67/Orange_juice_1_edit1.jpg/960px-Orange_juice_1_edit1.jpg",
+    "Sparkling Water": "https://upload.wikimedia.org/wikipedia/commons/c/c1/Ice_water_with_lemon.jpg",
+    "Avocado Toast": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2c/Smashed_avocado_%26_poached_eggs_-_M%26S_Caf%C3%A9_2023-12-28.jpg/960px-Smashed_avocado_%26_poached_eggs_-_M%26S_Caf%C3%A9_2023-12-28.jpg",
+    "Sourdough Toastie": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ac/Grilled_Cheese_with_Texas_Toast_%40_Horne%27s.jpg/960px-Grilled_Cheese_with_Texas_Toast_%40_Horne%27s.jpg",
+    "Shakshuka": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/18/Shakshuka_by_Calliopejen1.jpg/960px-Shakshuka_by_Calliopejen1.jpg",
+    "Granola Bowl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6c/Yogurt%2C_fruit%2C_granola_bowl_%2834999358091%29.jpg/960px-Yogurt%2C_fruit%2C_granola_bowl_%2834999358091%29.jpg",
+    "Pastel de Nata": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f8/Pastel_De_Nata.jpg/960px-Pastel_De_Nata.jpg",
+    "Carrot Cake": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c6/Carrot_cake_slice_and_latte_-_Saltmarsh_Farmhouse_%26_Cafe_2024-12-19.jpg/960px-Carrot_cake_slice_and_latte_-_Saltmarsh_Farmhouse_%26_Cafe_2024-12-19.jpg",
+    "Pumpkin Soup": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bf/-2021-11-01_Bowl_of_homemade_pumpkin_soup%2C_Trimingham%2C_Norfolk.JPG/960px--2021-11-01_Bowl_of_homemade_pumpkin_soup%2C_Trimingham%2C_Norfolk.JPG",
+    "House Red": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e3/Wine_being_poured_into_a_glass.jpg/960px-Wine_being_poured_into_a_glass.jpg",
+    "House White": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/ff/Celebrating_with_a_glass_of_white_wine_in_a_lively_bar_setting.jpg/960px-Celebrating_with_a_glass_of_white_wine_in_a_lively_bar_setting.jpg",
+    "Pale Ale": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/44/%C3%86r%C3%B8_India_Pale_Ale_%2828592484470%29.jpg/960px-%C3%86r%C3%B8_India_Pale_Ale_%2828592484470%29.jpg",
+    "Negroni": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c6/Negroni_served_in_Vancouver_BC.jpg/960px-Negroni_served_in_Vancouver_BC.jpg",
+    "Lemonade": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/23/Limonata_%28karaf%29.jpg/960px-Limonata_%28karaf%29.jpg",
+    "Burrata": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5c/Salade_caprese_burrata.jpg/960px-Salade_caprese_burrata.jpg",
+    "Crab Linguine": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/97/RedDot_Linguine_Crab_Meat_Pasta.jpg/960px-RedDot_Linguine_Crab_Meat_Pasta.jpg",
+    "Lamb Shoulder": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/41/Roasted_lamb_shoulder_in_a_pot%2C_Brisbane%2C_2025%2C_01.jpg/960px-Roasted_lamb_shoulder_in_a_pot%2C_Brisbane%2C_2025%2C_01.jpg",
+    "Roast Chicken": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7c/Whole_spiced_chicken_%28roasted%29.jpg/960px-Whole_spiced_chicken_%28roasted%29.jpg",
+    "Mushroom Risotto": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2c/Risotto_ai_funghi_porcini.JPG/960px-Risotto_ai_funghi_porcini.JPG",
+    "Chips": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/31/Hesburger_French_fries_on_a_plate.jpg/960px-Hesburger_French_fries_on_a_plate.jpg",
+    "Tiramisu": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/52/Tiramisu_cake_-_Trading_Post_Coffee_Roasters_2026-01-26.jpg/960px-Tiramisu_cake_-_Trading_Post_Coffee_Roasters_2026-01-26.jpg",
+    "Affogato": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ac/Affogato_al_Caffe.jpg/960px-Affogato_al_Caffe.jpg",
+    "Sea Bass": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4d/Grilled_sea_bass_%287906690230%29.jpg/960px-Grilled_sea_bass_%287906690230%29.jpg",
+    "Bao Bun": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/78/Taiwanese_burger_.jpg/960px-Taiwanese_burger_.jpg",
+    "Dumplings": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/aa/Gyoza_%2852769973678%29.jpg/960px-Gyoza_%2852769973678%29.jpg",
+    "Kimchi Fries": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b2/Vegan_BBQ_Boss_Loaded_Waffle_Fries_-_Brewhouse_%26_Kitchen%2C_Worthing_2026-06-08.jpg/960px-Vegan_BBQ_Boss_Loaded_Waffle_Fries_-_Brewhouse_%26_Kitchen%2C_Worthing_2026-06-08.jpg",
+    "Mochi": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/05/Mochi_Ice_Cream.jpg/960px-Mochi_Ice_Cream.jpg",
+    "Miso Soup": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/43/Miso_soup_overhead.jpg/960px-Miso_soup_overhead.jpg",
+    "Iced Tea": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e1/NCI_iced_tea.jpg/960px-NCI_iced_tea.jpg",
+    "Yuzu Lemonade": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c9/Lemonade_with_strawberry.jpg/960px-Lemonade_with_strawberry.jpg",
 }
-const photo = (subject: string, width: number) => {
-    const file = PHOTOS[subject]
-    if (!file) throw new Error(`No photo for ${subject}`)
-    return `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(file)}?width=${width}`
+const photo = (subject: string) => {
+    const url = PHOTOS[subject]
+    if (!url) throw new Error(`No photo for ${subject}`)
+    return url
 }
 
 const DINERS = [
@@ -201,7 +203,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
             open_times: "Mon–Fri 7:30–17:00 · Sat–Sun 9:00–17:00",
             phone: "0161 496 0120",
             web_URL: "https://rocketlit.example",
-            cover: photo("Rocketlit", 1200),
+            cover: photo("Rocketlit"),
             tables: [
                 { id: new Types.ObjectId(DEMO_TABLE_ID), name: "Fire Place 🔥" },
                 { id: rng.oid(), name: "Window" },
@@ -237,7 +239,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
             open_times: "Tue–Sun 12:00–22:30",
             phone: "020 7946 0834",
             web_URL: "https://marlowstreet.example",
-            cover: photo("Marlow Street Kitchen", 1200),
+            cover: photo("Marlow Street Kitchen"),
             tables: [
                 ...["Table 1", "Table 2", "Table 3", "Table 4", "Table 5", "Table 6"].map((name) => ({ id: rng.oid(), name })),
                 { id: rng.oid(), name: "Counter" },
@@ -272,7 +274,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
             open_times: "Sat 10:00–16:00",
             phone: "",
             web_URL: "",
-            cover: photo("Saturday Market Pop-up", 1200),
+            cover: photo("Saturday Market Pop-up"),
             tables: [{ id: rng.oid(), name: "Stall A" }, { id: rng.oid(), name: "Stall B" }],
             deletedTables: [],
             items: [
@@ -337,7 +339,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
                 description: item.description,
                 price: item.price,
                 category: item.category,
-                image: photo(item.name, 800),
+                image: photo(item.name),
                 available: !item.soldOut && !item.deleted,
                 ...(item.deleted && { deletedFrom: shop.id }),
                 createdAt: at(shop.since * DAY + HOUR),
