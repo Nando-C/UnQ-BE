@@ -1,22 +1,30 @@
-import { Document, Schema } from "mongoose"
-// import { IMenuDocument } from "./menu";
+import { Document, Types } from "mongoose"
 
 export interface IShop {
     name: string
     cover: string
     bio: string
     open_times: string
-    phone: number
+    phone?: string
     web_URL: string
-    shopMg: Schema.Types.ObjectId[]
+    shopMg: Types.ObjectId[]
     tables: ITable[]
-    menu: Schema.Types.ObjectId[]
+    // Tables the manager deleted: they take no orders and diners never see them,
+    // but their recent carts stay reachable (see deleteTable).
+    deletedTables: IDeletedTable[]
+    menu: Types.ObjectId[]
 }
 
 export interface ITable {
-    _id: Schema.Types.ObjectId
+    _id: Types.ObjectId
     name: string
     Qr_Url: string
+}
+
+export interface IDeletedTable {
+    _id: Types.ObjectId
+    name: string
+    deletedAt: Date
 }
 
 export interface IShopDocument extends Document, IShop {}

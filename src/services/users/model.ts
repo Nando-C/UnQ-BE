@@ -1,6 +1,8 @@
 import mongoose from "mongoose"
 import { IUserDocument, IUserModel } from "src/typings/users"
 import * as bcrypt from 'bcrypt';
+import { limitedPasswordCheck } from "../../lib/passwordLimit"
+import env from "../../settings/env"
 
 const { Schema, model } = mongoose
 
@@ -10,47 +12,61 @@ const UserSchema = new Schema<IUserDocument, IUserModel>(
             type: String,
             required: true,
         },
+        // Google may not give one, so a Google account can be without it.
         surname: {
             type: String,
-            required: true,
+            required: function (this: IUserDocument) { return !this.googleId },
         },
+        // Stored lowercase and trimmed, and lookups by email are cast the same
+        // way, so an address matches however it's capitalised.
         email: {
             type: String,
             unique: true,
             required: true,
+            lowercase: true,
+            trim: true,
         },
+        // Hashed on save. None for an account that only signs in with Google.
         password: {
             type: String,
-            // required: true,
         },
         avatar: String,
+        // "shopMg" (shop manager) can create and run shops; set in the database,
+        // never through the API.
         role: {
             type: String,
             enum: ["customer", "shopMg"],
             default: "customer"
         },
+        // The one refresh token currently valid for this user (see auth/tools.ts).
         refreshToken: String,
-        googleId: String,
+        // Looked up on every Google sign-in.
+        googleId: { type: String, index: { sparse: true } },
     },
     { timestamps: true }
 )
 
-UserSchema.pre("save", async function (next) {
-    if (this.isModified("password")) this.password = await bcrypt.hash(this.password!, 10)
-    next()
+// Mongoose 9: async middleware signals completion by resolving — there is no `next`.
+UserSchema.pre("save", async function () {
+    if (this.isModified("password") && this.password) this.password = await bcrypt.hash(this.password!, env.BCRYPT_ROUNDS)
 })
 
 UserSchema.statics.checkCredentials = async function (email, password) {
     const user = await this.findOne({email})
-    if (!user) return
-    const isMatch = await bcrypt.compare(password, user.password!)
-    if (isMatch) return user
+    if (!user || !user.password) return null
+    const hash = user.password
+    const right = await limitedPasswordCheck(String(user._id), () => bcrypt.compare(password, hash))
+    if (right === "locked") return "locked"
+    return right ? user : null
 }
 
 UserSchema.methods.toJSON = function () {
     const user = this.toObject()
     delete user.__v
     delete user.refreshToken
+    // Whether the account can log in with a password (a Google-only one
+    // can't): changing its email or password then asks for it.
+    user.hasPassword = Boolean(user.password)
     delete user.password
     return user
 }

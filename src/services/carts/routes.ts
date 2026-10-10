@@ -1,17 +1,29 @@
 import { Router } from "express"
-import { JWTAuthMiddleware } from "../auth/middlewares"
+import { JWTAuthMiddleware, optionalJWT } from "../auth/middlewares"
 import * as controllers from "./controllers"
+import * as stripeControllers from "./stripeControllers"
+import { validate } from "../../middlewares/validate"
+import { cartEditLimit } from "../../middlewares/rateLimits"
+import { cartItemSchema, cartItemWithQtySchema, checkOutSplitSchema, stripeCaptureSchema } from "./schemas"
 
 const router = Router()
 
-router.post("/:shopId/tables/:tableId/addItem", JWTAuthMiddleware, controllers.addItem)
-router.post("/:shopId/tables/:tableId/removeItem", JWTAuthMiddleware, controllers.decreaseItem)
-router.post("/:shopId/tables/:tableId/deleteItem", JWTAuthMiddleware, controllers.deleteItem)
-router.post("/:shopId/tables/:tableId/:cartId/addSplitItem", JWTAuthMiddleware, controllers.addSplitItem)
-router.post("/:shopId/tables/:tableId/:cartId/decreaseSplitItem", JWTAuthMiddleware, controllers.decreaseSplitItem)
-router.post("/:shopId/tables/:tableId/:cartId/removeSplitItem", JWTAuthMiddleware, controllers.removeSplitItem)
-router.post("/tables/:tableId/:cartId/checkOutSplitItem", JWTAuthMiddleware, controllers.checkOutSplitItem)
-router.get("/tables/:tableId", controllers.getTableCart)
+// A diner changing a table's order: signed in, and within the edit limit.
+const editing = [JWTAuthMiddleware, cartEditLimit]
+
+router.post("/:shopId/tables/:tableId/addItem", editing, validate(cartItemWithQtySchema), controllers.addItem)
+router.post("/:shopId/tables/:tableId/removeItem", editing, validate(cartItemWithQtySchema), controllers.decreaseItem)
+router.post("/:shopId/tables/:tableId/deleteItem", editing, validate(cartItemSchema), controllers.deleteItem)
+router.post("/:shopId/tables/:tableId/:cartId/addSplitItem", editing, validate(cartItemWithQtySchema), controllers.addSplitItem)
+router.post("/:shopId/tables/:tableId/:cartId/decreaseSplitItem", editing, validate(cartItemSchema), controllers.decreaseSplitItem)
+router.post("/:shopId/tables/:tableId/:cartId/removeSplitItem", editing, validate(cartItemSchema), controllers.removeSplitItem)
+router.post("/tables/:tableId/:cartId/createCheckoutOrder", JWTAuthMiddleware, controllers.createCheckoutOrder)
+router.post("/tables/:tableId/:cartId/captureCheckout", JWTAuthMiddleware, validate(checkOutSplitSchema), controllers.captureCheckout)
+// Each call creates a Stripe intent (and a record the sweep looks after): limited as edits are.
+router.post("/tables/:tableId/:cartId/createStripeCheckout", editing, stripeControllers.createStripeCheckout)
+router.post("/tables/:tableId/:cartId/captureStripeCheckout", JWTAuthMiddleware, validate(stripeCaptureSchema), stripeControllers.captureStripeCheckout)
+// Public (anyone at the table); a signed-in diner also gets their own notices.
+router.get("/tables/:tableId", optionalJWT, controllers.getTableCart)
 router.get("/", JWTAuthMiddleware, controllers.getMyCarts)
 router.get("/:cartId", JWTAuthMiddleware, controllers.getSingleCart)
 

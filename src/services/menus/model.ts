@@ -34,6 +34,15 @@ export const MenuSchema = new Schema<IMenuDocument>(
             enum: ["food", "drinks"],
             required: true
         },
+        // The shop it was deleted from. A deleted item leaves the shop's menu but
+        // is kept, unavailable, so the carts that hold it still name it; it goes
+        // for good with its shop.
+        deletedFrom: {
+            type: Schema.Types.ObjectId,
+            ref: "Shop",
+            // Found by it when the shop is deleted.
+            index: { sparse: true },
+        },
     },
     { timestamps: true }
 )
