@@ -97,9 +97,54 @@ type ShopDef = {
     since: number
 }
 
-// A photo for a shop or a dish, stable per name (Lorem Picsum serves the same
-// image for the same seed). Managers replace them from the app.
-const photo = (seed: string, w: number, h: number) => `https://picsum.photos/seed/${encodeURIComponent(seed)}/${w}/${h}`
+// A photo per shop and dish, from Wikimedia Commons (each freely licensed:
+// public domain, CC0, CC BY or CC BY-SA; the author and licence are on the
+// file's page, commons.wikimedia.org/wiki/File:<name>). Served resized by the
+// Commons thumbnailer. Managers replace them from the app.
+const PHOTOS: Record<string, string> = {
+    "Rocketlit": "Beale Street Brews Counter (26499287821).jpg",
+    "Marlow Street Kitchen": "DZ6 2644 Cozy candlelit dinner tables set for an intimate evening at a charming Thai restaurant.jpg",
+    "Saturday Market Pop-up": "Jedburgh Easter Market 2022 street food stall and stallholder.jpg",
+    "Flat White": "Flat white coffee with pretty feather pattern.jpg",
+    "Latte": "Caffe Latte cup.jpg",
+    "Espresso": "Gray espresso cup with amaretto.jpg",
+    "Chai": "Chai Latte and Latte - The Mad Hatter.jpg",
+    "Fresh Orange Juice": "Orange juice 1 edit1.jpg",
+    "Sparkling Water": "Ice water with lemon.jpg",
+    "Avocado Toast": "Smashed avocado & poached eggs - M&S Café 2023-12-28.jpg",
+    "Sourdough Toastie": "Grilled Cheese with Texas Toast @ Horne's.jpg",
+    "Shakshuka": "Shakshuka by Calliopejen1.jpg",
+    "Granola Bowl": "Yogurt, fruit, granola bowl (34999358091).jpg",
+    "Pastel de Nata": "Pastel De Nata.jpg",
+    "Carrot Cake": "Carrot cake slice and latte - Saltmarsh Farmhouse & Cafe 2024-12-19.jpg",
+    "Pumpkin Soup": "-2021-11-01 Bowl of homemade pumpkin soup, Trimingham, Norfolk.JPG",
+    "House Red": "Wine being poured into a glass.jpg",
+    "House White": "Celebrating with a glass of white wine in a lively bar setting.jpg",
+    "Pale Ale": "Ærø India Pale Ale (28592484470).jpg",
+    "Negroni": "Negroni served in Vancouver BC.jpg",
+    "Lemonade": "Limonata (karaf).jpg",
+    "Burrata": "Tomato salad with burrata, Limburg.jpg",
+    "Crab Linguine": "RedDot Linguine Crab Meat Pasta.jpg",
+    "Lamb Shoulder": "Roasted lamb shoulder in a pot, Brisbane, 2025, 01.jpg",
+    "Roast Chicken": "Whole spiced chicken (roasted).jpg",
+    "Mushroom Risotto": "Risotto ai funghi porcini.JPG",
+    "Chips": "Hesburger French fries on a plate.jpg",
+    "Tiramisu": "Tiramisu cake - Trading Post Coffee Roasters 2026-01-26.jpg",
+    "Affogato": "Affogato al Caffe.jpg",
+    "Sea Bass": "Grilled sea bass (7906690230).jpg",
+    "Bao Bun": "Taiwanese burger .jpg",
+    "Dumplings": "Gyoza (52769973678).jpg",
+    "Kimchi Fries": "Vegan BBQ Boss Loaded Waffle Fries - Brewhouse & Kitchen, Worthing 2026-06-08.jpg",
+    "Mochi": "Mochi Ice Cream.jpg",
+    "Miso Soup": "Miso soup bowl.jpg",
+    "Iced Tea": "NCI iced tea.jpg",
+    "Yuzu Lemonade": "Lemonade with strawberry.jpg",
+}
+const photo = (subject: string, width: number) => {
+    const file = PHOTOS[subject]
+    if (!file) throw new Error(`No photo for ${subject}`)
+    return `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(file)}?width=${width}`
+}
 
 const DINERS = [
     { name: "Ada", surname: "Okafor" },
@@ -156,7 +201,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
             open_times: "Mon–Fri 7:30–17:00 · Sat–Sun 9:00–17:00",
             phone: "0161 496 0120",
             web_URL: "https://rocketlit.example",
-            cover: photo("rocketlit", 1200, 675),
+            cover: photo("Rocketlit", 1200),
             tables: [
                 { id: new Types.ObjectId(DEMO_TABLE_ID), name: "Fire Place 🔥" },
                 { id: rng.oid(), name: "Window" },
@@ -192,7 +237,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
             open_times: "Tue–Sun 12:00–22:30",
             phone: "020 7946 0834",
             web_URL: "https://marlowstreet.example",
-            cover: photo("marlow-street-kitchen", 1200, 675),
+            cover: photo("Marlow Street Kitchen", 1200),
             tables: [
                 ...["Table 1", "Table 2", "Table 3", "Table 4", "Table 5", "Table 6"].map((name) => ({ id: rng.oid(), name })),
                 { id: rng.oid(), name: "Counter" },
@@ -227,7 +272,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
             open_times: "Sat 10:00–16:00",
             phone: "",
             web_URL: "",
-            cover: photo("saturday-market-popup", 1200, 675),
+            cover: photo("Saturday Market Pop-up", 1200),
             tables: [{ id: rng.oid(), name: "Stall A" }, { id: rng.oid(), name: "Stall B" }],
             deletedTables: [],
             items: [
@@ -237,7 +282,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
                 { name: "Mochi", short_description: "Two, today's flavours", price: 3.5, category: "food", soldOut: true },
                 { name: "Miso Soup", short_description: "With tofu and wakame", price: 4, category: "food" },
                 { name: "Iced Tea", short_description: "Jasmine, lightly sweet", price: 3, category: "drinks" },
-                { name: "Lemonade", short_description: "Yuzu", price: 3, category: "drinks" },
+                { name: "Yuzu Lemonade", short_description: "Still, with yuzu", price: 3, category: "drinks" },
             ].map((item): ShopDef["items"][number] => ({ ...(item as Item), id: rng.oid() })),
             visits: (dow) => (dow === 6 ? [10, 16] : null),
             openHour: 10,
@@ -291,7 +336,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
                 short_description: item.short_description,
                 price: item.price,
                 category: item.category,
-                image: photo(`${shop.name}-${item.name}`, 800, 600),
+                image: photo(item.name, 800),
                 available: !item.soldOut && !item.deleted,
                 ...(item.deleted && { deletedFrom: shop.id }),
                 createdAt: at(shop.since * DAY + HOUR),
