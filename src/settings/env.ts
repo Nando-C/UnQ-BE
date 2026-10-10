@@ -70,6 +70,11 @@ const envSchema = z
             .max(13)
             .default(10)),
 
+        // The demo data's two sign-ins (src/scripts/seedDemo.ts), read only by
+        // the seed, which refuses to run without them. Never logged.
+        DEMO_MANAGER_PASSWORD: optional,
+        DEMO_DINER_PASSWORD: optional,
+
         // Individually optional, but constrained in pairs by the rules below.
         FRONTEND_URL: optional,
         FRONTEND_DEV_URL: optional,

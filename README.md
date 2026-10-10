@@ -226,6 +226,12 @@ src/
    Recent Stripe CLI versions require `--events`; these are the five the API acts on.
    Deployed, the endpoint is added in Stripe's dashboard (Developers → Webhooks) with the events `payment_intent.amount_capturable_updated`, `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.canceled` and `refund.failed`, and its signing secret set on the host before the API deploys (the API won't start without it).
 
+4. For something to look at, write the demo data (three shops, 90 days of payments; see [docs/operations.md](./docs/operations.md#the-demo-data)) with the two sign-ins' passwords set in `.env`:
+   ```bash
+   npm run seed:demo
+   ```
+   Sign in as `manager@mail.com` for the manager's pages, or scan the demo shop's QR table.
+
 Configuration is centralised in `src/settings/env.ts` — a single zod schema parsed once at import time, exported as a typed frozen object. No other file reads `process.env`.
 
 ### Environment Variables
@@ -253,6 +259,8 @@ Copy `.env.example` to `.env` and fill it in. Configuration is validated at boot
 | `PASSWORD_FAILS_PER_ACCOUNT` | Wrong passwords allowed per account in 15 minutes (default 10) |
 | `CART_EDITS_PER_MINUTE` | Cart changes allowed per diner a minute (default 120) |
 | `BCRYPT_ROUNDS` | bcrypt cost for stored passwords, 10–13 (default 10; lower refused except inside the test suite, which uses 4) |
+| `DEMO_MANAGER_PASSWORD` | The demo manager's password, set by `npm run seed:demo` (the seed refuses to run without it) |
+| `DEMO_DINER_PASSWORD` | The demo diner's password, set by the same seed |
 
 ### Dependency override
 
@@ -267,6 +275,7 @@ Copy `.env.example` to `.env` and fill it in. Configuration is validated at boot
 | `npm start` | Run the compiled build |
 | `npm test` | Run the Jest integration suite |
 | `npm run lint` | Run ESLint on the `src/` directory |
+| `npm run seed:demo` | Write the demo data: three shops with menus and tables, 90 days of payments, refunds and pay-backs, and two sign-ins whose passwords come from `.env`. Reruns rewrite only what it owns |
 | `npx tsx src/scripts/syncOrders.ts` | Write or bring up to date every payment's order (backfill, and repair after "Order not written"); safe to rerun |
 | `npx tsx src/scripts/finishStripeCheckouts.ts` | Finish the card payments left unfinished, as the server does every 2 minutes; safe to run beside it |
 | `npx tsx src/scripts/findDuplicateOpenCarts.ts` | List the tables with more than one open cart, when the startup index build reports duplicates |

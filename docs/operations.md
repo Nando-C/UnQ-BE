@@ -82,7 +82,14 @@ All read `MONGO_CONNECTION` from `.env` (never printed), run with `npx tsx`, and
 | `src/scripts/finishStripeCheckouts.ts` | A card payment looks stuck, or the server was down: the sweep's work, once, printing what it did |
 | `src/scripts/syncOrders.ts` | The server logged "Order not written": rebuilds every payment's order from its cart (idempotent; also the backfill when orders first shipped) |
 | `src/scripts/findDuplicateOpenCarts.ts` | Startup warned that the one-open-cart index can't be built: lists tables with more than one open cart, newest first (read-only; resolving each is a decision per table, keeping paid units) |
+| `npm run seed:demo` (`src/scripts/seedDemo.ts`) | Setting up a demo or a fresh development database: writes the demo data (below) and rewrites only what it owns on a rerun |
 | `src/scripts/validateOpenApi.mjs [url \| file \| -]` | After a change to `src/openapi/`: validates the document (exit 0 valid, 1 invalid, 2 unreadable) |
+
+## The demo data
+
+`npm run seed:demo` writes a reproducible demo (`src/scripts/demo.ts`): three shops with menus and tables (a café, a restaurant, a Saturday pop-up; a sold-out and a deleted item each), a manager and eight diners, and 90 days of closed carts with payments from both providers, splits by several diners, refunds with reasons, one refund that failed, and the live states a manager's page shows: a table being ordered at, a selection held over 15 minutes, a sold-out item in a cart, a PayPal payment held for review, a diner to pay back after Stripe refused a refund, a pay-back marked done, and a table deleted with a cart refunded since. Every payment's order is written through the real sync. Every id, quantity and date comes from one seeded generator and the current hour, so a rerun in the same hour writes the same documents; the demo shop and its QR table keep the ids the front end's README has carried since 2021.
+
+It needs `DEMO_MANAGER_PASSWORD` and `DEMO_DINER_PASSWORD` in `.env` (the two sign-ins, `manager@mail.com` and `frank@mail.com`; found by email, so existing accounts keep their id and sessions, and a password is rehashed only when it changes) and refuses to run without them. It deletes and rewrites only the demo shops' records, by their fixed ids, their carts, orders, card payment records and pay-backs, and the menu items it created; nothing else in the database is touched. The provider ids it writes are marked (`pi_demo_…`, `DEMO…`), so the held PayPal payment answers "unreachable" to a manager's check and the owed pay-back can't be looked up in Stripe: they are there to be seen, not settled. `src/tests/seedDemo.test.ts` runs it twice against the in-memory database and reads the result back through the manager's routes.
 
 ## What to look at when something is wrong
 
