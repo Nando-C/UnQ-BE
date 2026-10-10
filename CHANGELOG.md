@@ -8,6 +8,7 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ### Added
 
+- `npm run seed:demo`: a reproducible demo (three shops, a manager and eight diners, 90 days of payments and refunds, the live table states, orders through the real sync), rewriting only what it owns on a rerun; its two sign-ins take their passwords from `DEMO_MANAGER_PASSWORD` and `DEMO_DINER_PASSWORD`. Tested twice over against the in-memory database (`src/tests/seedDemo.test.ts`).
 - The API's contract as an OpenAPI 3.1 document built from the code (request bodies from the routes' zod schemas), served at `GET /openapi.json` with Swagger UI at `GET /docs`. A test keeps it listing exactly the routes the server serves and validating against the OpenAPI schema (`src/openapi/`, `src/tests/openapi.test.ts`).
 - `GET /health`: `{ status, version, uptime }`.
 - `docs/api.md` (conventions, rate limits, checkout, Stripe's webhook) and `docs/data-model.md` (the seven collections, field by field) replace the README's Models and REST API sections.

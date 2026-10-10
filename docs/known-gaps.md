@@ -41,4 +41,4 @@ Each changes behaviour, a contract, stored data or several layers at once, so ea
 
 ## Roadmap
 
-In the order decided with the product roadmap: the **sales reports** route over orders (with a shop time-zone setting), then the **sales dashboard**; **staff roles** narrowing what a shop's managers can do; **kitchen** (queue, prep states, live push); **several devices per account**; **live payment keys**, a deliberate switch rather than a release step. A demo seed (several shops, 90 days of payments, refunds and pay-backs) is planned alongside.
+In the order decided with the product roadmap: the **sales reports** route over orders (with a shop time-zone setting), then the **sales dashboard**; **staff roles** narrowing what a shop's managers can do; **kitchen** (queue, prep states, live push); **several devices per account**; **live payment keys**, a deliberate switch rather than a release step.
