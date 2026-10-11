@@ -17,7 +17,10 @@ import PaybackModel from "../services/payments/payback"
 // same, and that the app reads it as the demo is meant to look.
 
 const MODELS = [UserModel, ShopModel, MenuModel, CartModel, OrderModel, StripeCheckoutModel, PaybackModel]
-const NOW = new Date("2026-10-10T14:30:00Z")
+// The seed's reference time, taken once: the same for every run in this file,
+// and today's, since the manager's page keeps a deleted table's closed carts
+// for a day measured against the real clock.
+const NOW = new Date()
 const passwords = { managerPassword: "demo-manager-pw", dinerPassword: "demo-diner-pw" }
 
 // Every document of every collection, as JSON, in a fixed order.
