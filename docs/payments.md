@@ -1,6 +1,6 @@
 # Payments
 
-How money moves through UnQ: what a diner pays for, how the two providers are driven so nobody is charged for nothing, what happens when a payment is left half-finished, and how staff refund or pay a diner back. The routes themselves are in the [API reference](../README.md#api-reference); [api.md](./api.md) has the checkout table and the webhook's contract. This page is the reasoning behind them, read from `src/services/carts/controllers.ts`, `stripeCheckout.ts`, `stripeControllers.ts`, `stripeFinish.ts`, `stripeDeletion.ts`, `managerControllers.ts`, `src/services/payments/` and `src/lib/{payments,paypal,stripe,stripeWebhook}.ts`.
+How money moves through UnQ: what a diner pays for, how the two providers are driven so nobody is charged for nothing, what happens when a payment is left half-finished, and how staff refund or pay a diner back. The routes themselves are in the [OpenAPI document](https://un-q.vercel.app/api/docs); [api.md](./api.md) has the checkout table and the webhook's contract. This page is the reasoning behind them, read from `src/services/carts/controllers.ts`, `stripeCheckout.ts`, `stripeControllers.ts`, `stripeFinish.ts`, `stripeDeletion.ts`, `managerControllers.ts`, `src/services/payments/` and `src/lib/{payments,paypal,stripe,stripeWebhook}.ts`.
 
 ## What is paid for
 

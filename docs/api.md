@@ -28,7 +28,36 @@ Per account, not per IP: behind the front end's proxy and the host's, the server
 
 A diner selects units to pay for (`addSplitItem`), then pays in two calls around the provider's UI. The second call re-checks everything before money moves, and a payment that can't be recorded afterwards is refunded automatically.
 
-The sequence is drawn in the README's [Checkout at a glance](../README.md#checkout-at-a-glance). What each step guards, in the document's words:
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Diner
+    participant FE as UnQ-FE
+    participant API as UnQ-BE
+    participant DB as MongoDB
+    participant P as Stripe / PayPal
+
+    Diner->>FE: Pay for my selection
+    FE->>API: POST createStripeCheckout / createCheckoutOrder
+    API->>DB: load cart, check availability, price from the menu
+    API->>P: create PaymentIntent (manual capture) / Order for that exact amount
+    P-->>API: id + client secret
+    API-->>FE: { paymentIntentId, amount } / { paypalOrderId }
+    FE->>P: diner confirms in the Payment Element / PayPal popup (card only authorised)
+    FE->>API: POST captureStripeCheckout / captureCheckout
+    API->>DB: re-check cart, reserve units (version check)
+    alt still consistent
+        API->>P: capture
+        API->>DB: record payment, mark splits paid, sync order
+        API-->>FE: 200 cart
+    else another payer took the units
+        API->>P: cancel authorisation (nothing charged) / refund the capture
+        API-->>FE: 409 "...your payment was refunded"
+    end
+    Note over API,P: A capture the diner never came back for is finished by Stripe's webhook or the 2-minute sweep, one finisher at a time.
+```
+
+What each step guards, in the document's words:
 
 | Step | PayPal | Card (Stripe) |
 |---|---|---|

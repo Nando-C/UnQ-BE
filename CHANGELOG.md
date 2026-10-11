@@ -8,6 +8,7 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ### Added
 
+- `LICENSE`: MIT, with the licence badge.
 - `npm run seed:demo`: a reproducible demo (three shops, a manager and eight diners, 90 days of payments and refunds, the live table states, orders through the real sync), rewriting only what it owns on a rerun; its two sign-ins take their passwords from `DEMO_MANAGER_PASSWORD` and `DEMO_DINER_PASSWORD`. Tested twice over against the in-memory database (`src/tests/seedDemo.test.ts`).
 - The API's contract as an OpenAPI 3.1 document built from the code (request bodies from the routes' zod schemas), served at `GET /openapi.json` with Swagger UI at `GET /docs`. A test keeps it listing exactly the routes the server serves and validating against the OpenAPI schema (`src/openapi/`, `src/tests/openapi.test.ts`).
 - `GET /health`: `{ status, version, uptime }`.
@@ -15,6 +16,10 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 - `src/scripts/validateOpenApi.mjs`: validates a served or saved OpenAPI document.
 - `docs/payments.md` (how money moves and the rules that hold), `docs/auth.md` (sessions, passwords, Google sign-in, roles), `docs/operations.md` (start-up, configuration, deploying, repair scripts), `docs/decisions.md` (the choices behind the API) and `docs/known-gaps.md` (accepted residuals, open bugs, deferred work).
 - Docs drift tests: the README's variable table and `.env.example` list exactly the environment schema's keys, and every relative link and anchor in the Markdown files resolves (`src/tests/docs.test.ts`).
+
+### Changed
+
+- The README is a front page: what it does, what it has to get right, the decisions with their reasons, one diagram, the quick start with where each credential comes from and how to become a manager locally, testing and CI, the docs index, the roadmap. The checkout sequence diagram moved to `docs/api.md`; the dependency override and the versioning rule live in `docs/operations.md` and the changelog.
 
 ### Fixed
 
