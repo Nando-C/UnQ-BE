@@ -7,8 +7,10 @@
 //   npm run seed:demo
 //
 // Reads MONGO_CONNECTION, DEMO_MANAGER_PASSWORD and DEMO_DINER_PASSWORD from
-// .env (never printed) and refuses to run without the two passwords. Prints the
-// sign-in emails and what it wrote.
+// .env (never printed) and refuses to run without the two passwords. The
+// tables' QR codes point at FRONTEND_URL (else FRONTEND_DEV_URL): seeding a
+// deployed database, set it to the live client. Prints the sign-in emails,
+// the QR origin and what it wrote.
 import "dotenv/config"
 import mongoose from "mongoose"
 import env from "../settings/env"
@@ -32,6 +34,13 @@ const main = async () => {
     // one pay-back per cause), so the seed is checked by them as the app is.
     for (const model of [UserModel, ShopModel, MenuModel, CartModel, OrderModel, StripeCheckoutModel, PaybackModel]) await model.init()
     console.log(`Seeding the demo into database "${mongoose.connection.name}"…`)
+    // The tables' QR codes point at the client this environment names: seeding
+    // a deployed database from a machine whose .env says localhost would print
+    // codes nobody can scan.
+    console.log(`The tables' QR codes point at ${env.FRONTEND_ORIGIN} (FRONTEND_URL, else FRONTEND_DEV_URL)`)
+    if (/localhost|127\.0\.0\.1/.test(env.FRONTEND_ORIGIN) && !/localhost|127\.0\.0\.1/.test(env.MONGO_CONNECTION)) {
+        throw new Error("The database isn't local but FRONTEND_URL is: set FRONTEND_URL to the client the QR codes should open, e.g. FRONTEND_URL=https://un-q.vercel.app npm run seed:demo")
+    }
 
     await seedDemo({ managerPassword, dinerPassword, log: console.log })
     console.log("Done. The demo shop's QR table: /shops/6158a19282eaef10787cd6f3/tables/61702525cc1ec6af70a92f35")

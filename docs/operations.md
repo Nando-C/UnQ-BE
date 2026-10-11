@@ -32,7 +32,7 @@ The variables, with what they are for, are in the README's [Environment Variable
 
 ### Deploying a release
 
-UnQ releases as a pair: the API at `x.y.0` first, then the front end at `x.y.*` (see the README's [Versioning](../README.md#versioning-and-releases)). A MAJOR means the host needs a change; read the changelog's deploy notes for it. The order that worked for 2.0.0:
+UnQ releases as a pair: the API at `x.y.0` first, then the front end at `x.y.*` (the rule is at the top of the [changelog](../CHANGELOG.md)). A MAJOR means the host needs a change; read the changelog's deploy notes for it. The order that worked for 2.0.0:
 
 1. **Stripe's dashboard, test mode first**: add the webhook endpoint `https://unq-be.onrender.com/payments/stripe/webhook` with the events `payment_intent.amount_capturable_updated`, `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.canceled`, `refund.failed`; copy its signing secret. Register the front end's domain under Payment method domains, or the card form never offers Apple Pay or Google Pay (each subdomain separately; preview URLs and `localhost` aren't covered).
 2. **Set the host's variables** on Render: everything in the README's table that is required, the Stripe pair among them.
@@ -71,7 +71,7 @@ npm run build
 
 CI (`.github/workflows/ci.yml`) runs the same four on Node 24 for every push to `main` and every pull request, from `npm ci`. **After any `npm install` or `uninstall`, run `npm ci --dry-run --os linux --cpu x64`** and check the exit code: on macOS npm skips the Linux-only optional packages and used to drop their peers (`@emnapi/core`, `@emnapi/runtime`) from the lockfile, which failed CI twice; both are pinned as devDependencies so the lockfile always holds them.
 
-`package.json`'s `overrides` gives Jest's coverage tooling `js-yaml` 4, for an advisory in `sprintf-js` that has no fixed version; see the README's [Dependency override](../README.md#dependency-override) for when to remove it.
+`package.json`'s `overrides` gives Jest's coverage tooling `js-yaml` 4, for an advisory in `sprintf-js` that has no fixed version; remove it once `@istanbuljs/load-nyc-config` itself depends on js-yaml 4 (`npm ls js-yaml` shows).
 
 ## Repair scripts
 
@@ -89,7 +89,7 @@ All read `MONGO_CONNECTION` from `.env` (never printed), run with `npx tsx`, and
 
 `npm run seed:demo` writes a reproducible demo (`src/scripts/demo.ts`): three shops with menus and tables (a café, a restaurant, a Saturday pop-up; a sold-out and a deleted item each), a manager and eight diners, and 90 days of closed carts with payments from both providers, splits by several diners, refunds with reasons, one refund that failed, and the live states a manager's page shows: a table being ordered at, a selection held over 15 minutes, a sold-out item in a cart, a PayPal payment held for review, a diner to pay back after Stripe refused a refund, a pay-back marked done, and a table deleted with a cart refunded since. Every payment's order is written through the real sync. Every id, quantity and date comes from one seeded generator and the current hour, so a rerun in the same hour writes the same documents; the demo shop and its QR table keep the ids the front end's README has carried since 2021.
 
-It needs `DEMO_MANAGER_PASSWORD` and `DEMO_DINER_PASSWORD` in `.env` (the two sign-ins, `manager@mail.com` and `frank@mail.com`; found by email, so existing accounts keep their id and sessions, and a password is rehashed only when it changes) and refuses to run without them. It deletes and rewrites only the demo shops' records, by their fixed ids, their carts, orders, card payment records and pay-backs, and the menu items it created; nothing else in the database is touched. The provider ids it writes are marked (`pi_demo_…`, `DEMO…`), so the held PayPal payment answers "unreachable" to a manager's check and the owed pay-back can't be looked up in Stripe: they are there to be seen, not settled. `src/tests/seedDemo.test.ts` runs it twice against the in-memory database and reads the result back through the manager's routes.
+The tables' QR codes point at `FRONTEND_URL` (else `FRONTEND_DEV_URL`), so seeding a deployed database from a development machine needs it set to the live client (`FRONTEND_URL=https://un-q.vercel.app npm run seed:demo`); the seed prints the origin it used and refuses a localhost one for a database that isn't local. It needs `DEMO_MANAGER_PASSWORD` and `DEMO_DINER_PASSWORD` in `.env` (the two sign-ins, `manager@mail.com` and `frank@mail.com`; found by email, so existing accounts keep their id and sessions, and a password is rehashed only when it changes) and refuses to run without them. It deletes and rewrites only the demo shops' records, by their fixed ids, their carts, orders, card payment records and pay-backs, and the menu items it created; nothing else in the database is touched. The provider ids it writes are marked (`pi_demo_…`, `DEMO…`), so the held PayPal payment answers "unreachable" to a manager's check and the owed pay-back can't be looked up in Stripe: they are there to be seen, not settled. `src/tests/seedDemo.test.ts` runs it twice against the in-memory database and reads the result back through the manager's routes.
 
 ## What to look at when something is wrong
 

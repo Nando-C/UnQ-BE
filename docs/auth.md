@@ -1,6 +1,6 @@
 # Authentication and authorisation
 
-Who the API believes a caller is, how that belief is kept alive and ended, and who may do what. Read from `src/services/auth/` (`tools.ts`, `middlewares.ts`, `controllers.ts`, `oauth.ts`), `src/services/users/`, `src/lib/passwordLimit.ts` and `src/settings/cors.ts`. The routes and their answers are in the [API reference](../README.md#api-reference) under Auth and Users.
+Who the API believes a caller is, how that belief is kept alive and ended, and who may do what. Read from `src/services/auth/` (`tools.ts`, `middlewares.ts`, `controllers.ts`, `oauth.ts`), `src/services/users/`, `src/lib/passwordLimit.ts` and `src/settings/cors.ts`. The routes and their answers are in the [OpenAPI document](https://un-q.vercel.app/api/docs) under Auth and Users; [api.md](./api.md) has the conventions.
 
 ## Sessions are two cookies
 
