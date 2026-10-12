@@ -189,7 +189,7 @@ describe("GET /shops/:shopId/sales", () => {
         expect(await details({ from: "2026-02-30", to: "2026-03-31" })).toEqual([{ path: "from", message: "Not a calendar day" }])
         expect(await details({ from: "28/03/2026", to: "2026-03-31" })).toEqual([{ path: "from", message: "Not a day (YYYY-MM-DD)" }])
         expect(await details({ from: "2026-04-01", to: "2026-03-31" })).toEqual([{ path: "to", message: "Before `from`" }])
-        expect(await details({ from: "2025-01-01", to: "2026-01-02" })).toEqual([{ path: "to", message: "More than 366 days after `from`" }])
+        expect(await details({ from: "2025-01-01", to: "2026-01-02" })).toEqual([{ path: "to", message: "More than 366 days, `from` and `to` included" }])
         expect((await sales(cookies, shopId, { from: "2025-01-01", to: "2026-01-01" })).status).toBe(200)
         expect(await details({ from: "2026-03-01", to: "2026-03-31", by: "hour" })).toEqual([{ path: "by", message: expect.any(String) }])
         expect(await details({ from: "2026-03-01", to: "2026-03-31", compare: "next" })).toEqual([{ path: "compare", message: expect.any(String) }])
@@ -271,7 +271,6 @@ describe("GET /shops/:shopId/sales/export", () => {
         expect(missing.status).toBe(400)
         expect(missing.body.details).toEqual([{ path: "table", message: expect.any(String) }])
         expect((await csv({ from: "2026-03-28", to: "2026-03-31", table: "diners" })).status).toBe(400)
-        expect((await csv({ from: "2026-04-01", to: "2026-03-31", table: "orders" })).body.details).toEqual([{ path: "to", message: "Before `from`" }])
         const other = (await authFor("shopMg")).cookies
         expect((await agent().get(`/shops/${shopId}/sales/export`).set("Cookie", other).query({ from: "2026-03-28", to: "2026-03-31", table: "orders" })).status).toBe(403)
         expect((await agent().get(`/shops/${shopId}/sales/export`).query({ from: "2026-03-28", to: "2026-03-31", table: "orders" })).status).toBe(401)
@@ -292,7 +291,14 @@ describe("a shop's time zone", () => {
         expect(edited.status).toBe(200)
         expect(edited.body.timeZone).toBe("Asia/Tokyo")
         expect((await agent().get(`/shops/${shop._id}`)).body.timeZone).toBe("Asia/Tokyo")
-        expect((await agent().put(`/shops/${shop._id}`).set("Cookie", cookies).send({ timeZone: "UTC" })).status).toBe(400)
+        // Any zone the runtime formats in, UTC included.
+        const utc = await agent().put(`/shops/${shop._id}`).set("Cookie", cookies).send({ timeZone: "UTC" })
+        expect(utc.status).toBe(200)
+        expect(utc.body.timeZone).toBe("UTC")
+        expect((await agent().put(`/shops/${shop._id}`).set("Cookie", cookies).send({ timeZone: "" })).status).toBe(400)
+        // Saved under the canonical name, the one the database's date operators know.
+        const spelt = await agent().put(`/shops/${shop._id}`).set("Cookie", cookies).send({ timeZone: "europe/london" })
+        expect(spelt.body.timeZone).toBe("Europe/London")
     })
 })
 

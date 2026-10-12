@@ -3,10 +3,32 @@
 // (shops/model.ts `timeZone`): a day is the shop's day, not the server's.
 
 export type Day = string
-export type GroupBy = "day" | "week" | "month"
+// How a series is bucketed.
+export const GROUP_BY = ["day", "week", "month"] as const
+export type GroupBy = (typeof GROUP_BY)[number]
 
+// What the API counts in when a shop has no zone of its own.
+export const DEFAULT_TIME_ZONE = "Europe/London"
+// A time zone's canonical name ("europe/london" is "Europe/London", "utc" is
+// "UTC"), or null for a name the runtime can't format dates in. Any IANA
+// name the runtime knows is accepted, older spellings included, so a zone
+// saved under one runtime stays valid under the next; it is saved under its
+// canonical name, the one the database's date operators know too.
+export const canonicalTimeZone = (name: string): string | null => {
+    if (typeof name !== "string" || name === "") return null
+    try {
+        return new Intl.DateTimeFormat("en", { timeZone: name }).resolvedOptions().timeZone
+    } catch {
+        return null
+    }
+}
+export const isTimeZone = (name: string) => canonicalTimeZone(name) !== null
+
+// The shape of a day; `isDay` says whether it is a real one.
+export const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 const DAY = /^(\d{4})-(\d{2})-(\d{2})$/
 const MS_PER_DAY = 86_400_000
+const MS_PER_HOUR = 3_600_000
 
 // The day as a UTC timestamp of its midnight: calendar arithmetic only, no zone.
 const asUtc = (day: Day) => {
@@ -31,7 +53,7 @@ const addMonths = (day: Day, n: number): Day => {
 }
 
 // The first day of the bucket `day` falls in.
-export const bucketStart = (day: Day, by: GroupBy): Day => (by === "day" ? day : by === "week" ? weekStart(day) : monthStart(day))
+const bucketStart = (day: Day, by: GroupBy): Day => (by === "day" ? day : by === "week" ? weekStart(day) : monthStart(day))
 const nextBucket = (bucket: Day, by: GroupBy): Day => (by === "month" ? addMonths(bucket, 1) : addDays(bucket, by === "week" ? 7 : 1))
 
 // Every bucket from `from` to `to`, by its first day; the first may start
@@ -70,12 +92,20 @@ export const clockIn = (date: Date, timeZone: string) => new Date(wallClock(date
 // The weekday of a day (0 Sunday … 6 Saturday).
 export const weekdayOf = (day: Day) => new Date(asUtc(day)).getUTCDay()
 
-// The instant `day` begins in `timeZone`. The zone's offset at that moment is
-// read off its wall clock, twice, so the clocks changing between the guess and
-// the answer still land on the right midnight.
-export const startOfDay = (day: Day, timeZone: string): Date => {
-    const wanted = asUtc(day)
+// The instant the clock in `timeZone` reads `hour`:`minute` on `day`. The
+// zone's offset at that moment is read off its wall clock, twice, so the
+// clocks changing between the guess and the answer still land on the right
+// instant. A time the clocks skipped (in the hour lost going forward) is the
+// instant that far past the skip on the clock as it then stands: 01:30 on
+// such a night is 02:30, and midnight itself, in a zone that changes at
+// 00:00, is the day's first instant, 01:00.
+export const instantOf = (day: Day, hour: number, minute: number, timeZone: string): Date => {
+    const wanted = asUtc(day) + hour * MS_PER_HOUR + minute * 60_000
     let guess = wanted
     for (let i = 0; i < 2; i++) guess = wanted - (wallClock(new Date(guess), timeZone) - guess)
+    const read = wallClock(new Date(guess), timeZone)
+    if (read < wanted) guess += wanted - read
     return new Date(guess)
 }
+// The instant `day` begins in `timeZone`.
+export const startOfDay = (day: Day, timeZone: string): Date => instantOf(day, 0, 0, timeZone)

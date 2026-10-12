@@ -1,7 +1,6 @@
 import { z } from "zod"
 import { emptyAsAbsent } from "../../lib/emptyAsAbsent"
-import { isTimeZone } from "./model"
-import { daysBetween, isDay } from "../../lib/days"
+import { DAY_PATTERN, GROUP_BY, daysBetween, isDay, isTimeZone } from "../../lib/days"
 
 const shopFields = {
     name: z.string().min(1),
@@ -43,13 +42,12 @@ export type BrowseShopsQuery = z.infer<typeof browseShopsSchema>
 
 // GET /shops/:shopId/sales's query (see controllers/salesControllers.ts). The
 // days are the shop's; `by` defaults from the range's length.
-export const GROUP_BY = ["day", "week", "month"] as const
 export const MAX_REPORT_DAYS = 366
-const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, { message: "Not a day (YYYY-MM-DD)", abort: true }).refine(isDay, "Not a calendar day")
+const day = z.string().regex(DAY_PATTERN, { message: "Not a day (YYYY-MM-DD)", abort: true }).refine(isDay, "Not a calendar day")
 const rangeFields = { from: day, to: day }
 const checkedRange = <T extends z.ZodType<{ from: string; to: string }>>(schema: T) => schema
     .refine((q) => !isDay(q.from) || !isDay(q.to) || q.from <= q.to, { message: "Before `from`", path: ["to"] })
-    .refine((q) => !isDay(q.from) || !isDay(q.to) || daysBetween(q.from, q.to) <= MAX_REPORT_DAYS, { message: `More than ${MAX_REPORT_DAYS} days after \`from\``, path: ["to"] })
+    .refine((q) => !isDay(q.from) || !isDay(q.to) || daysBetween(q.from, q.to) <= MAX_REPORT_DAYS, { message: `More than ${MAX_REPORT_DAYS} days, \`from\` and \`to\` included`, path: ["to"] })
 export const salesQuerySchema = checkedRange(z.object({
     ...rangeFields,
     by: z.preprocess(emptyAsAbsent, z.enum(GROUP_BY).optional()),

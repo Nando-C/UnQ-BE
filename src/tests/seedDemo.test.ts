@@ -12,6 +12,7 @@ import CartModel from "../services/carts/model"
 import OrderModel from "../services/orders/model"
 import StripeCheckoutModel from "../services/carts/stripeCheckout"
 import PaybackModel from "../services/payments/payback"
+import { addDays, dayIn, startOfDay } from "../lib/days"
 
 // The demo seed (src/scripts/demo.ts): what it writes, that a rerun writes the
 // same, and that the app reads it as the demo is meant to look.
@@ -84,9 +85,11 @@ describe("the demo seed", () => {
         expect(payers.length).toBeGreaterThanOrEqual(38)
         const total = payers.reduce((s, p) => s + p.n, 0)
         expect(payers.slice(0, 12).reduce((s, p) => s + p.n, 0)).toBeGreaterThan(0.6 * total)
-        // The pastry launched in week six: no sale before, plenty after.
+        // The pastry launched in week six: no sale before that day began (in
+        // the shop's zone; the seed's days are whole days, not hours), plenty after.
         const nata = (await MenuModel.findOne({ name: "Pastel de Nata" }).lean())!
-        expect(await OrderModel.countDocuments({ "lines.menuId": nata._id, paidAt: { $lt: days(48) } })).toBe(0)
+        const launch = startOfDay(addDays(dayIn(NOW, "Europe/London"), -48), "Europe/London")
+        expect(await OrderModel.countDocuments({ "lines.menuId": nata._id, paidAt: { $lt: launch } })).toBe(0)
         expect(await OrderModel.countDocuments({ "lines.menuId": nata._id })).toBeGreaterThan(20)
         // Refund causes weighted: on Friday and Saturday evenings, most are for the wait.
         const evenings = await OrderModel.aggregate<{ _id: string; n: number }>([

@@ -6,11 +6,15 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-12
+
+Several devices per account, and the sales report over the orders recorded since 2.0.0. Nothing new on the host. Deploying signs every current session out once (the tokens in hand belong to no session); signing in again is all it takes. A deployed demo wants the seed run again, with `FRONTEND_URL` set to the live client, so its history has the shapes the report shows.
+
 ### Added
 
 - Several devices per account. Each sign-in is a session of its own on the account (up to ten; the oldest goes beyond that), so signing in on a second device no longer signs the first out, and a logout ends only that device's session. `GET /auth/sessions` lists the devices signed in, the caller's marked `current`; `DELETE /auth/sessions/{sessionId}` signs one out (its next refresh fails, so it is a guest's within 15 minutes). A password change still ends every other session. [docs/auth.md](./docs/auth.md#sessions-are-two-cookies).
 - The sales report: `GET /shops/{shopId}/sales?from&to[&by][&compare=previous]`, for the shop's manager, over the orders recorded since 2.0.0. Totals, a zero-filled series by day, week or month, sales by weekday and hour, items by revenue, refunds by reason and hour, the tables, and the period before for comparison, counted as a till does: gross by the day paid, refunds by the day made, net the difference, all in the shop's own days. [docs/api.md](./docs/api.md#sales-report).
-- A time zone on the shop (`timeZone`, an IANA name, `Europe/London` unless set) on `POST /shops` and `PUT /shops/{shopId}`, shown with the shop: the zone its days are counted in.
+- A time zone on the shop (`timeZone`, any IANA name the server can format dates in, `UTC` included, saved under its canonical spelling, `Europe/London` unless set) on `POST /shops` and `PUT /shops/{shopId}`, shown with the shop: the zone its days are counted in.
 - `GET /shops/{shopId}/sales/export?from&to&table=orders|items|days`: one of the report's tables as a CSV download, counted the same way, with no diner named; UTF-8 with a byte-order mark, and cells that would read as a spreadsheet formula made safe.
 
 ### Changed

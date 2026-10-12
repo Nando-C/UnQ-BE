@@ -19,6 +19,8 @@ import { SalesExportQuery, SalesQuery } from "../schemas"
 // pence and sent in pounds.
 
 type Range = { from: Day; to: Day; timeZone: string; by: GroupBy }
+// The range as instants: from the first day's start to the day after the last's.
+const boundsOf = ({ from, to, timeZone }: Range) => ({ start: startOfDay(from, timeZone), end: startOfDay(addDays(to, 1), timeZone) })
 
 // `by` when the request leaves it to the range: days up to about a quarter,
 // then weeks.
@@ -27,13 +29,22 @@ const groupBy = (from: Day, to: Day): GroupBy => (daysBetween(from, to) <= DAYS_
 
 // A pounds field summed as pence, so 3 × £4.10 doesn't end in .299999.
 const pence = (expr: unknown) => ({ $round: [{ $multiply: [expr, 100] }, 0] })
+const gross = { $sum: pence("$amount") }
 const lineUnits = { $subtract: ["$lines.qty", "$lines.refundedQty"] }
+// An order's units, net of refunds, over its lines.
+const orderUnits = { $sum: { $map: { input: "$lines", as: "l", in: { $subtract: ["$$l.qty", "$$l.refundedQty"] } } } }
+// Completed orders summed, as a whole (`_id: null`) or per bucket.
+const summed = (_id: unknown): PipelineStage.FacetPipelineStage[] => [
+    completed,
+    { $group: { _id, gross, orders: { $sum: 1 }, carts: { $addToSet: "$cartId" }, payers: { $addToSet: "$payerId" }, units: { $sum: orderUnits } } },
+    { $project: { gross: 1, orders: 1, units: 1, visits: { $size: "$carts" }, diners: { $size: "$payers" } } },
+]
 // The first day of the bucket a date falls in, in the shop's zone.
+const completed = { $match: { status: "completed" } }
 const bucketOf = (field: string, { by, timeZone }: Range) => ({
     $dateToString: { format: "%Y-%m-%d", timezone: timeZone, date: { $dateTrunc: { date: field, unit: by, timezone: timeZone, startOfWeek: "monday" } } },
 })
 
-const completed = { $match: { status: "completed" } }
 
 type Bucketed<T> = T & { _id: string }
 type OrdersFacets = {
@@ -56,30 +67,31 @@ type RefundsFacets = {
     byTable: { _id: string; name: string | null; amount: number }[]
 }
 
-// Everything read from the orders paid in the range, in one pass.
-const ordersPipeline = (shopId: mongoose.Types.ObjectId, start: Date, end: Date, range: Range): PipelineStage[] => {
+// Everything read from the orders paid in the range, in one pass. Read in the
+// order paid (the index's own order, so no sort is made), so `$last` is the
+// name and price diners saw last.
+const ordersPipeline = (shopId: mongoose.Types.ObjectId, range: Range): PipelineStage[] => {
+    const { start, end } = boundsOf(range)
     const bucket = bucketOf("$paidAt", range)
     const inZone = { date: "$paidAt", timezone: range.timeZone }
     return [
         { $match: { shopId, paidAt: { $gte: start, $lt: end } } },
+        { $sort: { paidAt: 1 } },
         {
             $facet: {
-                totals: [completed, { $group: { _id: null, gross: { $sum: pence("$amount") }, orders: { $sum: 1 }, carts: { $addToSet: "$cartId" }, payers: { $addToSet: "$payerId" }, units: { $sum: { $sum: { $map: { input: "$lines", as: "l", in: { $subtract: ["$$l.qty", "$$l.refundedQty"] } } } } } } },
-                    { $project: { gross: 1, orders: 1, units: 1, visits: { $size: "$carts" }, diners: { $size: "$payers" } } }],
+                totals: summed(null),
                 pending: [{ $match: { status: "pending" } }, { $count: "n" }],
-                byProvider: [completed, { $group: { _id: "$provider", gross: { $sum: pence("$amount") }, orders: { $sum: 1 } } }],
-                series: [completed, { $group: { _id: bucket, gross: { $sum: pence("$amount") }, orders: { $sum: 1 }, carts: { $addToSet: "$cartId" }, payers: { $addToSet: "$payerId" }, units: { $sum: { $sum: { $map: { input: "$lines", as: "l", in: { $subtract: ["$$l.qty", "$$l.refundedQty"] } } } } } } },
-                    { $project: { gross: 1, orders: 1, units: 1, visits: { $size: "$carts" }, diners: { $size: "$payers" } } }],
-                seriesByProvider: [completed, { $group: { _id: { bucket, name: "$provider" }, gross: { $sum: pence("$amount") } } }],
+                byProvider: [completed, { $group: { _id: "$provider", gross, orders: { $sum: 1 } } }],
+                series: summed(bucket),
+                seriesByProvider: [completed, { $group: { _id: { bucket, name: "$provider" }, gross } }],
                 seriesByCategory: [completed, { $unwind: "$lines" }, { $group: { _id: { bucket, name: { $ifNull: ["$lines.category", "other"] } }, gross: { $sum: pence({ $multiply: ["$lines.qty", "$lines.unitPrice"] }) } } }],
                 // Each diner's first bucket in the range (the keys sort as dates).
                 payers: [completed, { $group: { _id: { payer: "$payerId", bucket } } }, { $group: { _id: "$_id.payer", first: { $min: "$_id.bucket" } } }],
-                heatmap: [completed, { $group: { _id: { dow: { $isoDayOfWeek: inZone }, hour: { $hour: inZone } }, orders: { $sum: 1 }, gross: { $sum: pence("$amount") } } }],
-                // Sorted first, so `$last` is the name and price diners saw last.
-                items: [completed, { $sort: { paidAt: 1 } }, { $unwind: "$lines" },
+                heatmap: [completed, { $group: { _id: { dow: { $isoDayOfWeek: inZone }, hour: { $hour: inZone } }, orders: { $sum: 1 }, gross } }],
+                items: [completed, { $unwind: "$lines" },
                     { $group: { _id: "$lines.menuId", name: { $last: "$lines.name" }, category: { $last: "$lines.category" }, unitPrice: { $last: "$lines.unitPrice" }, units: { $sum: lineUnits }, refundedUnits: { $sum: "$lines.refundedQty" }, revenue: { $sum: pence({ $multiply: [lineUnits, "$lines.unitPrice"] }) } } },
                     { $sort: { revenue: -1, name: 1 } }],
-                tables: [completed, { $sort: { paidAt: 1 } }, { $group: { _id: "$tableId", name: { $last: "$tableName" }, orders: { $sum: 1 }, carts: { $addToSet: "$cartId" }, gross: { $sum: pence("$amount") } } },
+                tables: [completed, { $group: { _id: "$tableId", name: { $last: "$tableName" }, orders: { $sum: 1 }, carts: { $addToSet: "$cartId" }, gross } },
                     { $project: { name: 1, orders: 1, gross: 1, visits: { $size: "$carts" } } }],
             },
         },
@@ -87,7 +99,8 @@ const ordersPipeline = (shopId: mongoose.Types.ObjectId, start: Date, end: Date,
 }
 
 // The refunds made in the range, whenever their sale was.
-const refundsPipeline = (shopId: mongoose.Types.ObjectId, start: Date, end: Date, range: Range): PipelineStage[] => {
+const refundsPipeline = (shopId: mongoose.Types.ObjectId, range: Range): PipelineStage[] => {
+    const { start, end } = boundsOf(range)
     const at = { $gte: start, $lt: end }
     const amount = { $sum: pence("$refunds.amount") }
     return [
@@ -111,11 +124,10 @@ const byKey = <T extends { _id: unknown }>(rows: T[]) => new Map(rows.map((row) 
 // The report for one range. `previous` is the same for the range of the same
 // length ending the day before, with what the comparison needs.
 const report = async (shopId: mongoose.Types.ObjectId, range: Range) => {
-    const start = startOfDay(range.from, range.timeZone)
-    const end = startOfDay(addDays(range.to, 1), range.timeZone)
+    const { start } = boundsOf(range)
     const [[orders], [refunds]] = await Promise.all([
-        OrderModel.aggregate<OrdersFacets>(ordersPipeline(shopId, start, end, range)),
-        OrderModel.aggregate<RefundsFacets>(refundsPipeline(shopId, start, end, range)),
+        OrderModel.aggregate<OrdersFacets>(ordersPipeline(shopId, range)),
+        OrderModel.aggregate<RefundsFacets>(refundsPipeline(shopId, range)),
     ])
     // Who among the range's diners had paid here before it began.
     const payers = orders.payers.map((p) => p._id)
@@ -199,13 +211,14 @@ export const getSales: TController = async (req, res, next) => {
         const shopId = shop._id as mongoose.Types.ObjectId
         const range: Range = { from, to, timeZone: shop.timeZone, by: by ?? groupBy(from, to) }
 
-        const current = await report(shopId, range)
-        if (!compare) return void res.send(current)
-
         const previousTo = addDays(from, -1)
         const previousFrom = addDays(previousTo, 1 - daysBetween(from, to))
-        const { range: previousRange, totals, series } = await report(shopId, { ...range, from: previousFrom, to: previousTo })
-        res.send({ ...current, previous: { range: previousRange, totals, series } })
+        const [current, previous] = await Promise.all([
+            report(shopId, range),
+            compare ? report(shopId, { ...range, from: previousFrom, to: previousTo }) : null,
+        ])
+        if (!previous) return void res.send(current)
+        res.send({ ...current, previous: { range: previous.range, totals: previous.totals, series: previous.series } })
     } catch (error) {
         next(createError(500, error as Error))
     }
@@ -234,9 +247,11 @@ const slug = (name: string) => name.toLowerCase().normalize("NFKD").replace(/[^a
 // been given back of that payment to date, whenever the refund was made, so
 // the rows don't add up to the report's refunds by day, which count refunds by
 // their own day. No diner is named.
-const ordersTable = async (shopId: mongoose.Types.ObjectId, start: Date, end: Date, timeZone: string) => {
+const ordersTable = async (shopId: mongoose.Types.ObjectId, range: Range) => {
+    const { start, end } = boundsOf(range)
+    const { timeZone } = range
     const orders = await OrderModel.find({ shopId, paidAt: { $gte: start, $lt: end }, status: { $in: ["completed", "pending"] } })
-        .sort({ paidAt: 1, _id: 1 }).select("paidAt tableName provider status amount refunds lines").lean()
+        .sort({ paidAt: 1 }).select("paidAt tableName provider status amount refunds lines").lean()
     return [
         ["Paid at", "Table", "Provider", "Status", "Amount", "Refunded", "Net", "Items"],
         ...orders.map((o) => {
@@ -259,7 +274,7 @@ export const exportSales: TController = async (req, res, next) => {
 
         let rows: (string | number | null)[][]
         if (table === "orders") {
-            rows = await ordersTable(shopId, startOfDay(from, range.timeZone), startOfDay(addDays(to, 1), range.timeZone), range.timeZone)
+            rows = await ordersTable(shopId, range)
         } else if (table === "items") {
             rows = [["Item", "Category", "Unit price", "Units", "Refunded units", "Revenue"],
                 ...(await report(shopId, range)).items.map((i) => [i.name, i.category ?? "", i.unitPrice, i.units, i.refundedUnits, i.revenue])]
