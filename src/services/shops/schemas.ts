@@ -46,12 +46,18 @@ export type BrowseShopsQuery = z.infer<typeof browseShopsSchema>
 export const GROUP_BY = ["day", "week", "month"] as const
 export const MAX_REPORT_DAYS = 366
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, { message: "Not a day (YYYY-MM-DD)", abort: true }).refine(isDay, "Not a calendar day")
-export const salesQuerySchema = z.object({
-    from: day,
-    to: day,
-    by: z.preprocess(emptyAsAbsent, z.enum(GROUP_BY).optional()),
-    compare: z.preprocess(emptyAsAbsent, z.enum(["previous"]).optional()),
-})
+const rangeFields = { from: day, to: day }
+const checkedRange = <T extends z.ZodType<{ from: string; to: string }>>(schema: T) => schema
     .refine((q) => !isDay(q.from) || !isDay(q.to) || q.from <= q.to, { message: "Before `from`", path: ["to"] })
     .refine((q) => !isDay(q.from) || !isDay(q.to) || daysBetween(q.from, q.to) <= MAX_REPORT_DAYS, { message: `More than ${MAX_REPORT_DAYS} days after \`from\``, path: ["to"] })
+export const salesQuerySchema = checkedRange(z.object({
+    ...rangeFields,
+    by: z.preprocess(emptyAsAbsent, z.enum(GROUP_BY).optional()),
+    compare: z.preprocess(emptyAsAbsent, z.enum(["previous"]).optional()),
+}))
 export type SalesQuery = z.infer<typeof salesQuerySchema>
+
+// GET /shops/:shopId/sales/export's query: the same range, and which table.
+export const EXPORT_TABLES = ["orders", "items", "days"] as const
+export const salesExportSchema = checkedRange(z.object({ ...rangeFields, table: z.enum(EXPORT_TABLES) }))
+export type SalesExportQuery = z.infer<typeof salesExportSchema>

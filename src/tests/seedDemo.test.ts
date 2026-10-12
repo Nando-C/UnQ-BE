@@ -52,8 +52,8 @@ describe("the demo seed", () => {
         first = await everything()
     }, 120_000)
 
-    it("writes three shops, their tables and menus, nine users and the history", async () => {
-        expect(summary).toMatchObject({ shops: 3, tables: 14, users: 9, paybacks: 2 })
+    it("writes three shops, their tables and menus, forty-one users and the history", async () => {
+        expect(summary).toMatchObject({ shops: 3, tables: 14, users: 41, paybacks: 2 })
         expect(summary.menuItems).toBe(await MenuModel.countDocuments())
         expect(summary.carts).toBe(await CartModel.countDocuments())
         expect(summary.carts).toBeGreaterThan(500)
@@ -65,6 +65,40 @@ describe("the demo seed", () => {
         expect(deleted.length).toBe(2)
         for (const item of deleted) expect(await ShopModel.exists({ menu: item._id })).toBeNull()
         expect(await MenuModel.countDocuments({ available: false, deletedFrom: { $exists: false } })).toBe(3)
+    })
+
+    it("gives the history the shapes a sales page shows", async () => {
+        const shop = new mongoose.Types.ObjectId(DEMO_SHOP_ID)
+        const inZone = { date: "$paidAt", timezone: "Europe/London" }
+        const sales = (match: object) => OrderModel.aggregate<{ _id: unknown; n: number }>([{ $match: { shopId: shop, status: "completed", ...match } }, { $group: { _id: null, n: { $sum: 1 } } }]).then((r) => r[0]?.n ?? 0)
+        // Peaks: visits start in the café's two busy spells and pay within the
+        // hour, so the four peak hours hold well over the five around them.
+        const byHour = await OrderModel.aggregate<{ _id: number; n: number }>([{ $match: { shopId: shop, status: "completed" } }, { $group: { _id: { $hour: inZone }, n: { $sum: 1 } } }])
+        const hour = (h: number) => byHour.find((b) => b._id === h)?.n ?? 0
+        expect(hour(9) + hour(10) + hour(13) + hour(14)).toBeGreaterThan(1.5 * (hour(8) + hour(11) + hour(12) + hour(15) + hour(16)))
+        // A rise over the 90 days: the last 30 days outsell the first 30.
+        const days = (ago: number) => new Date(NOW.getTime() - ago * 86_400_000)
+        expect(await sales({ paidAt: { $gte: days(31) } })).toBeGreaterThan(1.15 * await sales({ paidAt: { $gte: days(91), $lt: days(60) } }))
+        // Regulars and passers-by: forty diners, a dozen of whom bring most visits.
+        const payers = await OrderModel.aggregate<{ _id: unknown; n: number }>([{ $match: { status: "completed" } }, { $group: { _id: "$payerId", n: { $sum: 1 } } }, { $sort: { n: -1 } }])
+        expect(payers.length).toBeGreaterThanOrEqual(38)
+        const total = payers.reduce((s, p) => s + p.n, 0)
+        expect(payers.slice(0, 12).reduce((s, p) => s + p.n, 0)).toBeGreaterThan(0.6 * total)
+        // The pastry launched in week six: no sale before, plenty after.
+        const nata = (await MenuModel.findOne({ name: "Pastel de Nata" }).lean())!
+        expect(await OrderModel.countDocuments({ "lines.menuId": nata._id, paidAt: { $lt: days(48) } })).toBe(0)
+        expect(await OrderModel.countDocuments({ "lines.menuId": nata._id })).toBeGreaterThan(20)
+        // Refund causes weighted: on Friday and Saturday evenings, most are for the wait.
+        const evenings = await OrderModel.aggregate<{ _id: string; n: number }>([
+            { $unwind: "$refunds" },
+            { $match: { $expr: { $and: [{ $in: [{ $isoDayOfWeek: { date: "$refunds.at", timezone: "Europe/London" } }, [5, 6]] }, { $gte: [{ $hour: { date: "$refunds.at", timezone: "Europe/London" } }, 18] }] } } },
+            { $group: { _id: "$refunds.reason", n: { $sum: 1 } } }, { $sort: { n: -1 } },
+        ])
+        expect(evenings[0]).toMatchObject({ _id: "long_wait" })
+        expect(evenings[0].n).toBeGreaterThan(evenings.reduce((s, r) => s + r.n, 0) / 2)
+        // The bad week: fewer sales than the weeks either side.
+        const week = (from: number) => sales({ paidAt: { $gte: days(from), $lt: days(from - 7) } })
+        expect(await week(38)).toBeLessThan(0.8 * Math.min(await week(45), await week(31)))
     })
 
     it("run again, writes the same documents", async () => {

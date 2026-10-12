@@ -1,5 +1,5 @@
 // Writes the demo data (see demo.ts for what it is): three shops with menus and
-// tables, a manager and eight diners, 90 days of payments and refunds, and the
+// tables, a manager and forty diners, 90 days of payments and refunds, and the
 // live states a manager's page shows. Reproducible, and scoped: a rerun
 // rewrites only what the seed owns (the demo shops' records and its users) and
 // leaves everything else in the database alone.

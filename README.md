@@ -123,7 +123,7 @@ To see card payments finish on their own, forward Stripe's events to the dev ser
 stripe listen --events payment_intent.amount_capturable_updated,payment_intent.succeeded,payment_intent.payment_failed,payment_intent.canceled,refund.failed --forward-to localhost:3001/payments/stripe/webhook
 ```
 
-For something to look at, and a manager to sign in as, write the demo data: three venues with menus and tables, ninety days of payments and refunds, and the live table states. Set `DEMO_MANAGER_PASSWORD` and `DEMO_DINER_PASSWORD` in `.env` first; the manager is `manager@mail.com`. The tables' QR codes point at `FRONTEND_URL`, so a deployed database is seeded with it set to the live client.
+For something to look at, and a manager to sign in as, write the demo data: three venues with menus and tables, forty diners, ninety days of payments and refunds shaped the way a real history is (busy hours, regulars, a new dish, a bad week), and the live table states. Set `DEMO_MANAGER_PASSWORD` and `DEMO_DINER_PASSWORD` in `.env` first; the manager is `manager@mail.com`. The tables' QR codes point at `FRONTEND_URL`, so a deployed database is seeded with it set to the live client.
 
 ```bash
 npm run seed:demo
