@@ -13,6 +13,8 @@ router
     .post("/register", validate(registerSchema), controllers.registerUser)
     .post("/login", validate(loginSchema), controllers.loginUser)
     .get("/logout", JWTAuthMiddleware, controllers.logoutUser)
+    .get("/sessions", JWTAuthMiddleware, controllers.listSessions)
+    .delete("/sessions/:sessionId", JWTAuthMiddleware, controllers.revokeSession)
     .get("/googleLogin", passport.authenticate("google", { scope: [ "profile", "email"], session: false }))
     // A sign-in Google vouches for but that can't be matched to an account
     // safely (see googleUserFor) goes back to the login page, not an error page.

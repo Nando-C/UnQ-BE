@@ -170,7 +170,7 @@ describe("auth", () => {
             expect(winner.status).toBe(200)
         })
 
-        it("ends an older device's session once another device has signed in", async () => {
+        it("keeps an older device signed in when another device signs in", async () => {
             const registerRes = await request(app).post("/auth/register").send(validUser)
             const phone = cookiesFrom(registerRes)
             await new Promise((r) => setTimeout(r, 1100))
@@ -180,18 +180,12 @@ describe("auth", () => {
             expect(laptop.status).toBe(200)
 
             // The phone's 15-minute access token runs out well after the laptop
-            // signed in: its refresh clears both cookies, so its next request is
-            // a guest's instead of the same stale login again.
+            // signed in: its refresh still works, and so does the laptop's.
             const later = Date.now() + 15 * 60 * 1000
             const clock = jest.spyOn(Date, "now").mockReturnValue(later)
             try {
                 const res = await request(app).post("/auth/refreshToken").set("Cookie", phone)
-                expect(res.status).toBe(401)
-                const setCookie = (res.headers["set-cookie"] as unknown as string[] | undefined) || []
-                expect(setCookie).toHaveLength(2)
-                for (const c of setCookie) expect(c).toMatch(/Expires=Thu, 01 Jan 1970/)
-
-                // The laptop is unaffected.
+                expect(res.status).toBe(200)
                 const laptopRefresh = await request(app)
                     .post("/auth/refreshToken")
                     .set("Cookie", cookiesFrom(laptop))
@@ -199,9 +193,10 @@ describe("auth", () => {
             } finally {
                 clock.mockRestore()
             }
+            expect((await UserModel.findOne({ email: validUser.email }))!.sessions).toHaveLength(2)
         })
 
-        it("ends the session of a device whose user logged out elsewhere", async () => {
+        it("ends only the session of the device that logged out", async () => {
             const registerRes = await request(app).post("/auth/register").send(validUser)
             const phone = cookiesFrom(registerRes)
             const laptop = await request(app)
@@ -209,9 +204,53 @@ describe("auth", () => {
                 .send({ email: validUser.email, password: validUser.password })
             await request(app).get("/auth/logout").set("Cookie", cookiesFrom(laptop))
 
-            const res = await request(app).post("/auth/refreshToken").set("Cookie", phone)
+            // The laptop's old cookies are no use: the session is over, so they're cleared.
+            const res = await request(app).post("/auth/refreshToken").set("Cookie", cookiesFrom(laptop))
             expect(res.status).toBe(401)
             expect((res.headers["set-cookie"] as unknown as string[] | undefined) || []).toHaveLength(2)
+            // The phone carries on.
+            expect((await request(app).post("/auth/refreshToken").set("Cookie", phone)).status).toBe(200)
+        })
+
+        it("tells a stale token it was superseded only for the device that rotated it", async () => {
+            const phone = cookiesFrom(await request(app).post("/auth/register").send(validUser))
+            const laptop = cookiesFrom(await request(app).post("/auth/login").send({ email: validUser.email, password: validUser.password }))
+            await new Promise((r) => setTimeout(r, 1100))
+            // The laptop rotates; the phone's token is untouched by that, and a
+            // third device's revoked one is simply over.
+            expect((await request(app).post("/auth/refreshToken").set("Cookie", laptop)).status).toBe(200)
+            const stale = await request(app).post("/auth/refreshToken").set("Cookie", laptop)
+            expect(stale.body).toEqual({ message: "Invalid token", reason: "superseded" })
+            expect((await request(app).post("/auth/refreshToken").set("Cookie", phone)).status).toBe(200)
+        })
+
+        it("signs the oldest device out once an account is signed in on more than ten", async () => {
+            const first = cookiesFrom(await request(app).post("/auth/register").send(validUser))
+            const second = cookiesFrom(await request(app).post("/auth/login").send({ email: validUser.email, password: validUser.password }))
+            for (let i = 0; i < 9; i++) {
+                expect((await request(app).post("/auth/login").send({ email: validUser.email, password: validUser.password })).status).toBe(200)
+            }
+            expect((await UserModel.findOne({ email: validUser.email }))!.sessions).toHaveLength(10)
+
+            const gone = await request(app).post("/auth/refreshToken").set("Cookie", first)
+            expect(gone.status).toBe(401)
+            expect(gone.body).toEqual({ message: "Invalid token" })
+            expect((await request(app).post("/auth/refreshToken").set("Cookie", second)).status).toBe(200)
+        })
+
+        it("drops a device that hasn't refreshed in four weeks at the next sign-in", async () => {
+            const old = cookiesFrom(await request(app).post("/auth/register").send(validUser))
+            const fiveWeeksAgo = new Date(Date.now() - 5 * 7 * 24 * 60 * 60 * 1000)
+            await UserModel.updateOne({ email: validUser.email }, { $set: { "sessions.$[].lastUsedAt": fiveWeeksAgo } })
+
+            const fresh = await request(app).post("/auth/login").send({ email: validUser.email, password: validUser.password })
+            const sessions = (await UserModel.findOne({ email: validUser.email }))!.sessions
+            expect(sessions).toHaveLength(1)
+            // Its token is still signed and unexpired by the clock here, but the
+            // session is gone, so the device is a guest's.
+            const res = await request(app).post("/auth/refreshToken").set("Cookie", old)
+            expect(res.status).toBe(401)
+            expect((await request(app).post("/auth/refreshToken").set("Cookie", cookiesFrom(fresh))).status).toBe(200)
         })
 
         it("returns 401 (not 500) for an invalid or expired refresh token", async () => {
@@ -233,7 +272,7 @@ describe("auth", () => {
     })
 
     describe("GET /auth/logout", () => {
-        it("clears the auth cookies", async () => {
+        it("clears the auth cookies and drops the device's session", async () => {
             const registerRes = await request(app)
                 .post("/auth/register")
                 .send(validUser)
@@ -248,6 +287,82 @@ describe("auth", () => {
                 (res.headers["set-cookie"] as unknown as string[] | undefined) || []
             expect(setCookie.join(";")).toMatch(/accessToken=/)
             expect(setCookie.join(";")).toMatch(/refreshToken=/)
+            expect((await UserModel.findOne({ email: validUser.email }))!.sessions).toHaveLength(0)
+        })
+    })
+
+    describe("GET /auth/sessions", () => {
+        it("lists the devices signed in, in sign-in order, this one marked, with no token ids", async () => {
+            const phone = cookiesFrom(await request(app).post("/auth/register").set("User-Agent", "Phone/1.0").send(validUser))
+            const laptop = cookiesFrom(await request(app).post("/auth/login").set("User-Agent", "Laptop/2.0")
+                .send({ email: validUser.email, password: validUser.password }))
+
+            const res = await request(app).get("/auth/sessions").set("Cookie", laptop)
+            expect(res.status).toBe(200)
+            expect(res.body).toHaveLength(2)
+            expect(res.body[0]).toMatchObject({ userAgent: "Phone/1.0", current: false })
+            expect(res.body[1]).toMatchObject({ userAgent: "Laptop/2.0", current: true })
+            for (const s of res.body) {
+                expect(Object.keys(s).sort()).toEqual(["_id", "createdAt", "current", "lastUsedAt", "userAgent"])
+            }
+            // The phone's own view marks the phone.
+            expect((await request(app).get("/auth/sessions").set("Cookie", phone)).body.map((s: { current: boolean }) => s.current)).toEqual([true, false])
+            // Nor does the account itself say anything about them.
+            expect((await request(app).get("/users/me").set("Cookie", phone)).body).not.toHaveProperty("sessions")
+        })
+
+        it("leaves out a device whose token has expired, and a sign-in with no User-Agent has none", async () => {
+            const cookies = cookiesFrom(await request(app).post("/auth/register").unset("User-Agent").send(validUser))
+            await request(app).post("/auth/login").send({ email: validUser.email, password: validUser.password })
+            const fiveWeeksAgo = new Date(Date.now() - 5 * 7 * 24 * 60 * 60 * 1000)
+            await UserModel.updateOne({ email: validUser.email }, { $set: { "sessions.1.lastUsedAt": fiveWeeksAgo } })
+
+            const res = await request(app).get("/auth/sessions").set("Cookie", cookies)
+            expect(res.body).toHaveLength(1)
+            expect(res.body[0].current).toBe(true)
+            expect(res.body[0]).not.toHaveProperty("userAgent")
+        })
+    })
+
+    describe("DELETE /auth/sessions/:sessionId", () => {
+        it("signs another device out, and that device alone", async () => {
+            const phone = cookiesFrom(await request(app).post("/auth/register").send(validUser))
+            const laptop = cookiesFrom(await request(app).post("/auth/login").send({ email: validUser.email, password: validUser.password }))
+            const sessions = (await request(app).get("/auth/sessions").set("Cookie", laptop)).body
+            const phoneSession = sessions.find((s: { current: boolean }) => !s.current)
+
+            const res = await request(app).delete(`/auth/sessions/${phoneSession._id}`).set("Cookie", laptop)
+            expect(res.status).toBe(204)
+            expect(res.headers["set-cookie"]).toBeUndefined()
+
+            const phoneRefresh = await request(app).post("/auth/refreshToken").set("Cookie", phone)
+            expect(phoneRefresh.status).toBe(401)
+            expect(phoneRefresh.body).toEqual({ message: "Invalid token" })
+            expect((await request(app).post("/auth/refreshToken").set("Cookie", laptop)).status).toBe(200)
+            expect((await request(app).get("/auth/sessions").set("Cookie", laptop)).body).toHaveLength(1)
+        })
+
+        it("revoking this device's own session clears the cookies, like a logout", async () => {
+            const cookies = cookiesFrom(await request(app).post("/auth/register").send(validUser))
+            const [mine] = (await request(app).get("/auth/sessions").set("Cookie", cookies)).body
+
+            const res = await request(app).delete(`/auth/sessions/${mine._id}`).set("Cookie", cookies)
+            expect(res.status).toBe(204)
+            expect((res.headers["set-cookie"] as unknown as string[] | undefined) || []).toHaveLength(2)
+            expect((await request(app).post("/auth/refreshToken").set("Cookie", cookies)).status).toBe(401)
+        })
+
+        it("answers 404 for a session that isn't the account's, and for a malformed id", async () => {
+            const cookies = cookiesFrom(await request(app).post("/auth/register").send(validUser))
+            const other = cookiesFrom(await request(app).post("/auth/register").send({ ...validUser, email: "other@example.com" }))
+            const [theirs] = (await request(app).get("/auth/sessions").set("Cookie", other)).body
+
+            const res = await request(app).delete(`/auth/sessions/${theirs._id}`).set("Cookie", cookies)
+            expect(res.status).toBe(404)
+            expect(res.body).toEqual({ message: "Session not found" })
+            expect((await request(app).delete("/auth/sessions/not-an-id").set("Cookie", cookies)).status).toBe(404)
+            // Theirs is untouched.
+            expect((await request(app).post("/auth/refreshToken").set("Cookie", other)).status).toBe(200)
         })
     })
 })
@@ -404,7 +519,7 @@ describe("PUT /users/me", () => {
         await googleUserFor(googleProfile("g@example.com"))
         const user = await UserModel.findOne({ email: "g@example.com" })
         const { getTokens } = await import("../services/auth/tools")
-        const { accessToken } = await getTokens(user!)
+        const { accessToken } = await getTokens(user!, {})
         const cookies = [`accessToken=${accessToken}`]
 
         const me = await request(app).get("/users/me").set("Cookie", cookies)

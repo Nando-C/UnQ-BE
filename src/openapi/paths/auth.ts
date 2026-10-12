@@ -1,11 +1,13 @@
-import { Paths, PUBLIC, empty, error, fromZod, json, jsonBody, ref, sharedResponse } from "../helpers"
+import { Paths, PUBLIC, array, empty, error, fromZod, json, jsonBody, param, ref, sharedResponse } from "../helpers"
 import { loginSchema, registerSchema } from "../../services/auth/schemas"
 
 // services/auth/routes.ts, controllers.ts, tools.ts, oauth.ts.
 
 const tag = ["Auth"]
 
-const cookiesSet = "Sets the `accessToken` (15 minutes) and `refreshToken` (4 weeks) cookies: HttpOnly, Secure, SameSite=None."
+const cookiesSet = "Sets the `accessToken` (15 minutes) and `refreshToken` (4 weeks) cookies: HttpOnly, Secure, SameSite=None. The sign-in is a session of its own on the account (a device), beside the ones other devices hold: at most 10, the oldest sign-in going beyond that."
+
+const signedIn = { 401: sharedResponse("Unauthorized"), 404: sharedResponse("UserGone") }
 
 export const authPaths: Paths = {
     "/auth/register": {
@@ -26,7 +28,7 @@ export const authPaths: Paths = {
         post: {
             operationId: "loginUser", tags: tag, security: PUBLIC,
             summary: "Sign in with email and password",
-            description: `${cookiesSet} The refresh token stored on the account is replaced, so any other session's refresh fails from now on. Wrong passwords count towards the account's limit (lib/passwordLimit.ts); an email with no account, or a Google-only account, doesn't.`,
+            description: `${cookiesSet} Wrong passwords count towards the account's limit (lib/passwordLimit.ts); an email with no account, or a Google-only account, doesn't.`,
             requestBody: jsonBody(fromZod(loginSchema)),
             responses: {
                 200: json("The account", ref("User")),
@@ -41,7 +43,7 @@ export const authPaths: Paths = {
         post: {
             operationId: "tokenRefresh", tags: tag, security: PUBLIC,
             summary: "Rotate the session's tokens",
-            description: "Reads the `refreshToken` cookie. A valid, current one is swapped atomically for a new pair (both cookies set again). One replaced in the last minute by another tab answers 401 with `reason: \"superseded\"` and leaves the cookies alone, so the request can be resent with the cookies that tab got. Any other invalid one (expired, replaced earlier, signed with another key, account gone) answers 401 and clears both cookies: the session is over.",
+            description: "Reads the `refreshToken` cookie. A valid one that is its session's current token is swapped atomically for a new pair (both cookies set again). One its session replaced in the last minute answers 401 with `reason: \"superseded\"` and leaves the cookies alone: another tab of the same device just refreshed, and the request can be resent with the cookies that tab got. Any other invalid one (expired, replaced earlier, signed with another key, account gone, session gone: a logout, a revocation, a password change, a sign-in on too many devices) answers 401 and clears both cookies: the session is over.",
             parameters: [{ name: "refreshToken", in: "cookie", required: true, schema: { type: "string" } }],
             responses: {
                 200: empty("New cookies set; no body"),
@@ -55,11 +57,35 @@ export const authPaths: Paths = {
         get: {
             operationId: "logoutUser", tags: tag,
             summary: "Sign out",
-            description: "Clears the stored refresh token (every session of the account loses its refresh) and both cookies.",
+            description: "Ends this device's session and clears both cookies. The account's other devices stay signed in.",
             responses: {
                 204: empty("Signed out"),
-                401: sharedResponse("Unauthorized"),
-                404: sharedResponse("UserGone"),
+                ...signedIn,
+                500: sharedResponse("ServerError"),
+            },
+        },
+    },
+    "/auth/sessions": {
+        get: {
+            operationId: "listSessions", tags: tag,
+            summary: "The devices signed in",
+            description: "The account's sessions in sign-in order, the caller's marked `current`. A device that hasn't refreshed in four weeks holds an expired token and isn't listed. Never the tokens or their ids.",
+            responses: {
+                200: json("The sessions", array(ref("Session"))),
+                ...signedIn,
+            },
+        },
+    },
+    "/auth/sessions/{sessionId}": {
+        delete: {
+            operationId: "revokeSession", tags: tag,
+            summary: "Sign one device out",
+            description: "Ends that session: its next refresh fails, so the device is a guest's within 15 minutes (the access token's life). Revoking the caller's own session also clears the cookies, like a logout.",
+            parameters: [param("sessionId")],
+            responses: {
+                204: empty("Signed out; cookies cleared when it was this device's"),
+                ...signedIn,
+                404: error('"Session not found": not one of the account\'s sessions (or "User not found!")'),
                 500: sharedResponse("ServerError"),
             },
         },

@@ -26,7 +26,7 @@ const description = `The API behind UnQ, a food and drinks ordering app: diners 
 
 ## Conventions
 
-- **Sign-in** is two HttpOnly cookies, \`accessToken\` (15 minutes) and \`refreshToken\` (4 weeks), set by the auth routes. A 401 means refresh (\`POST /auth/refreshToken\`) and retry; a refresh that fails ends the session. Operations marked with the lock need the cookie; the rest are public, and some show more to a signed-in caller.
+- **Sign-in** is two HttpOnly cookies, \`accessToken\` (15 minutes) and \`refreshToken\` (4 weeks), set by the auth routes. Each sign-in is a session of its own, so an account can be signed in on several devices (up to 10) and sign one out (\`DELETE /auth/sessions/{sessionId}\`). A 401 means refresh (\`POST /auth/refreshToken\`) and retry; a refresh that fails ends the session. Operations marked with the lock need the cookie; the rest are public, and some show more to a signed-in caller.
 - **Roles.** Every account is a \`customer\`; a \`shopMg\` (shop manager, set in the database) can create shops. Manager routes check that the caller manages the shop in the URL (403 otherwise).
 - **Ids** are MongoDB ObjectIds (24 hex characters). A table's id is its \`_id\` in the shop's \`tables\`.
 - **Money** is in pounds (GBP) to the penny everywhere a cart, a payment or a refund says an amount, and the \`price\` a manager sets is the same. The one exception is \`createStripeCheckout\`'s \`amount\`, in pence, as Stripe counts. The client never names an amount to pay: every total comes from database prices.
@@ -55,7 +55,7 @@ export const buildOpenApi = () => ({
         { url: "/", description: "This host directly" },
     ],
     tags: [
-        { name: "Auth", description: "Sign up, sign in, tokens, Google" },
+        { name: "Auth", description: "Sign up, sign in, tokens, devices, Google" },
         { name: "Users", description: "The signed-in account" },
         { name: "Shops", description: "Shops and their covers" },
         { name: "Menu", description: "A shop's menu items" },

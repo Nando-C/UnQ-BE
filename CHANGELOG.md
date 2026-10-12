@@ -6,6 +6,14 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ## [Unreleased]
 
+### Added
+
+- Several devices per account. Each sign-in is a session of its own on the account (up to ten; the oldest goes beyond that), so signing in on a second device no longer signs the first out, and a logout ends only that device's session. `GET /auth/sessions` lists the devices signed in, the caller's marked `current`; `DELETE /auth/sessions/{sessionId}` signs one out (its next refresh fails, so it is a guest's within 15 minutes). A password change still ends every other session. [docs/auth.md](./docs/auth.md#sessions-are-two-cookies).
+
+### Changed
+
+- A session stores its refresh token's id, never the token, and both tokens name their session. Deploying this signs every current session out once (the tokens in hand belong to no session); the old `refreshToken` field is left unread on existing accounts.
+
 ## [2.1.0] - 2026-10-11
 
 The documentation release: the API's contract as an OpenAPI document, the design knowledge under `docs/`, the README as a front page, and a demo seed. Nothing changes on the host. To seed a deployed database, run the seed with `FRONTEND_URL` set to the live client.

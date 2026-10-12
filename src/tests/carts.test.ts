@@ -125,12 +125,14 @@ describe("carts", () => {
         expect((await request(app).get(`/carts/tables/${tableId}`)).status).toBe(200)
     })
 
-    it("shows the guest view to a diner whose account then signed in on another device", async () => {
+    it("shows the guest view to a diner whose phone was then signed out from another device", async () => {
         const { tableId, shopId, menuId, customer } = await scaffold()
         await request(app).post(`/carts/${shopId}/tables/${tableId}/addItem`)
             .set("Cookie", customer.cookies).send({ menuId, qty: 1 })
         await new Promise((r) => setTimeout(r, 1100))
-        await loginCookies(customer.email, customer.password) // the other device
+        const laptop = await loginCookies(customer.email, customer.password) // the other device
+        const phone = (await request(app).get("/auth/sessions").set("Cookie", laptop)).body.find((s: { current: boolean }) => !s.current)
+        expect((await request(app).delete(`/auth/sessions/${phone._id}`).set("Cookie", laptop)).status).toBe(204)
 
         // Once the phone's 15-minute access token has run out, it goes through
         // the FE's steps: its read gets a 401, the refresh fails, and the read is

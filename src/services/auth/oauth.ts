@@ -1,6 +1,6 @@
 import GoogleStrategy from "passport-google-oauth20"
 import UserModel from "../users/model"
-import { getTokens } from "./tools"
+import { deviceOf, getTokens } from "./tools"
 import env from "../../settings/env"
 
 const googleStrategy = new GoogleStrategy.Strategy(
@@ -8,16 +8,18 @@ const googleStrategy = new GoogleStrategy.Strategy(
         clientID: env.GOOGLE_CLIENT_ID,
         clientSecret: env.GOOGLE_SECRET,
         // Google sends the browser back here: see PUBLIC_API_URL in settings/env.ts.
-        callbackURL: `${env.PUBLIC_API_URL}/auth/googleRedirect`
+        callbackURL: `${env.PUBLIC_API_URL}/auth/googleRedirect`,
+        // The request, for the device the session remembers.
+        passReqToCallback: true,
     },
 
-    async(accessToken, refreshToken, profile, passportNext) => {
+    async(req, accessToken, refreshToken, profile, passportNext) => {
         try {
             const user = await googleUserFor(profile)
             // Nobody to sign in: passport answers with the route's failureRedirect.
             if (!user) return passportNext(null, false)
 
-            const tokens = await getTokens(user)
+            const tokens = await getTokens(user, deviceOf(req))
             passportNext(null, {user, tokens})
         } catch (error) { 
             console.log(error)
