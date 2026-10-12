@@ -20,6 +20,7 @@ import MenuModel from "../services/menus/model"
 import ShopModel from "../services/shops/model"
 import UserModel from "../services/users/model"
 import { refreshTokens } from "../services/auth/tools"
+import jwt from "jsonwebtoken"
 import { refundCapture } from "../lib/paypal"
 
 // A shop with a £3 Latte and a £2 Muffin, one table, and Ada's cart at it
@@ -346,8 +347,10 @@ describe("refreshing one session from two tabs at once", () => {
         const issued = results.filter((r) => typeof r === "object" && r !== null) as { refreshToken: string }[]
         expect(issued).toHaveLength(1)
         expect(results).toContain("superseded")
-        const stored = (await UserModel.findOne({ email }))!.refreshToken
-        expect(stored).toBe(issued[0].refreshToken)
+        // This device's session holds the id of the token that won, and the old one as replaced.
+        const old = (jwt.decode(token) as jwt.JwtPayload).jti
+        const session = (await UserModel.findOne({ email }))!.sessions.find((s) => s.previousJti === old)
+        expect(session?.jti).toBe((jwt.decode(issued[0].refreshToken) as jwt.JwtPayload).jti)
     })
 })
 

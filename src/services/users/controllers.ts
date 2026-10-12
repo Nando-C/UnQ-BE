@@ -3,7 +3,7 @@ import { IUserDocument } from "src/typings/users"
 import createError from "http-errors"
 import * as bcrypt from "bcrypt"
 import { destroyReplacedImage, discardUpload } from "../../settings/cloudinary"
-import { clearAuthCookies, getTokens, setAuthCookies } from "../auth/tools"
+import { clearAuthCookies, deviceOf, getTokens, setAuthCookies } from "../auth/tools"
 import ShopModel from "../shops/model"
 import { isDuplicateKey } from "../../lib/mongo"
 import { limitedPasswordCheck, TOO_MANY_WRONG_PASSWORDS } from "../../lib/passwordLimit"
@@ -36,9 +36,8 @@ const currentPasswordRefusal = async (me: IUserDocument, currentPassword: unknow
 // current one (`currentPassword`): a stolen access token alone can't take the
 // account over. A Google-only account can't get a password at all: there's
 // nothing to confirm it with, so a stolen token could set one and keep the
-// account for good. A new password ends the account's other sessions: new
-// tokens for this one, and the stored refresh token everyone else holds is
-// replaced.
+// account for good. A new password ends the account's other sessions: a new
+// session for this device, and every other device's goes.
 export const editMe: TController = async ( req, res, next) => {
     const me = req.user as IUserDocument
     try {
@@ -58,7 +57,7 @@ export const editMe: TController = async ( req, res, next) => {
 
         await me.save()
         if (password !== undefined) {
-            setAuthCookies(res, await getTokens(me))
+            setAuthCookies(res, await getTokens(me, deviceOf(req), { only: true }))
         }
         res.send(me)
     } catch (error) {

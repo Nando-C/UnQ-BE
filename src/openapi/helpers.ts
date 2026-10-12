@@ -60,6 +60,7 @@ export const queryParams = (schema: ZodType, describe: Record<string, string> = 
 }
 
 export const ref = (name: string): JsonSchema => ({ $ref: `#/components/schemas/${name}` })
+export const array = (items: JsonSchema): JsonSchema => ({ type: "array", items })
 export const param = (name: string) => ({ $ref: `#/components/parameters/${name}` })
 export const sharedResponse = (name: string) => ({ $ref: `#/components/responses/${name}` })
 

@@ -102,7 +102,7 @@ src/
 └── tests/                 the Jest suite, its in-memory database and the fake Stripe
 ```
 
-**How the two apps talk.** The client calls the API on its own origin; Vercel rewrites `/api/*` to this host, so the session cookies are first-party and Safari keeps them. Sign-in is two httpOnly cookies, a fifteen-minute access token and a four-week refresh token, rotated on refresh, one refresh token per account. The client refreshes on a 401 and retries. At checkout the client asks the API to create the payment, hands the provider's secret or order id to Stripe's form or PayPal's popup, and after the diner confirms asks the API to capture; the API re-checks the cart and only then takes the money. The sequence is drawn in [docs/api.md](./docs/api.md#checkout-at-a-glance).
+**How the two apps talk.** The client calls the API on its own origin; Vercel rewrites `/api/*` to this host, so the session cookies are first-party and Safari keeps them. Sign-in is two httpOnly cookies, a fifteen-minute access token and a four-week refresh token, rotated on refresh, one session per device. The client refreshes on a 401 and retries. At checkout the client asks the API to create the payment, hands the provider's secret or order id to Stripe's form or PayPal's popup, and after the diner confirms asks the API to capture; the API re-checks the cart and only then takes the money. The sequence is drawn in [docs/api.md](./docs/api.md#checkout-at-a-glance).
 
 ## Quick start
 

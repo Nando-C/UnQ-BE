@@ -9,7 +9,6 @@ Reviewed and left as they are, each with its reason.
 - **A card payment recorded and refunded.** A finisher that stalls past its 2-minute lease between renewing it and saving the cart can record a payment another finisher has since refunded. Closing it needs a transaction across two collections; instead it is detected, logged as a server error and on the cart's manager log (`stripeRefundedRecorded`), and a pay-back for such a payment is marked `checked`. [payments.md](./payments.md#residual-risks-accepted).
 - **PayPal has no webhook or sweep.** A capture whose answer is lost is told to the diner as "contact staff before paying again" with the order id; a refund after a lost race that fails is a `500` with the order id. Staff settle both from PayPal's dashboard.
 - **An item that sells out in the instant after a capture** has been paid for and isn't refunded for that.
-- **One refresh token per account.** Signing in on a second device ends the first's session at its next refresh; a device refreshing within a minute of another device's sign-in sees a few `401`s before it ends. Several devices would need a token per device. [auth.md](./auth.md#sessions-are-two-cookies).
 - **Anyone can lock an account's password** for 15 minutes by guessing wrong 10 times (Google sign-in still works); no per-IP limits until the client address is verified behind the proxies. [decisions.md](./decisions.md#2026-10-05-rate-limits-per-account-not-per-address).
 - **Rate-limit counters live in the process**: they reset with a restart and aren't shared between instances.
 - **`GET /shops/browse` is public** and a search reads shops and their items until a page is full: the cheapest way to load the database. A per-IP limit waits with the others.
@@ -41,4 +40,4 @@ Each changes behaviour, a contract, stored data or several layers at once, so ea
 
 ## Roadmap
 
-In the order decided with the product roadmap: the **sales reports** route over orders (with a shop time-zone setting), then the **sales dashboard**; **staff roles** narrowing what a shop's managers can do; **kitchen** (queue, prep states, live push); **several devices per account**; **live payment keys**, a deliberate switch rather than a release step.
+In the order decided with the product roadmap: the **sales reports** route over orders (with a shop time-zone setting), then the **sales dashboard**; **staff on a shop** (today a shop's only member is the manager who created it; nothing adds a second) and then **staff roles** narrowing what each member can do; **kitchen** (queue, prep states, live push); **live payment keys**, a deliberate switch rather than a release step.

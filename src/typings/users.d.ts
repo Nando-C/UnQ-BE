@@ -1,4 +1,18 @@
-import { Document, Model } from "mongoose"
+import { Document, Model, Types } from "mongoose"
+
+// One signed-in device (see auth/tools.ts).
+export interface ISession {
+    _id: Types.ObjectId
+    // The id (`jti`) of the refresh token this device holds now...
+    jti: string
+    // ...and of the one it held before the last rotation, with when: a tab
+    // that lost a refresh race is told so for a minute afterwards.
+    previousJti?: string
+    rotatedAt?: Date
+    createdAt: Date
+    lastUsedAt: Date
+    userAgent?: string
+}
 
 export interface IUser {
     name: string
@@ -7,7 +21,7 @@ export interface IUser {
     password?: string
     avatar?: string
     role: string
-    refreshToken?: string
+    sessions: ISession[]
     googleId?: string
 }
 

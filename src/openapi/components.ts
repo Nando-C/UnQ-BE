@@ -35,7 +35,15 @@ const User = object({
     hasPassword: { type: "boolean", description: "Whether the account can sign in with a password; a Google-only account can't" },
     ...timestamps,
 }, ["_id", "name", "email", "role", "hasPassword", "createdAt", "updatedAt"],
-"An account, as users/model.ts's toJSON sends it: never the password hash or the refresh token")
+"An account, as users/model.ts's toJSON sends it: never the password hash or the sessions")
+
+const Session = object({
+    _id: objectId,
+    createdAt: { ...date, description: "When the device signed in" },
+    lastUsedAt: { ...date, description: "When it last refreshed its tokens (or signed in)" },
+    userAgent: { type: "string", description: "The browser's User-Agent at sign-in, up to 200 characters; absent when it sent none" },
+    current: { type: "boolean", description: "Whether this is the caller's own session" },
+}, ["_id", "createdAt", "lastUsedAt", "current"], "A device signed in on the account (auth/controllers.ts listSessions); never the refresh token or its id")
 
 const Table = object({ _id: objectId, name: { type: "string" }, Qr_Url: { type: "string", format: "uri", description: "The table's page in the front end, printed as its QR code" } },
     ["_id", "name", "Qr_Url"], "A table of a shop")
@@ -287,7 +295,7 @@ const ErrorBody = object({
 }, ["message"], "Every error answer (errorMiddlewares.ts). A 5xx says only \"Generic Server Error\" unless its message was written for the user")
 
 export const schemas: Record<string, JsonSchema> = {
-    User, Table, DeletedTable, ManagerDeletedTable, MenuItem, Shop, ShopRecord, ManagerShop, ShopSummary, ShopPage,
+    User, Session, Table, DeletedTable, ManagerDeletedTable, MenuItem, Shop, ShopRecord, ManagerShop, ShopSummary, ShopPage,
     MenuRef, CartItem, Split, ManagerSplit, Notice, ManagerNotice, PaymentLine, Payment, Refund, LogEntry,
     Cart, ManagerCart, CartNotFound, TableStatus, Payback, TableCarts, CloseResult, RefundResult, PaymentCheckResult, PaybackResult,
     PayPalOrder, StripeIntent, Received, Health, Error: ErrorBody,
@@ -304,6 +312,7 @@ export const parameters: Record<string, Parameter> = {
     paymentId: pathParam("paymentId", "The payment (a cart's payments[]._id)"),
     refundId: pathParam("refundId", "The refund (a cart's refunds[]._id)"),
     paybackId: pathParam("paybackId", "The pay-back"),
+    sessionId: pathParam("sessionId", "The session (a user's sessions[]._id, from GET /auth/sessions)"),
 }
 
 // Answers several routes give the same way.

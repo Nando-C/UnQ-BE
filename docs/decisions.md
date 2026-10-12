@@ -97,3 +97,11 @@ The choices that shape the API and why they were made, as a log. Each is the con
 **Decision.** `src/openapi/` builds an OpenAPI 3.1 document: request bodies from the zod schemas the routes validate with, responses and messages written from the controllers and verified against them. A test keeps it listing exactly the served routes and valid against the OpenAPI schema; another keeps the README's variable table, `.env.example` and every Markdown link in step. The contract is frozen for the front end; changes are additive.
 
 **Consequences.** Every new route, field, status or message is a change to the document in the same commit. Swagger UI is one HTML route loading a pinned CDN build, because the startup route listing forbids non-route middleware on the routers.
+
+## 2026-10-11: a session per device, on the user document
+
+**Context.** An account held one refresh token: a sign-in on a second device ended the first's session at its next refresh, within 15 minutes. A manager couldn't stay signed in on the laptop and the phone, and on the shared demo accounts one visitor signed another out.
+
+**Decision.** `sessions[]` on the user, one per sign-in: the id of the refresh token the device holds (never the token), the id it held before its last rotation and when, the sign-in and last-refresh times, the User-Agent. Both tokens carry the session's id. At most 10 per account, the oldest sign-in going beyond that; a sign-in sweeps sessions that haven't refreshed in four weeks. Rotation stays one conditional `updateOne`, now matched on the session's token id. Logout ends one device; `GET /auth/sessions` and `DELETE /auth/sessions/:sessionId` list and revoke; a password change still ends every other session.
+
+**Consequences.** Tokens issued before this belong to no session, so deploying it signs every current session out once; the old `refreshToken` field stays on existing documents, unread. "Superseded" is now told only to the device that rotated the token, so a stale token from a revoked device ends at once instead of after a minute. The cap is a ceiling on the document's size, not a product rule: an eleventh device signs in and the first signs out. `users/model.ts`, `auth/tools.ts`, `auth/controllers.ts`.

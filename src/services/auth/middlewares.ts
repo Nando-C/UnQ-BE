@@ -26,7 +26,10 @@ export const optionalJWT: TController = async (req, res, next) => {
     }
     try {
         const user = await UserModel.findById(decodedToken._id)
-        if (user) req.user = user
+        if (user) {
+            req.user = user
+            req.sessionId = decodedToken.sid
+        }
         next()
     } catch (error) {
         next(createError(500, error as Error))
@@ -35,8 +38,9 @@ export const optionalJWT: TController = async (req, res, next) => {
 
 // -------------------------------------------------------------------------
 
-// For signed-in routes: sets req.user from the access-token cookie, or 401
-// (the FE then refreshes the token and retries).
+// For signed-in routes: sets req.user (and req.sessionId, the device's
+// session) from the access-token cookie, or 401 (the FE then refreshes the
+// token and retries).
 export const JWTAuthMiddleware: TController = async (req, res, next) => {
     if (!req.cookies.accessToken) return next(createError(401, "Please provide credentials in cookies!"))
     const token = req.cookies.accessToken
@@ -45,6 +49,7 @@ export const JWTAuthMiddleware: TController = async (req, res, next) => {
         const user = await UserModel.findById(decodedToken._id)
         if (!user) return next(createError(404, "User not found!"))
         req.user = user
+        req.sessionId = decodedToken.sid
         next()
     } catch {
         next(createError(401, "Invalid token"))

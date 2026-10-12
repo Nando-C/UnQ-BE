@@ -1,10 +1,21 @@
 import mongoose from "mongoose"
-import { IUserDocument, IUserModel } from "src/typings/users"
+import { ISession, IUserDocument, IUserModel } from "src/typings/users"
 import * as bcrypt from 'bcrypt';
 import { limitedPasswordCheck } from "../../lib/passwordLimit"
 import env from "../../settings/env"
 
 const { Schema, model } = mongoose
+
+// One signed-in device: the id of the refresh token it holds (never the token
+// itself), and of the one it held before its last rotation (see auth/tools.ts).
+const SessionSchema = new Schema<ISession>({
+    jti: { type: String, required: true },
+    previousJti: String,
+    rotatedAt: Date,
+    createdAt: { type: Date, required: true },
+    lastUsedAt: { type: Date, required: true },
+    userAgent: String,
+})
 
 const UserSchema = new Schema<IUserDocument, IUserModel>(
     {
@@ -38,8 +49,8 @@ const UserSchema = new Schema<IUserDocument, IUserModel>(
             enum: ["customer", "shopMg"],
             default: "customer"
         },
-        // The one refresh token currently valid for this user (see auth/tools.ts).
-        refreshToken: String,
+        // The devices signed in, one refresh token each (see auth/tools.ts).
+        sessions: { type: [SessionSchema], default: [] },
         // Looked up on every Google sign-in.
         googleId: { type: String, index: { sparse: true } },
     },
@@ -63,7 +74,7 @@ UserSchema.statics.checkCredentials = async function (email, password) {
 UserSchema.methods.toJSON = function () {
     const user = this.toObject()
     delete user.__v
-    delete user.refreshToken
+    delete user.sessions
     // Whether the account can log in with a password (a Google-only one
     // can't): changing its email or password then asks for it.
     user.hasPassword = Boolean(user.password)

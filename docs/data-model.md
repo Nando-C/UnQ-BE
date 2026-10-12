@@ -19,7 +19,7 @@ This page is the companion to the response schemas in the API's [OpenAPI documen
 - **Ids** are ObjectIds. A table has no collection of its own: it is an entry in its shop's `tables` array, and other records name it by that entry's `_id` (as a string in `tableId` fields). A `StripeCheckout`'s `_id` is Stripe's PaymentIntent id.
 - **Money** is in pounds (GBP) to the penny: menu prices, cart `unitPrice`, payment and refund amounts, pay-backs and orders. The one field in pence is `StripeCheckout.amount`, as Stripe counts (and as `createStripeCheckout` answers it). Totals are compared in pence (`lib/money.ts`), never as floats.
 - **Names from version 1** stay, because the front end reads them: `qtyPayed`, `Qr_Url`, `shopMg`, `web_URL`, `open_times`, `short_description`, and the cart status `splitted` (a legacy value nothing sets any more).
-- **What leaves the server.** Each model's `toJSON` drops `__v`. `User` also drops `password` and `refreshToken` and adds `hasPassword`. `Cart`'s `toJSON` is the diner view (below); manager routes use `toObject()` instead. `Order` and `StripeCheckout` are served by no route.
+- **What leaves the server.** Each model's `toJSON` drops `__v`. `User` also drops `password` and `sessions` and adds `hasPassword`. `Cart`'s `toJSON` is the diner view (below); manager routes use `toObject()` instead. `Order` and `StripeCheckout` are served by no route.
 - **Soft deletes.** A menu item taken off a menu is kept (`deletedFrom`); a deleted table moves to its shop's `deletedTables`; both go for good with their shop. A cart is deleted only when it is emptied with nothing worth keeping (no payment, refund or manager-log record).
 
 ## User
@@ -32,12 +32,12 @@ This page is the companion to the response schemas in the API's [OpenAPI documen
 | `password` | string | bcrypt hash (`BCRYPT_ROUNDS`); absent on a Google-only account |
 | `avatar` | string (URL) | generated initials image at register, or Google's |
 | `role` | `customer` \| `shopMg` | default `customer` |
-| `refreshToken` | string | the one refresh token currently valid (sessions, below) |
+| `sessions` | array | the devices signed in, one per sign-in (below) |
 | `googleId` | string | sparse index |
 
 - `email` is matched however it is capitalised: the schema lowercases it on save, and lookups by email are cast the same way.
 - `role: "shopMg"` (shop manager) can create shops. It is set in the database, never through the API: register and profile edits take a fixed list of fields.
-- **Sessions.** One refresh token per account. A sign-in, a password change or a logout replaces it, so every other session's next refresh fails. `auth/tools.ts` rotates it atomically (`updateOne` matched on the old token): of two tabs refreshing at once, one gets the new pair and the other is told `superseded`, and keeps its cookies.
+- **Sessions.** One per device: `{ _id, jti, previousJti?, rotatedAt?, createdAt, lastUsedAt, userAgent? }`, the ids of the refresh token the device holds and of the one it held before its last rotation, never the tokens. Both tokens carry the session's `_id` as `sid`. At most 10 per account (the oldest sign-in goes); a sign-in drops the ones that haven't refreshed in four weeks. `auth/tools.ts` rotates a session's token atomically (`updateOne` matched on `sessions.jti`): of two tabs refreshing at once, one gets the new pair and the other is told `superseded`, and keeps its cookies. A logout, a revocation (`DELETE /auth/sessions/:sessionId`) or a password change removes sessions; the rest of the account's devices stay signed in.
 - **Password checks** (sign-in, confirming the current password) count towards a per-account limit in `lib/passwordLimit.ts`: `PASSWORD_FAILS_PER_ACCOUNT` wrong ones in 15 minutes, then every check for that account is refused until the window ends. Counts live in the process's memory.
 - Google sign-in links to an existing account only by a **verified** email, and removes that account's password (nothing proved whoever set it owned the address). See `auth/oauth.ts`.
 

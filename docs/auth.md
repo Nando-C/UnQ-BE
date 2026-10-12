@@ -8,20 +8,22 @@ A signed-in browser holds two `httpOnly; Secure; SameSite=None` cookies, set by 
 
 | Cookie | Signed with | Lasts | Carries |
 |---|---|---|---|
-| `accessToken` | `JWT_SECRET` | 15 minutes | `{ _id }` |
-| `refreshToken` | `JWT_REFRESH_SECRET` | 4 weeks | `{ _id }` and a random `jti`, so two tokens issued in the same second still differ |
+| `accessToken` | `JWT_SECRET` | 15 minutes | `{ _id, sid }`: the user and the session (device) |
+| `refreshToken` | `JWT_REFRESH_SECRET` | 4 weeks | `{ _id, sid }` and a random `jti`, the id the session stores and rotation matches |
 
 `SameSite=None; Secure` because in production the front end and the API are different sites (Vercel and Render), reached through the front end's `/api` proxy. Clearing a cookie needs the attributes it was set with, so setting and clearing share one options object.
 
-The API keeps **one refresh token per account**, on the user document. Issuing a pair stores the new refresh token, which silently ends every other session's ability to refresh: a sign-in on a second device, a logout and a password change all do this.
+Each sign-in is a **session of its own**, one per device, kept on the user document (`sessions[]`): the id (`jti`) of the refresh token the device holds now, the id of the one it held before its last rotation and when, the sign-in time, the last refresh, and the browser's User-Agent at sign-in (up to 200 characters). Never the token itself: a copy of the database can't sign in. Both tokens carry the session's id (`sid`), so every request knows which device it came from. An account holds **at most 10 sessions**; the eleventh sign-in drops the oldest, and any sign-in sweeps sessions that haven't refreshed in four weeks (their token has expired). Each is one atomic update, so two sign-ins at once on one account both land.
+
+A sign-in on another device therefore changes nothing for this one. What ends a session: its own logout, a revocation (below), a password change (which ends every session but the one that changed it), being the oldest of eleven, or four weeks without a refresh.
 
 ### Refresh and rotation
 
 `POST /auth/refreshToken` reads the `refreshToken` cookie (`400` without one) and:
 
-- a valid token equal to the stored one is swapped for a new pair **atomically**: the store is a single `updateOne` conditioned on the old token still being the current one, so two tabs refreshing at once can't both win;
-- the loser of that race, or any token replaced **in the last minute**, gets `401 { message: "Invalid token", reason: "superseded" }` and the cookies are left alone: the other tab's new cookies are in the browser already, and the front end resends with them;
-- anything else (expired, malformed, signed with another key, replaced earlier, account gone) gets `401` **and both cookies cleared**: the session is over, and the next request is a guest's.
+- a valid token that is its session's current one is swapped for a new pair **atomically**: the store is a single `updateOne` conditioned on the session still holding the old token's id, so two tabs refreshing at once can't both win;
+- the loser of that race, or any token its session replaced **in the last minute**, gets `401 { message: "Invalid token", reason: "superseded" }` and the cookies are left alone: the other tab's new cookies are in the browser already, and the front end resends with them. Only the device that rotated the token is told this; a token of a session that is gone is simply over;
+- anything else (expired, malformed, signed with another key, replaced earlier, session gone, account gone) gets `401` **and both cookies cleared**: the session is over, and the next request is a guest's.
 
 Database errors are a `500`, never a cleared session.
 
@@ -34,7 +36,7 @@ Two middlewares read the access cookie (`auth/middlewares.ts`):
 
 ### Ending a session
 
-`GET /auth/logout` blanks the stored refresh token and clears both cookies (`204`). Deleting the account (`DELETE /users/me`) clears them too.
+`GET /auth/logout` drops this device's session and clears both cookies (`204`); the account's other devices stay signed in. `GET /auth/sessions` lists the devices signed in, in sign-in order, with the caller's marked `current`, their sign-in and last-refresh times and their User-Agent, never the token ids; a device that hasn't refreshed in four weeks isn't listed. `DELETE /auth/sessions/:sessionId` signs one device out (`204`; `404 "Session not found"` for a session that isn't the account's): its next refresh fails, so it is a guest's within 15 minutes. Revoking the caller's own session clears the cookies too. Deleting the account (`DELETE /users/me`) clears them as well.
 
 ## Passwords
 
@@ -45,9 +47,9 @@ Two middlewares read the access cookie (`auth/middlewares.ts`):
 
 ### Changing what guards the account
 
-`PUT /users/me` needs `currentPassword` to change the email or set a new password (`400 "Enter your current password to change your email or password"`, `403 "Your current password is incorrect"`): a stolen access token alone can't take the account over. A wrong one is a `403`, not a `401`, so the front end doesn't go off to refresh the session. A new password issues fresh cookies to this session and, through the stored refresh token, ends the others. A Google-only account can't be given a password at all (`403 "This account signs in with Google, so it can't have a password"`): nothing could confirm it, so a stolen token could otherwise set one and keep the account for good. `DELETE /users/me` needs the current password for the same reason, and is refused while the user still manages a shop (`409 "Delete your shops first"`).
+`PUT /users/me` needs `currentPassword` to change the email or set a new password (`400 "Enter your current password to change your email or password"`, `403 "Your current password is incorrect"`): a stolen access token alone can't take the account over. A wrong one is a `403`, not a `401`, so the front end doesn't go off to refresh the session. A new password issues fresh cookies to this device and ends every other session of the account. A Google-only account can't be given a password at all (`403 "This account signs in with Google, so it can't have a password"`): nothing could confirm it, so a stolen token could otherwise set one and keep the account for good. `DELETE /users/me` needs the current password for the same reason, and is refused while the user still manages a shop (`409 "Delete your shops first"`).
 
-What leaves the server about a user (`toJSON`): never the hash or the refresh token; `hasPassword` says whether the account can sign in with a password, so the front end knows when to ask for the current one.
+What leaves the server about a user (`toJSON`): never the hash or the sessions; `hasPassword` says whether the account can sign in with a password, so the front end knows when to ask for the current one.
 
 ## Google sign-in
 
