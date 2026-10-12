@@ -2,6 +2,7 @@ import { JsonSchema, Parameter, Response, error, json, ref } from "./helpers"
 import { CHECKOUT_STATES } from "../services/carts/stripeCheckout"
 import { PAYMENT_PROVIDERS, PAYMENT_STATUSES, REFUND_REASONS, REFUND_STATUSES } from "../services/carts/model"
 import { DONE_AS, PAYBACK_KINDS } from "../services/payments/payback"
+import { GROUP_BY, MAX_REPORT_DAYS } from "../services/shops/schemas"
 
 // Response schemas, written from the Mongoose models (services/*/model.ts),
 // their toJSON methods, and the controllers' select/populate/strip logic. The
@@ -80,11 +81,12 @@ const shopFields = {
     open_times: { type: "string" },
     phone: { type: "string", description: "As typed" },
     web_URL: { type: "string" },
+    timeZone: { type: "string", description: "The zone the shop's days are counted in (an IANA name); Europe/London unless set" },
     shopMg: { ...array(objectId), description: "The managers' user ids" },
     tables: array(ref("Table")),
     ...timestamps,
 }
-const shopRequired = ["_id", "name", "cover", "shopMg", "tables", "menu", "createdAt", "updatedAt"]
+const shopRequired = ["_id", "name", "cover", "timeZone", "shopMg", "tables", "menu", "createdAt", "updatedAt"]
 
 const Shop = object({ ...shopFields, menu: array(ref("MenuItem")) }, shopRequired,
     "A shop as everyone sees it: menu items populated, deleted tables left out")
@@ -279,6 +281,75 @@ const StripeIntent = object({
 
 const Received = object({ received: { type: "boolean", const: true } }, ["received"])
 
+// The sales report (shops/controllers/salesControllers.ts).
+const day: JsonSchema = { type: "string", format: "date", description: "A day in the shop's time zone, YYYY-MM-DD" }
+const count = (description: string): JsonSchema => ({ type: "integer", description })
+const byProvider = (each: JsonSchema): JsonSchema => object(Object.fromEntries(PAYMENT_PROVIDERS.map((p) => [p, each])), [...PAYMENT_PROVIDERS], "By payment provider")
+const SalesRange = object({
+    from: day, to: day,
+    timeZone: { type: "string", description: "The shop's zone, which every day and hour here is in" },
+    by: { ...enumOf(GROUP_BY), description: "The bucket the series is grouped in; weeks start on Monday" },
+    days: count("Days in the range, both ends counted"),
+}, ["from", "to", "timeZone", "by", "days"], "The range reported, as counted")
+const SalesTotals = object({
+    gross: pounds("Completed payments made in the range"),
+    refunds: pounds("Completed refunds made in the range, whenever their sale was"),
+    net: pounds("gross − refunds"),
+    orders: count("Completed payments"),
+    pendingOrders: count("Payments in the range still awaiting their provider: not counted anywhere else"),
+    visits: count("Distinct carts paid"),
+    diners: count("Distinct payers"),
+    returningDiners: count("Of the diners, those who had paid at this shop before the range began"),
+    units: count("Units sold, less those refunded"),
+    byProvider: byProvider(object({ gross: pounds("Completed payments"), orders: count("Completed payments") }, ["gross", "orders"])),
+}, ["gross", "refunds", "net", "orders", "pendingOrders", "visits", "diners", "returningDiners", "units", "byProvider"])
+const SalesBucket = object({
+    bucket: { ...day, description: "The bucket's first day (its Monday or its 1st); the first may start before `from`" },
+    gross: pounds("Completed payments"), refunds: pounds("Completed refunds made in the bucket"), net: pounds("gross − refunds"),
+    orders: count("Completed payments"), visits: count("Distinct carts"), diners: count("Distinct payers"),
+    newDiners: count("Diners whose first payment at this shop, ever, fell in this bucket"),
+    units: count("Units sold, less those refunded"),
+    byCategory: object({ food: pounds("Lines sold"), drinks: pounds("Lines sold"), other: pounds("Lines whose category wasn't known") }, ["food", "drinks", "other"], "Gross by the lines' category, as sold"),
+    byProvider: byProvider(pounds("Completed payments")),
+}, ["bucket", "gross", "refunds", "net", "orders", "visits", "diners", "newDiners", "units", "byCategory", "byProvider"],
+"One bucket of the series; every bucket in the range is present, zero where nothing was sold")
+const SalesCell = object({
+    dow: { type: "integer", minimum: 1, maximum: 7, description: "ISO weekday: 1 Monday … 7 Sunday" },
+    hour: { type: "integer", minimum: 0, maximum: 23 },
+    orders: count("Completed payments"), gross: pounds("Completed payments"),
+}, ["dow", "hour", "orders", "gross"], "Sales at this weekday and hour (only cells with a sale)")
+const SalesItem = object({
+    menuId: objectId,
+    name: { type: "string", description: "As diners saw it last in the range (a renamed dish keeps one row)" },
+    category: nullable({ type: "string" }),
+    unitPrice: pounds("The price diners paid last in the range"),
+    units: count("Sold, less refunded"), refundedUnits: count("Refunded, whenever the refund was made"),
+    revenue: pounds("units × the price each was sold at"),
+}, ["menuId", "name", "category", "unitPrice", "units", "refundedUnits", "revenue"], "A menu item's sales, by revenue")
+const SalesRefunds = object({
+    count: count("Completed refunds made in the range"),
+    byReason: array(object({ reason: nullable(enumOf(REFUND_REASONS)), count: count("Refunds"), amount: pounds("Refunded") }, ["reason", "count", "amount"], "By the reason given; null when none was")),
+    byHour: array(object({ hour: { type: "integer", minimum: 0, maximum: 23 }, count: count("Refunds"), amount: pounds("Refunded") }, ["hour", "count", "amount"], "By the hour the refund was made")),
+}, ["count", "byReason", "byHour"])
+const SalesTable = object({
+    tableId: { type: "string", description: "The table, current or deleted" },
+    name: nullable({ type: "string", description: "As the orders recorded it" }),
+    orders: count("Completed payments"), visits: count("Distinct carts"),
+    gross: pounds("Completed payments"), refunds: pounds("Completed refunds made in the range on this table's orders"), net: pounds("gross − refunds"),
+}, ["tableId", "name", "orders", "visits", "gross", "refunds", "net"], "A table's sales, by net")
+const SalesReport = object({
+    range: ref("SalesRange"),
+    totals: ref("SalesTotals"),
+    series: array(ref("SalesBucket")),
+    heatmap: array(ref("SalesCell")),
+    items: array(ref("SalesItem")),
+    refunds: ref("SalesRefunds"),
+    tables: array(ref("SalesTable")),
+    previous: object({ range: ref("SalesRange"), totals: ref("SalesTotals"), series: array(ref("SalesBucket")) }, ["range", "totals", "series"],
+        "With `compare=previous`: the range of the same length ending the day before `from`, counted and bucketed the same way"),
+}, ["range", "totals", "series", "heatmap", "items", "refunds", "tables"],
+`A shop's sales over a range of its days (at most ${MAX_REPORT_DAYS}), counted as a till would: gross is completed payments by the day paid, refunds count on the day they were made, net is the difference. Money in pounds, summed in pence`)
+
 const Health = object({
     status: { type: "string", const: "ok" },
     version: { type: "string", description: "The API's version (package.json)" },
@@ -299,6 +370,7 @@ export const schemas: Record<string, JsonSchema> = {
     MenuRef, CartItem, Split, ManagerSplit, Notice, ManagerNotice, PaymentLine, Payment, Refund, LogEntry,
     Cart, ManagerCart, CartNotFound, TableStatus, Payback, TableCarts, CloseResult, RefundResult, PaymentCheckResult, PaybackResult,
     PayPalOrder, StripeIntent, Received, Health, Error: ErrorBody,
+    SalesReport, SalesRange, SalesTotals, SalesBucket, SalesCell, SalesItem, SalesRefunds, SalesTable,
     StripeCheckoutState: { ...enumOf(CHECKOUT_STATES), description: "A card payment record's state (carts/stripeCheckout.ts); not served by any route, listed for the notices' wording" },
 }
 

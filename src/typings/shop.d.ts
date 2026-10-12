@@ -7,6 +7,7 @@ export interface IShop {
     open_times: string
     phone?: string
     web_URL: string
+    timeZone: string // an IANA name; the days the sales report counts in
     shopMg: Types.ObjectId[]
     tables: ITable[]
     // Tables the manager deleted: they take no orders and diners never see them,

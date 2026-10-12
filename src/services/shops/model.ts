@@ -3,6 +3,12 @@ import { IShopDocument } from "src/typings/shop"
 
 const { Schema, model } = mongoose 
 
+export const DEFAULT_TIME_ZONE = "Europe/London"
+// Whether `name` is a time zone this server knows (an IANA name as the
+// Intl API lists them: "Europe/London", "America/New_York").
+const TIME_ZONES = new Set(Intl.supportedValuesOf("timeZone"))
+export const isTimeZone = (name: string) => TIME_ZONES.has(name)
+
 const ShopSchema = new Schema<IShopDocument> (
     {
         name: {
@@ -31,6 +37,13 @@ const ShopSchema = new Schema<IShopDocument> (
         web_URL: {
             type: String,
             required: false,
+        },
+        // The zone the shop's days are counted in (an IANA name): the sales
+        // report's buckets and ranges. Shops saved before it existed read as
+        // the default.
+        timeZone: {
+            type: String,
+            default: DEFAULT_TIME_ZONE,
         },
         shopMg: {
             type: [Schema.Types.ObjectId],

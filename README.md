@@ -191,7 +191,7 @@ To try card payments by hand, use a test key and Stripe's test cards with any fu
 
 The contract is an OpenAPI 3.1 document the server builds from its own code, browsable at [`/docs`](https://un-q.vercel.app/api/docs) and served raw at `/openapi.json`; a test keeps it complete. Route paths and shapes are frozen for the client; changes are additive.
 
-- [docs/api.md](./docs/api.md): the conventions (cookies, roles, ids, money, errors), the rate limits, what each checkout step guards, Stripe's webhook.
+- [docs/api.md](./docs/api.md): the conventions (cookies, roles, ids, money, errors), the rate limits, what each checkout step guards, Stripe's webhook, how the sales report counts.
 - [docs/data-model.md](./docs/data-model.md): the seven collections field by field, and the rules and indexes the code keeps.
 - [docs/payments.md](./docs/payments.md): how money moves: reserve then charge, one finisher per card payment, pending payments, refunds and pay-backs, the accepted residual risks.
 - [docs/auth.md](./docs/auth.md): the two cookies, refresh rotation, passwords and their limit, Google sign-in, roles and guards, CORS.
@@ -203,7 +203,7 @@ The contract is an OpenAPI 3.1 document the server builds from its own code, bro
 
 ## Roadmap
 
-Next are the sales reports over the orders already recorded, then a sales dashboard, staff roles, kitchen screens with live updates, and several devices per account; the list and its order are in [known-gaps.md](./docs/known-gaps.md#roadmap).
+The sales report route is in place over the orders already recorded, and the page that reads it is next; then a sales dashboard, staff roles and kitchen screens with live updates. The list and its order are in [known-gaps.md](./docs/known-gaps.md#roadmap).
 
 ## About
 

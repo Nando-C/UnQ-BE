@@ -1,5 +1,5 @@
 import { Paths, PUBLIC, empty, error, fromZod, imageBody, json, jsonBody, param, queryParams, ref, sharedResponse, uploadErrors } from "../helpers"
-import { browseShopsSchema, createShopSchema, createTableSchema, editShopSchema, editTableSchema } from "../../services/shops/schemas"
+import { MAX_REPORT_DAYS, browseShopsSchema, createShopSchema, createTableSchema, editShopSchema, editTableSchema, salesQuerySchema } from "../../services/shops/schemas"
 import { cartItemSchema, refundSchema, releaseSelectionSchema } from "../../services/carts/schemas"
 import { paybackDoneSchema } from "../../services/payments/paybackControllers"
 
@@ -10,6 +10,7 @@ const shops = ["Shops"]
 const tables = ["Tables"]
 const manage = ["Manager: tables"]
 const money = ["Manager: refunds and payments"]
+const sales = ["Manager: sales"]
 
 const signedIn = { 401: sharedResponse("Unauthorized") }
 // JWTAuthMiddleware then adminOnly (the role, any shop).
@@ -28,7 +29,7 @@ export const shopPaths: Paths = {
             operationId: "createShop", tags: shops,
             summary: "Create a shop",
             description: "The caller becomes its manager (`shopMg`).",
-            requestBody: jsonBody(fromZod(createShopSchema, { phone: "As typed, up to 30 characters: digits, spaces, dashes, brackets, +" })),
+            requestBody: jsonBody(fromZod(createShopSchema, { phone: "As typed, up to 30 characters: digits, spaces, dashes, brackets, +", timeZone: "An IANA time zone name (Europe/London, America/New_York): the zone the shop's days are counted in; Europe/London unless set" })),
             responses: {
                 200: json("The new shop", ref("ShopRecord")),
                 400: sharedResponse("ValidationFailed"),
@@ -94,7 +95,7 @@ export const shopPaths: Paths = {
             summary: "Edit a shop the caller manages",
             description: "Every field optional; only the ones sent change. An empty `phone` clears it.",
             parameters: [param("shopId")],
-            requestBody: jsonBody(fromZod(editShopSchema, { phone: "As typed, up to 30 characters: digits, spaces, dashes, brackets, +" })),
+            requestBody: jsonBody(fromZod(editShopSchema, { phone: "As typed, up to 30 characters: digits, spaces, dashes, brackets, +", timeZone: "An IANA time zone name (Europe/London, America/New_York): the zone the shop's days are counted in" })),
             responses: {
                 200: json("The shop as it is now (menu by id)", ref("ShopRecord")),
                 400: error('"Validation failed" (details); "Shop Not Found or you are not authorized!" (no such shop, or not the caller\'s)'),
@@ -201,6 +202,28 @@ export const shopPaths: Paths = {
                 ...thisManager,
                 404: error('"Table Not Found!"; "Shop Not Found!"'),
                 409: error('"This table has an open cart — close it first"; "A payment or refund at this table is still awaiting PayPal|Stripe — check it first"; "The table changed, please try again"'),
+                500: sharedResponse("ServerError"),
+            },
+        },
+    },
+
+    // The sales report.
+    "/shops/{shopId}/sales": {
+        get: {
+            operationId: "getSales", tags: sales,
+            summary: "The shop's sales over a range of days",
+            description: `Everything the sales page shows, in one answer: totals, a zero-filled series by day, week or month, sales by weekday and hour, items by revenue, refunds by reason and hour, and the tables. Counted as a till would, in the shop's time zone: gross is completed payments by the day paid; refunds count on the day they were made (completed only), whenever their sale was; net is the difference. Visits are distinct carts, diners distinct payers, and a returning diner had paid at this shop before the range began. Items are net of refunded units under the name and price diners saw last. With \`compare=previous\`, the range of the same length ending the day before is reported too. At most ${MAX_REPORT_DAYS} days.`,
+            parameters: [param("shopId"), ...queryParams(salesQuerySchema, {
+                from: "The first day, YYYY-MM-DD, in the shop's time zone",
+                to: `The last day, included; from \`from\` to at most ${MAX_REPORT_DAYS} days after it`,
+                by: "How the series is bucketed; unless given, by day up to 92 days and by week beyond. Weeks start on Monday",
+                compare: "`previous` adds the range of the same length ending the day before `from`",
+            })],
+            responses: {
+                200: json("The report", ref("SalesReport")),
+                400: sharedResponse("ValidationFailed"),
+                ...thisManager,
+                404: sharedResponse("ShopNotFound"),
                 500: sharedResponse("ServerError"),
             },
         },
