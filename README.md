@@ -6,7 +6,7 @@ Express 5 · TypeScript 6 · MongoDB with Mongoose 9 · Stripe and PayPal · Jes
 
 [![CI](https://github.com/Nando-C/UnQ-BE/actions/workflows/ci.yml/badge.svg)](https://github.com/Nando-C/UnQ-BE/actions/workflows/ci.yml)
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-635bff)](./LICENSE)
-[![Version 2.0.0](https://img.shields.io/badge/version-2.0.0-0F6E66)](./CHANGELOG.md)
+[![Version 2.1.0](https://img.shields.io/badge/version-2.1.0-0F6E66)](./CHANGELOG.md)
 
 <a href="https://un-q.vercel.app/api/docs"><img src="https://raw.githubusercontent.com/Nando-C/UnQ-FE/main/docs/images/api-docs.png" alt="The API's reference in Swagger UI: the conventions, the checkout, and the routes by service" width="720"></a>
 
@@ -199,6 +199,7 @@ The contract is an OpenAPI 3.1 document the server builds from its own code, bro
 - [docs/decisions.md](./docs/decisions.md): the choices that shape the API, each with its context and consequences.
 - [docs/known-gaps.md](./docs/known-gaps.md): accepted residuals, open bugs, deferred work and the roadmap.
 - [CHANGELOG.md](./CHANGELOG.md): every release, with its deploy notes.
+- [SECURITY.md](./SECURITY.md): how to report a vulnerability, and what the demo is for.
 
 ## Roadmap
 

@@ -6,6 +6,10 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-11
+
+The documentation release: the API's contract as an OpenAPI document, the design knowledge under `docs/`, the README as a front page, and a demo seed. Nothing changes on the host. To seed a deployed database, run the seed with `FRONTEND_URL` set to the live client.
+
 ### Added
 
 - `LICENSE`: MIT, with the licence badge.
@@ -19,10 +23,12 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ### Changed
 
+- CI runs on pushes to `main` and on pull requests, not on every branch.
 - The README is a front page: what it does, what it has to get right, the decisions with their reasons, one diagram, the quick start with where each credential comes from and how to become a manager locally, testing and CI, the docs index, the roadmap. The checkout sequence diagram moved to `docs/api.md`; the dependency override and the versioning rule live in `docs/operations.md` and the changelog.
 
 ### Fixed
 
+- The demo seed prints the client origin its QR codes point at and refuses a localhost origin for a database that isn't local; seeded from a development machine, a deployed demo had codes nobody could scan.
 - The four cart routes that answered their 404 as plain text (`removeItem`, `deleteItem`, `decreaseSplitItem`, `removeSplitItem`) now answer `{ message }` like every other error, so the front end can show the message.
 - The public diner view of a cart no longer carries `paypalOrderId` or `paypalOrderIds` (Stripe's ids were already stripped).
 - Two unreachable "Shops Not Found!" branches removed from the shop list routes.
@@ -76,6 +82,7 @@ The rebuild of the 2021 API. Deploying it needs new environment variables, a Str
 
 The API as built for the 2021 capstone: users, shops, tables with QR URLs, menus, shared table carts with per-item splitting, PayPal checkout confirmed by the client, Cloudinary uploads, JWT cookies and Google OAuth.
 
-[Unreleased]: https://github.com/Nando-C/UnQ-BE/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/Nando-C/UnQ-BE/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/Nando-C/UnQ-BE/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/Nando-C/UnQ-BE/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/Nando-C/UnQ-BE/releases/tag/v1.0.0
