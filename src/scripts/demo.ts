@@ -40,8 +40,7 @@ import PaybackModel from "../services/payments/payback"
 import { syncOrder } from "../services/orders/sync"
 import env from "../settings/env"
 import { fromPence, money, toPence } from "../lib/money"
-import { dayIn, startOfDay, weekdayOf } from "../lib/days"
-import { DEFAULT_TIME_ZONE } from "../services/shops/model"
+import { DEFAULT_TIME_ZONE, addDays, dayIn, instantOf, weekdayOf } from "../lib/days"
 import { ICartDocument, IManagerLogEntry, INotice, IPayment, IRefund, ISplitItem, PaymentProvider } from "../typings/cart"
 
 // The two ids the front end's README and its QR image point at.
@@ -245,9 +244,12 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
     const at = (msAgo: number) => new Date(t0 - msAgo)
     // The shops' days are Europe/London's, whatever clock the seed runs on.
     const zone = DEFAULT_TIME_ZONE
-    const dayOf = (daysAgo: number) => dayIn(new Date(t0 - daysAgo * DAY), zone)
-    // `hour`:`minute` on the shop's day `daysAgo` days ago.
-    const dayAt = (daysAgo: number, hour: number, minute = 0) => new Date(startOfDay(dayOf(daysAgo), zone).getTime() + hour * HOUR + minute * MINUTE)
+    // Counted in days of the calendar, not in 24-hour spans, so a run in the
+    // hour after midnight never skips the day the clocks changed.
+    const today = dayIn(new Date(t0), zone)
+    const dayOf = (daysAgo: number) => addDays(today, -daysAgo)
+    // `hour`:`minute` on the shop's clock, `daysAgo` days ago.
+    const dayAt = (daysAgo: number, hour: number, minute = 0) => instantOf(dayOf(daysAgo), hour, minute, zone)
 
     // ---- Shops, tables, menus ----------------------------------------------
 
@@ -397,6 +399,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
 
     for (const shop of shops) {
         for (const item of shop.items) {
+            const created = at((item.launchedDaysAgo ?? shop.since) * DAY + HOUR)
             await new MenuModel({
                 _id: item.id,
                 name: item.name,
@@ -407,8 +410,8 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
                 image: photo(item.name),
                 available: !item.soldOut && !item.deleted,
                 ...(item.deleted && { deletedFrom: shop.id }),
-                createdAt: at((item.launchedDaysAgo ?? shop.since) * DAY + HOUR),
-                updatedAt: at(item.soldOut ? 2 * HOUR : (item.launchedDaysAgo ?? shop.since) * DAY + HOUR),
+                createdAt: created,
+                updatedAt: item.soldOut ? at(2 * HOUR) : created,
             }).save({ timestamps: false })
         }
         await new ShopModel({

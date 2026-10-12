@@ -6,7 +6,7 @@ Express 5 · TypeScript 6 · MongoDB with Mongoose 9 · Stripe and PayPal · Jes
 
 [![CI](https://github.com/Nando-C/UnQ-BE/actions/workflows/ci.yml/badge.svg)](https://github.com/Nando-C/UnQ-BE/actions/workflows/ci.yml)
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-635bff)](./LICENSE)
-[![Version 2.1.0](https://img.shields.io/badge/version-2.1.0-0F6E66)](./CHANGELOG.md)
+[![Version 2.2.0](https://img.shields.io/badge/version-2.2.0-0F6E66)](./CHANGELOG.md)
 
 <a href="https://un-q.vercel.app/api/docs"><img src="https://raw.githubusercontent.com/Nando-C/UnQ-FE/main/docs/images/api-docs.png" alt="The API's reference in Swagger UI: the conventions, the checkout, and the routes by service" width="720"></a>
 
@@ -203,7 +203,7 @@ The contract is an OpenAPI 3.1 document the server builds from its own code, bro
 
 ## Roadmap
 
-The sales report route is in place over the orders already recorded, and the page that reads it is next; then a sales dashboard, staff roles and kitchen screens with live updates. The list and its order are in [known-gaps.md](./docs/known-gaps.md#roadmap).
+Next is a sales dashboard over the report route, then staff on a shop and staff roles, and kitchen screens with live updates. The list and its order are in [known-gaps.md](./docs/known-gaps.md#roadmap).
 
 ## About
 

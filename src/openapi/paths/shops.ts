@@ -23,6 +23,11 @@ const cartChanged = '"The cart changed, please retry": another write landed firs
 const cartParams = [param("shopId"), param("tableId"), param("cartId")]
 const managedCart404 = error('"Cart Not Found!": no open cart with this id at this table of this shop; "Shop Not Found!"')
 
+const rangeDescribed = {
+    from: "The first day, YYYY-MM-DD, in the shop's time zone",
+    to: `The last day, included; with \`from\`, a range of at most ${MAX_REPORT_DAYS} days (so at most ${MAX_REPORT_DAYS - 1} days after it)`,
+}
+
 export const shopPaths: Paths = {
     "/shops": {
         post: {
@@ -214,8 +219,7 @@ export const shopPaths: Paths = {
             summary: "The shop's sales over a range of days",
             description: `Everything the sales page shows, in one answer: totals, a zero-filled series by day, week or month, sales by weekday and hour, items by revenue, refunds by reason and hour, and the tables. Counted as a till would, in the shop's time zone: gross is completed payments by the day paid; refunds count on the day they were made (completed only), whenever their sale was; net is the difference. Visits are distinct carts, diners distinct payers, and a returning diner had paid at this shop before the range began. Items are net of refunded units under the name and price diners saw last. With \`compare=previous\`, the range of the same length ending the day before is reported too. At most ${MAX_REPORT_DAYS} days.`,
             parameters: [param("shopId"), ...queryParams(salesQuerySchema, {
-                from: "The first day, YYYY-MM-DD, in the shop's time zone",
-                to: `The last day, included; from \`from\` to at most ${MAX_REPORT_DAYS} days after it`,
+                ...rangeDescribed,
                 by: "How the series is bucketed; unless given, by day up to 92 days and by week beyond. Weeks start on Monday",
                 compare: "`previous` adds the range of the same length ending the day before `from`",
             })],
@@ -235,8 +239,7 @@ export const shopPaths: Paths = {
             summary: "One of the report's tables as a CSV file",
             description: "Counted as the report counts, in the shop's time zone, as a download. `orders`: a row per payment made in the range, completed or still pending (paid at, table, provider, status, amount, refunded to date, net, items as \"2× Latte, 1× Sea Bass\"); `items`: a row per menu item sold, by revenue; `days`: a row per day of the range, zero-filled, with the category and provider splits. No diner is named or identified in any of them. UTF-8 with a byte-order mark, CRLF line ends; a cell that would start with `=`, `+`, `-`, `@` or a tab gets a leading apostrophe so a spreadsheet can't run it as a formula.",
             parameters: [param("shopId"), ...queryParams(salesExportSchema, {
-                from: "The first day, YYYY-MM-DD, in the shop's time zone",
-                to: `The last day, included; from \`from\` to at most ${MAX_REPORT_DAYS} days after it`,
+                ...rangeDescribed,
                 table: "Which table",
             })],
             responses: {

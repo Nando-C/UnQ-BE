@@ -2,7 +2,8 @@ import { JsonSchema, Parameter, Response, error, json, ref } from "./helpers"
 import { CHECKOUT_STATES } from "../services/carts/stripeCheckout"
 import { PAYMENT_PROVIDERS, PAYMENT_STATUSES, REFUND_REASONS, REFUND_STATUSES } from "../services/carts/model"
 import { DONE_AS, PAYBACK_KINDS } from "../services/payments/payback"
-import { GROUP_BY, MAX_REPORT_DAYS } from "../services/shops/schemas"
+import { MAX_REPORT_DAYS } from "../services/shops/schemas"
+import { GROUP_BY } from "../lib/days"
 
 // Response schemas, written from the Mongoose models (services/*/model.ts),
 // their toJSON methods, and the controllers' select/populate/strip logic. The
