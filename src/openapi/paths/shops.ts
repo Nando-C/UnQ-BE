@@ -1,5 +1,5 @@
 import { Paths, PUBLIC, empty, error, fromZod, imageBody, json, jsonBody, param, queryParams, ref, sharedResponse, uploadErrors } from "../helpers"
-import { MAX_REPORT_DAYS, browseShopsSchema, createShopSchema, createTableSchema, editShopSchema, editTableSchema, salesQuerySchema } from "../../services/shops/schemas"
+import { MAX_REPORT_DAYS, browseShopsSchema, createShopSchema, createTableSchema, editShopSchema, editTableSchema, salesExportSchema, salesQuerySchema } from "../../services/shops/schemas"
 import { cartItemSchema, refundSchema, releaseSelectionSchema } from "../../services/carts/schemas"
 import { paybackDoneSchema } from "../../services/payments/paybackControllers"
 
@@ -221,6 +221,30 @@ export const shopPaths: Paths = {
             })],
             responses: {
                 200: json("The report", ref("SalesReport")),
+                400: sharedResponse("ValidationFailed"),
+                ...thisManager,
+                404: sharedResponse("ShopNotFound"),
+                500: sharedResponse("ServerError"),
+            },
+        },
+    },
+
+    "/shops/{shopId}/sales/export": {
+        get: {
+            operationId: "exportSales", tags: sales,
+            summary: "One of the report's tables as a CSV file",
+            description: "Counted as the report counts, in the shop's time zone, as a download. `orders`: a row per payment made in the range, completed or still pending (paid at, table, provider, status, amount, refunded to date, net, items as \"2× Latte, 1× Sea Bass\"); `items`: a row per menu item sold, by revenue; `days`: a row per day of the range, zero-filled, with the category and provider splits. No diner is named or identified in any of them. UTF-8 with a byte-order mark, CRLF line ends; a cell that would start with `=`, `+`, `-`, `@` or a tab gets a leading apostrophe so a spreadsheet can't run it as a formula.",
+            parameters: [param("shopId"), ...queryParams(salesExportSchema, {
+                from: "The first day, YYYY-MM-DD, in the shop's time zone",
+                to: `The last day, included; from \`from\` to at most ${MAX_REPORT_DAYS} days after it`,
+                table: "Which table",
+            })],
+            responses: {
+                200: {
+                    description: "The file",
+                    content: { "text/csv": { schema: { type: "string" } } },
+                    headers: { "Content-Disposition": { description: "attachment; filename=<shop>-sales-<from>-<to>-<table>.csv (the shop's name as letters, digits and dashes)", schema: { type: "string" } } },
+                },
                 400: sharedResponse("ValidationFailed"),
                 ...thisManager,
                 404: sharedResponse("ShopNotFound"),

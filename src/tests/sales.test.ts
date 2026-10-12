@@ -217,6 +217,67 @@ describe("GET /shops/:shopId/sales", () => {
     })
 })
 
+describe("GET /shops/:shopId/sales/export", () => {
+    let cookies: string[]
+    let shopId: string
+    const TEA = oid()
+    const csv = (query: Record<string, string>) => agent().get(`/shops/${shopId}/sales/export`).set("Cookie", cookies).query(query)
+    beforeEach(async () => {
+        cookies = (await authFor("shopMg")).cookies
+        shopId = (await shopFor(cookies))._id
+        await seed(shopId)
+        // A table and a dish named to upset a spreadsheet.
+        await order(shopId, { paidAt: "2026-03-29T12:00:00Z", amount: 2.2, payerId: P2, tableId: String(oid()), tableName: '=Window, "B"',
+            lines: [{ menuId: TEA, name: 'Tea, "Earl Grey"', category: "drinks", unitPrice: 2.2, qty: 1 }] })
+    })
+
+    it("lists the payments of the range, in the shop's clock, escaped for a spreadsheet", async () => {
+        const res = await csv({ from: "2026-03-28", to: "2026-03-31", table: "orders" })
+        expect(res.status).toBe(200)
+        expect(res.headers["content-type"]).toBe("text/csv; charset=utf-8")
+        expect(res.headers["content-disposition"]).toBe("attachment; filename=sales-shop-sales-2026-03-28-2026-03-31-orders.csv")
+        expect(res.text).toBe("\uFEFF" + [
+            "Paid at,Table,Provider,Status,Amount,Refunded,Net,Items",
+            "2026-03-28 12:00,T1,PayPal,completed,3,0,3,1× Seabass",
+            "2026-03-28 23:30,T1,PayPal,completed,10,0,10,4× Latte",
+            `2026-03-29 13:00,"'=Window, ""B""",PayPal,completed,2.2,0,2.2,"1× Tea, ""Earl Grey"""`,
+            "2026-03-30 00:30,T2,PayPal,completed,12.3,4.1,8.2,3× Sea Bass",
+            "2026-03-30 13:00,T1,PayPal,pending,50,0,50,",
+            "2026-03-31 23:59,T1,Card,completed,5,0,5,2× Latte",
+        ].join("\r\n") + "\r\n")
+    })
+
+    it("lists the items by revenue, and the days zero-filled", async () => {
+        const items = await csv({ from: "2026-03-28", to: "2026-03-31", table: "items" })
+        expect(items.text).toBe("\uFEFF" + [
+            "Item,Category,Unit price,Units,Refunded units,Revenue",
+            "Latte,drinks,2.5,6,0,15",
+            "Sea Bass,food,4.1,3,1,11.2",
+            `"Tea, ""Earl Grey""",drinks,2.2,1,0,2.2`,
+        ].join("\r\n") + "\r\n")
+        const days = await csv({ from: "2026-03-28", to: "2026-03-31", table: "days" })
+        expect(days.headers["content-disposition"]).toBe("attachment; filename=sales-shop-sales-2026-03-28-2026-03-31-days.csv")
+        expect(days.text).toBe("\uFEFF" + [
+            "Day,Gross,Refunds,Net,Orders,Visits,Diners,New diners,Units,Food,Drinks,Other,PayPal,Card",
+            "2026-03-28,13,0,13,2,1,1,1,5,0,10,3,13,0",
+            "2026-03-29,2.2,0,2.2,1,1,1,0,1,0,2.2,0,2.2,0",
+            "2026-03-30,12.3,10.1,2.2,1,1,1,0,2,12.3,0,0,12.3,0",
+            "2026-03-31,5,0,5,1,1,1,0,2,0,5,0,0,5",
+        ].join("\r\n") + "\r\n")
+    })
+
+    it("needs the table and a good range, and is the shop's manager's alone", async () => {
+        const missing = await csv({ from: "2026-03-28", to: "2026-03-31" })
+        expect(missing.status).toBe(400)
+        expect(missing.body.details).toEqual([{ path: "table", message: expect.any(String) }])
+        expect((await csv({ from: "2026-03-28", to: "2026-03-31", table: "diners" })).status).toBe(400)
+        expect((await csv({ from: "2026-04-01", to: "2026-03-31", table: "orders" })).body.details).toEqual([{ path: "to", message: "Before `from`" }])
+        const other = (await authFor("shopMg")).cookies
+        expect((await agent().get(`/shops/${shopId}/sales/export`).set("Cookie", other).query({ from: "2026-03-28", to: "2026-03-31", table: "orders" })).status).toBe(403)
+        expect((await agent().get(`/shops/${shopId}/sales/export`).query({ from: "2026-03-28", to: "2026-03-31", table: "orders" })).status).toBe(401)
+    })
+})
+
 describe("a shop's time zone", () => {
     it("is Europe/London unless set, an IANA name, and is shown to everyone", async () => {
         const { cookies } = await authFor("shopMg")

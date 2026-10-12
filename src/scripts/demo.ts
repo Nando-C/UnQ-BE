@@ -2,13 +2,20 @@
 // seedDemo.test.ts proves about it. Kept apart from the runner so the test can
 // run it against the in-memory database.
 //
-// Three shops with menus and tables, eight diners, a manager, and 90 days of
-// closed carts with payments from both providers, splits by several diners,
-// refunds with reasons, and the live states a manager's page shows: an open
-// cart being ordered, a stale selection, a sold-out item in a cart, a payment
-// a provider holds, a diner to pay back, and a table deleted with a cart
-// still refundable. Orders are written through the real sync, so the sales
-// reports have data.
+// Three shops with menus and tables, forty diners (a dozen of them regulars),
+// a manager, and 90 days of closed carts with payments from both providers,
+// splits by several diners, refunds with reasons, and the live states a
+// manager's page shows: an open cart being ordered, a stale selection, a
+// sold-out item in a cart, a payment a provider holds, a diner to pay back,
+// and a table deleted with a cart still refundable. Orders are written through
+// the real sync, so the sales report has data.
+//
+// The history has the shapes a sales page should show: a lunch and a dinner
+// peak within each shop's hours, a gentle rise in visits over the 90 days,
+// regulars who come back and diners who don't, a dish launched in week six,
+// refund causes weighted the way a kitchen's are (long waits cluster on busy
+// evenings), and one bad week at the café. Days and hours are the shops' own
+// (Europe/London), wherever the seed runs.
 //
 // Reproducible: every id, name, quantity and date comes from one seeded random
 // generator and a reference time (`now`, rounded to the hour), so two runs in
@@ -26,13 +33,15 @@ import * as bcrypt from "bcrypt"
 import UserModel from "../services/users/model"
 import ShopModel from "../services/shops/model"
 import MenuModel from "../services/menus/model"
-import CartModel, { REFUND_REASONS, RefundReason } from "../services/carts/model"
+import CartModel, { RefundReason } from "../services/carts/model"
 import OrderModel from "../services/orders/model"
 import StripeCheckoutModel from "../services/carts/stripeCheckout"
 import PaybackModel from "../services/payments/payback"
 import { syncOrder } from "../services/orders/sync"
 import env from "../settings/env"
 import { fromPence, money, toPence } from "../lib/money"
+import { dayIn, startOfDay, weekdayOf } from "../lib/days"
+import { DEFAULT_TIME_ZONE } from "../services/shops/model"
 import { ICartDocument, IManagerLogEntry, INotice, IPayment, IRefund, ISplitItem, PaymentProvider } from "../typings/cart"
 
 // The two ids the front end's README and its QR image point at.
@@ -61,6 +70,12 @@ class Rng {
     int(min: number, max: number) { return min + Math.floor(this.next() * (max - min + 1)) }
     chance(p: number) { return this.next() < p }
     pick<T>(list: readonly T[]) { return list[this.int(0, list.length - 1)] }
+    // One of `entries`, each as likely as its weight.
+    weighted<T>(entries: readonly (readonly [T, number])[]) {
+        let left = this.next() * entries.reduce((sum, [, w]) => sum + w, 0)
+        for (const [value, weight] of entries) if ((left -= weight) < 0) return value
+        return entries[entries.length - 1][0]
+    }
     some<T>(list: readonly T[], n: number) {
         const left = [...list]
         const out: T[] = []
@@ -77,7 +92,8 @@ class Rng {
 
 // --- The dataset's shape. ---
 
-type Item = { name: string; short_description: string; description: string; price: number; category: "food" | "drinks"; soldOut?: boolean; deleted?: boolean }
+// `launchedDaysAgo`: a dish added to the menu part-way through the history.
+type Item = { name: string; short_description: string; description: string; price: number; category: "food" | "drinks"; soldOut?: boolean; deleted?: boolean; launchedDaysAgo?: number }
 type ShopDef = {
     id: Types.ObjectId
     name: string
@@ -93,6 +109,12 @@ type ShopDef = {
     visits: (dayOfWeek: number) => [min: number, max: number] | null
     openHour: number
     closeHour: number
+    // The busy hours (from, to), where most visits start.
+    peaks: [from: number, to: number][]
+    // How much busier the last day is than the first (0.3: thirty per cent).
+    growth: number
+    // A week (first and last day, as days ago) of fewer visits and more refunds.
+    badWeek?: [from: number, to: number]
     // The first day of its history.
     since: number
 }
@@ -148,6 +170,8 @@ const photo = (subject: string) => {
     return url
 }
 
+// The first seven, with the demo diner, appear in the live states and are
+// regulars with the four after them; the rest come once or twice.
 const DINERS = [
     { name: "Ada", surname: "Okafor" },
     { name: "Ben", surname: "Lindqvist" },
@@ -156,7 +180,40 @@ const DINERS = [
     { name: "Eva", surname: "Novak" },
     { name: "Grace", surname: "Achebe" },
     { name: "Hugo", surname: "Ferreira" },
+    { name: "Ines", surname: "Castillo" },
+    { name: "Jonas", surname: "Weber" },
+    { name: "Kemi", surname: "Adeyemi" },
+    { name: "Luca", surname: "Moretti" },
+    { name: "Maya", surname: "Patel" },
+    { name: "Noor", surname: "Haddad" },
+    { name: "Oscar", surname: "Nilsson" },
+    { name: "Priya", surname: "Nair" },
+    { name: "Quentin", surname: "Dubois" },
+    { name: "Rosa", surname: "Alvarez" },
+    { name: "Sami", surname: "Khoury" },
+    { name: "Tomas", surname: "Horvath" },
+    { name: "Uma", surname: "Iyer" },
+    { name: "Viktor", surname: "Petrov" },
+    { name: "Wren", surname: "Bailey" },
+    { name: "Ximena", surname: "Rojas" },
+    { name: "Yusuf", surname: "Demir" },
+    { name: "Zara", surname: "Hussain" },
+    { name: "Amara", surname: "Mensah" },
+    { name: "Bruno", surname: "Costa" },
+    { name: "Celine", surname: "Fournier" },
+    { name: "Dara", surname: "Kelly" },
+    { name: "Elin", surname: "Berg" },
+    { name: "Felix", surname: "Wagner" },
+    { name: "Gita", surname: "Rao" },
+    { name: "Hana", surname: "Sato" },
+    { name: "Idris", surname: "Bello" },
+    { name: "Jade", surname: "Thornton" },
+    { name: "Kai", surname: "Tanaka" },
+    { name: "Leila", surname: "Rahimi" },
+    { name: "Mateo", surname: "Silva" },
+    { name: "Nia", surname: "Campbell" },
 ] as const
+const REGULARS = 12
 
 // What Stripe says when it won't refund an expired card.
 const EXPIRED_CARD = "expired_or_canceled_card"
@@ -186,12 +243,11 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
     const rng = new Rng()
     const t0 = Math.floor(now.getTime() / HOUR) * HOUR
     const at = (msAgo: number) => new Date(t0 - msAgo)
-    // The start of a day `days` ago, local time, at `hour`.
-    const dayAt = (daysAgo: number, hour: number, minute = 0) => {
-        const d = new Date(t0 - daysAgo * DAY)
-        d.setHours(hour, minute, 0, 0)
-        return d
-    }
+    // The shops' days are Europe/London's, whatever clock the seed runs on.
+    const zone = DEFAULT_TIME_ZONE
+    const dayOf = (daysAgo: number) => dayIn(new Date(t0 - daysAgo * DAY), zone)
+    // `hour`:`minute` on the shop's day `daysAgo` days ago.
+    const dayAt = (daysAgo: number, hour: number, minute = 0) => new Date(startOfDay(dayOf(daysAgo), zone).getTime() + hour * HOUR + minute * MINUTE)
 
     // ---- Shops, tables, menus ----------------------------------------------
 
@@ -223,13 +279,16 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
                 { name: "Sourdough Toastie", short_description: "Mature cheddar, caramelised red onion and wholegrain mustard, pressed until it pulls", description: "Thick-cut sourdough pressed with mature cheddar, slow-caramelised red onion and wholegrain mustard until the cheese pulls. Comes with a small pickle on the side.", price: 7.9, category: "food", soldOut: true },
                 { name: "Shakshuka", short_description: "Two eggs baked in spiced tomato and peppers, crumbled feta, warm flatbread for dipping", description: "Two free-range eggs baked in a pan of slow-cooked tomato, red peppers, cumin and smoked paprika, with crumbled feta and coriander. Served with warm flatbread for dipping.", price: 10.5, category: "food" },
                 { name: "Granola Bowl", short_description: "House-baked granola, thick Greek yoghurt, seasonal fruit and a drizzle of honey", description: "Our own granola, baked with oats, almonds and maple, over thick Greek yoghurt with whatever fruit is best this week and a drizzle of local honey.", price: 6.8, category: "food" },
-                { name: "Pastel de Nata", short_description: "Baked this morning: flaky pastry, caramelised custard, a dusting of cinnamon", description: "Crisp, flaky pastry with a set custard filling caramelised on top, baked here every morning and best eaten slightly warm with a dusting of cinnamon.", price: 2.8, category: "food" },
+                { name: "Pastel de Nata", short_description: "Baked this morning: flaky pastry, caramelised custard, a dusting of cinnamon", description: "Crisp, flaky pastry with a set custard filling caramelised on top, baked here every morning and best eaten slightly warm with a dusting of cinnamon.", price: 2.8, category: "food", launchedDaysAgo: 48 },
                 { name: "Carrot Cake", short_description: "Spiced, loaded with walnuts, under a thick cream-cheese frosting", description: "A tall slice of moist spiced carrot cake with toasted walnuts and a thick layer of cream-cheese frosting. Our bestseller with a flat white.", price: 4.2, category: "food" },
                 { name: "Pumpkin Soup", short_description: "Roasted pumpkin, toasted seeds, warm bread (autumn only)", description: "Slow-roasted pumpkin blended with onion and a touch of nutmeg, topped with toasted seeds and served with warm bread. On the menu for the autumn months only.", price: 6.5, category: "food", deleted: true },
             ].map((item): ShopDef["items"][number] => ({ ...(item as Item), id: rng.oid() })),
             visits: (dow) => (dow === 0 || dow === 6 ? [6, 9] : [3, 5]),
             openHour: 8,
             closeHour: 16,
+            peaks: [[8, 10], [12, 14]],
+            growth: 0.35,
+            badWeek: [38, 32],
             since: 90,
         },
         {
@@ -265,6 +324,8 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
             visits: (dow) => (dow === 1 ? null : dow === 5 || dow === 6 ? [8, 11] : [4, 7]),
             openHour: 12,
             closeHour: 22,
+            peaks: [[12, 14], [18, 21]],
+            growth: 0.2,
             since: 90,
         },
         {
@@ -289,6 +350,8 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
             visits: (dow) => (dow === 6 ? [10, 16] : null),
             openHour: 10,
             closeHour: 16,
+            peaks: [[12, 14]],
+            growth: 0,
             since: 20,
         },
     ]
@@ -317,6 +380,8 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
     for (const [i, d] of DINERS.entries()) {
         dinerIds.push(await user(userIds.diners[i], `${d.name.toLowerCase()}.${d.surname.toLowerCase()}@example.com`, { ...d, role: "customer" }))
     }
+    const regulars = dinerIds.slice(0, REGULARS)
+    const occasionals = dinerIds.slice(REGULARS)
     log(`Users: ${dinerIds.length + 1} (sign-ins: ${DEMO_MANAGER_EMAIL}, ${DEMO_DINER_EMAIL})`)
 
     // ---- Reset what the seed owns ------------------------------------------
@@ -342,8 +407,8 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
                 image: photo(item.name),
                 available: !item.soldOut && !item.deleted,
                 ...(item.deleted && { deletedFrom: shop.id }),
-                createdAt: at(shop.since * DAY + HOUR),
-                updatedAt: at(item.soldOut ? 2 * HOUR : shop.since * DAY + HOUR),
+                createdAt: at((item.launchedDaysAgo ?? shop.since) * DAY + HOUR),
+                updatedAt: at(item.soldOut ? 2 * HOUR : (item.launchedDaysAgo ?? shop.since) * DAY + HOUR),
             }).save({ timestamps: false })
         }
         await new ShopModel({
@@ -354,6 +419,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
             phone: shop.phone,
             web_URL: shop.web_URL,
             cover: shop.cover,
+            timeZone: zone,
             shopMg: [managerId],
             tables: shop.tables.map((t) => ({ _id: t.id, name: t.name, Qr_Url: `${env.FRONTEND_ORIGIN}/shops/${shop.id}/tables/${t.id}` })),
             deletedTables: shop.deletedTables.map((t) => ({ _id: t.id, name: t.name, deletedAt: t.deletedAt })),
@@ -391,16 +457,23 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
     // The history: every day of each shop's past, a number of visits.
     for (const shop of shops) {
         for (let daysAgo = shop.since; daysAgo >= 1; daysAgo--) {
-            const dow = dayAt(daysAgo, 12).getDay()
+            const dow = weekdayOf(dayOf(daysAgo))
             const range = shop.visits(dow)
             if (!range) continue
-            const visits = rng.int(range[0], range[1])
+            const bad = !!shop.badWeek && daysAgo <= shop.badWeek[0] && daysAgo >= shop.badWeek[1]
+            // Busier as the days go by; the bad week well under.
+            const trend = (1 + shop.growth * (1 - daysAgo / shop.since)) * (bad ? 0.5 : 1)
+            const visits = Math.round(rng.int(range[0], range[1]) * trend)
             for (let v = 0; v < visits; v++) {
                 const table = rng.pick(shop.tables.concat(daysAgo > 3 ? shop.deletedTables : []))
-                const openedAt = dayAt(daysAgo, rng.int(shop.openHour, shop.closeHour - 2), rng.int(0, 59))
-                const onMenu = shop.items.filter((i) => !i.soldOut && (!i.deleted || daysAgo > 30))
+                // Most visits start in a peak; the rest anywhere in the hours.
+                const [from, to] = rng.chance(0.65) ? rng.pick(shop.peaks) : [shop.openHour, shop.closeHour - 2]
+                const hour = rng.int(from, to)
+                const openedAt = dayAt(daysAgo, hour, rng.int(0, 59))
+                const onMenu = shop.items.filter((i) => !i.soldOut && (!i.deleted || daysAgo > 30) && (i.launchedDaysAgo == null || daysAgo <= i.launchedDaysAgo))
                 const lines: Line[] = rng.some(onMenu, rng.int(2, 5)).map((item) => ({ item, qty: rng.int(1, 3) }))
-                const payerIds = rng.some(dinerIds, rng.int(1, Math.min(3, lines.length)))
+                // Regulars bring most of the visits; the others come now and then.
+                const payerIds = rng.some(rng.chance(0.7) ? regulars : occasionals, rng.int(1, Math.min(3, lines.length)))
                 // Each line's units go to the payers, one line at a time.
                 const payers: Payer[] = payerIds.map((userId, i) => ({
                     userId,
@@ -409,10 +482,16 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
                     paidAt: new Date(openedAt.getTime() + rng.int(25, 80) * MINUTE + i * rng.int(1, 6) * MINUTE),
                 }))
                 const spec: CartSpec = { shop, table, openedAt, payers, status: "closed", refunds: [] }
-                if (rng.chance(0.06)) {
+                // Refunds: a few, more on a busy Friday or Saturday evening and
+                // in the bad week, when they are mostly for the wait.
+                const busyEvening = (dow === 5 || dow === 6) && hour >= 18
+                if (rng.chance(bad ? 0.14 : busyEvening ? 0.1 : 0.04)) {
                     const payer = rng.pick(payers)
                     const line = rng.pick(payer.lines)
-                    const reason = rng.pick(REFUND_REASONS)
+                    const reason = rng.weighted<RefundReason>([
+                        ["unavailable", 15], ["wrong_item", 25], ["quality", bad ? 40 : 20], ["long_wait", bad || busyEvening ? 60 : 8],
+                        ["paid_by_mistake", 10], ["changed_mind", 10], ["other", 8],
+                    ])
                     spec.refunds!.push({
                         payer, line, qty: 1, reason,
                         ...(reason === "other" && { reasonNote: rng.pick(["Table asked to change the order", "Spilled at the pass", "Charged for the wrong table"]) }),

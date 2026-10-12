@@ -8,7 +8,7 @@ import * as managerControllers from "../carts/managerControllers"
 import * as paybackControllers from "../payments/paybackControllers"
 import { paybackDoneSchema } from "../payments/paybackControllers"
 import { validate } from "../../middlewares/validate"
-import { createShopSchema, editShopSchema, createTableSchema, editTableSchema, browseShopsSchema, salesQuerySchema } from "./schemas"
+import { createShopSchema, editShopSchema, createTableSchema, editTableSchema, browseShopsSchema, salesQuerySchema, salesExportSchema } from "./schemas"
 import { cartItemSchema, releaseSelectionSchema, refundSchema } from "../carts/schemas"
 
 const router = Router()
@@ -28,6 +28,7 @@ router.delete("/:shopId", JWTAuthMiddleware, adminOnly, shopControllers.deleteMy
 
 // The shop's sales report, over its orders.
 router.get("/:shopId/sales", JWTAuthMiddleware, isShopManager, validate(salesQuerySchema, "query"), salesControllers.getSales)
+router.get("/:shopId/sales/export", JWTAuthMiddleware, isShopManager, validate(salesExportSchema, "query"), salesControllers.exportSales)
 
 // Shop's Tables Routes
 // Manager views of the tables' carts. `tables/status` is declared before the

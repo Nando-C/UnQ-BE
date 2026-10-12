@@ -4,9 +4,9 @@ import mongoose, { PipelineStage } from "mongoose"
 import ShopModel from "../model"
 import OrderModel from "../../orders/model"
 import { PAYMENT_PROVIDERS } from "../../carts/model"
-import { fromPence } from "../../../lib/money"
-import { Day, GroupBy, addDays, bucketsOf, daysBetween, startOfDay } from "../../../lib/days"
-import { SalesQuery } from "../schemas"
+import { fromPence, toPence } from "../../../lib/money"
+import { Day, GroupBy, addDays, bucketsOf, clockIn, daysBetween, startOfDay } from "../../../lib/days"
+import { SalesExportQuery, SalesQuery } from "../schemas"
 
 // The sales report: a shop's orders (orders/model.ts) over a range of its own
 // days, counted as a till would. Gross sales are completed payments by the day
@@ -206,6 +206,70 @@ export const getSales: TController = async (req, res, next) => {
         const previousFrom = addDays(previousTo, 1 - daysBetween(from, to))
         const { range: previousRange, totals, series } = await report(shopId, { ...range, from: previousFrom, to: previousTo })
         res.send({ ...current, previous: { range: previousRange, totals, series } })
+    } catch (error) {
+        next(createError(500, error as Error))
+    }
+}
+
+// -------------------------------------------------------------------------
+
+// A CSV cell. Numbers as they are; text quoted when it holds a comma, a quote
+// or a line break, and never left to start with = + - @ or a tab, which a
+// spreadsheet would run as a formula: those get a leading apostrophe.
+const cell = (value: string | number | null | undefined) => {
+    if (typeof value === "number") return String(value)
+    let text = value ?? ""
+    if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+}
+// UTF-8 with a byte-order mark (so Excel reads the pound sign and accents),
+// CRLF line ends (RFC 4180).
+const csv = (rows: (string | number | null | undefined)[][]) => "\uFEFF" + rows.map((row) => row.map(cell).join(",")).join("\r\n") + "\r\n"
+const PROVIDER_NAMES: Record<string, string> = { paypal: "PayPal", stripe: "Card" }
+// For a file name: letters and digits, dashes between.
+const slug = (name: string) => name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "shop"
+
+// The orders' table: a row per payment made in the range, completed or still
+// pending (failed ones are not sales), oldest first. `Refunded` is what has
+// been given back of that payment to date, whenever the refund was made, so
+// the rows don't add up to the report's refunds by day, which count refunds by
+// their own day. No diner is named.
+const ordersTable = async (shopId: mongoose.Types.ObjectId, start: Date, end: Date, timeZone: string) => {
+    const orders = await OrderModel.find({ shopId, paidAt: { $gte: start, $lt: end }, status: { $in: ["completed", "pending"] } })
+        .sort({ paidAt: 1, _id: 1 }).select("paidAt tableName provider status amount refunds lines").lean()
+    return [
+        ["Paid at", "Table", "Provider", "Status", "Amount", "Refunded", "Net", "Items"],
+        ...orders.map((o) => {
+            const refunded = o.refunds.filter((r) => r.status === "completed").reduce((sum, r) => sum + toPence(r.amount), 0)
+            return [clockIn(o.paidAt, timeZone), o.tableName ?? "", PROVIDER_NAMES[o.provider] ?? o.provider, o.status,
+                o.amount, fromPence(refunded), fromPence(toPence(o.amount) - refunded), o.lines.map((l) => `${l.qty}× ${l.name}`).join(", ")]
+        }),
+    ]
+}
+
+// GET /shops/:shopId/sales/export: one of the report's tables as a CSV file,
+// counted as the report counts.
+export const exportSales: TController = async (req, res, next) => {
+    try {
+        const { from, to, table } = res.locals.query as SalesExportQuery
+        const shop = await ShopModel.findById(req.params.shopId).select("name timeZone")
+        if (!shop) return next(createError(404, "Shop Not Found!"))
+        const shopId = shop._id as mongoose.Types.ObjectId
+        const range: Range = { from, to, timeZone: shop.timeZone, by: "day" }
+
+        let rows: (string | number | null)[][]
+        if (table === "orders") {
+            rows = await ordersTable(shopId, startOfDay(from, range.timeZone), startOfDay(addDays(to, 1), range.timeZone), range.timeZone)
+        } else if (table === "items") {
+            rows = [["Item", "Category", "Unit price", "Units", "Refunded units", "Revenue"],
+                ...(await report(shopId, range)).items.map((i) => [i.name, i.category ?? "", i.unitPrice, i.units, i.refundedUnits, i.revenue])]
+        } else {
+            rows = [["Day", "Gross", "Refunds", "Net", "Orders", "Visits", "Diners", "New diners", "Units", "Food", "Drinks", "Other", "PayPal", "Card"],
+                ...(await report(shopId, range)).series.map((d) => [d.bucket, d.gross, d.refunds, d.net, d.orders, d.visits, d.diners, d.newDiners, d.units,
+                    d.byCategory.food, d.byCategory.drinks, d.byCategory.other, d.byProvider.paypal, d.byProvider.stripe])]
+        }
+        res.attachment(`${slug(shop.name)}-sales-${from}-${to}-${table}.csv`)
+        res.type("text/csv; charset=utf-8").send(csv(rows))
     } catch (error) {
         next(createError(500, error as Error))
     }

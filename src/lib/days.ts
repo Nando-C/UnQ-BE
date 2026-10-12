@@ -65,6 +65,10 @@ const wallClock = (date: Date, timeZone: string) => {
 
 // The day it is in `timeZone` at `date`.
 export const dayIn = (date: Date, timeZone: string): Day => dayOfUtc(wallClock(date, timeZone))
+// The wall clock in `timeZone` at `date`, "YYYY-MM-DD HH:MM".
+export const clockIn = (date: Date, timeZone: string) => new Date(wallClock(date, timeZone)).toISOString().slice(0, 16).replace("T", " ")
+// The weekday of a day (0 Sunday … 6 Saturday).
+export const weekdayOf = (day: Day) => new Date(asUtc(day)).getUTCDay()
 
 // The instant `day` begins in `timeZone`. The zone's offset at that moment is
 // read off its wall clock, twice, so the clocks changing between the guess and
