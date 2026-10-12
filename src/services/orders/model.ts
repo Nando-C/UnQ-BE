@@ -7,8 +7,8 @@ const { Schema, model } = mongoose
 // A diner's payment as a sales record (see IOrder): one per cart payment, built
 // from the cart by syncOrder (services/orders/sync.ts) after every save that
 // changes the payment or a refund of it. The cart stays the source of truth;
-// an order outlives it, its table, its menu items and its shop. Not served by
-// any route yet: the sales reports read it.
+// an order outlives it, its table, its menu items and its shop. The sales
+// report reads it (shops/controllers/salesControllers.ts).
 const OrderSchema = new Schema<IOrderDocument>(
     {
         paymentId: { type: Schema.Types.ObjectId, required: true },

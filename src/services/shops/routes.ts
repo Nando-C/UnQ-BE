@@ -3,11 +3,12 @@ import { shopCoverUpload } from "../../settings/cloudinary"
 import { adminOnly, isShopManager, JWTAuthMiddleware } from "../auth/middlewares"
 import * as shopControllers from "./controllers/shopControllers"
 import * as tableControllers from "./controllers/tableControllers"
+import * as salesControllers from "./controllers/salesControllers"
 import * as managerControllers from "../carts/managerControllers"
 import * as paybackControllers from "../payments/paybackControllers"
 import { paybackDoneSchema } from "../payments/paybackControllers"
 import { validate } from "../../middlewares/validate"
-import { createShopSchema, editShopSchema, createTableSchema, editTableSchema, browseShopsSchema } from "./schemas"
+import { createShopSchema, editShopSchema, createTableSchema, editTableSchema, browseShopsSchema, salesQuerySchema } from "./schemas"
 import { cartItemSchema, releaseSelectionSchema, refundSchema } from "../carts/schemas"
 
 const router = Router()
@@ -24,6 +25,9 @@ router.put("/:shopId", JWTAuthMiddleware, adminOnly, validate(editShopSchema), s
 // request never reaches Cloudinary.
 router.put("/:shopId/cover", JWTAuthMiddleware, isShopManager, shopCoverUpload, shopControllers.editMyShopCover)
 router.delete("/:shopId", JWTAuthMiddleware, adminOnly, shopControllers.deleteMyShop)
+
+// The shop's sales report, over its orders.
+router.get("/:shopId/sales", JWTAuthMiddleware, isShopManager, validate(salesQuerySchema, "query"), salesControllers.getSales)
 
 // Shop's Tables Routes
 // Manager views of the tables' carts. `tables/status` is declared before the

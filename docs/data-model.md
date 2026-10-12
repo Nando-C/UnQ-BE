@@ -53,6 +53,7 @@ Indexes: `email` unique; `googleId` sparse.
 | `open_times` | string |  |
 | `phone` | string | as typed ("0161 496 0000"); older shops hold a number, read as text; "" clears it |
 | `web_URL` | string |  |
+| `timeZone` | string | an IANA name, `Europe/London` unless set: the zone the shop's days are counted in ([api.md](./api.md#sales-report)); shops from before it read as the default |
 | `shopMg` | [ObjectId → User] | required: the managers |
 | `tables[]._id` | ObjectId | what every other record means by `tableId` |
 | `tables[].name` | string | required; unique within the shop |
@@ -168,7 +169,7 @@ Indexes: `{tableId, status, updatedAt}` (a table's recent closed carts); `{payme
 
 ## Order
 
-One per cart payment: the sales record, built from the cart by `syncOrder` (`services/orders/sync.ts`) after every save that changes the payment or a refund of it, and kept when the cart, table, menu items or shop are deleted. No route serves it yet; the sales reports will read it.
+One per cart payment: the sales record, built from the cart by `syncOrder` (`services/orders/sync.ts`) after every save that changes the payment or a refund of it, and kept when the cart, table, menu items or shop are deleted. The sales report (`GET /shops/:shopId/sales`, [api.md](./api.md#sales-report)) reads it; nothing else does.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -197,7 +198,7 @@ One per cart payment: the sales record, built from the cart by `syncOrder` (`ser
 - A sync that fails after the money moved is logged ("Order not written") and never fails the request: `npx tsx src/scripts/syncOrders.ts` writes or repairs every order; `deleteMyShop` runs the same repair before deleting a shop's carts.
 - A refund counts on the day it was made (`refunds[].at`), not the day of the payment.
 
-Indexes: `paymentId` unique; `{shopId, paidAt}`; `{shopId, refunds.at}`; `{shopId, payerId, paidAt}` (repeat customers).
+Indexes: `paymentId` unique; `{shopId, paidAt}` (the report's orders); `{shopId, refunds.at}` (its refunds, by their own day); `{shopId, payerId, paidAt}` (returning diners: who had paid before the range).
 
 ## StripeCheckout
 

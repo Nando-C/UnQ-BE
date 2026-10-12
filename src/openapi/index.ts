@@ -65,6 +65,7 @@ export const buildOpenApi = () => ({
         { name: "Carts: checkout", description: "Paying by PayPal or card" },
         { name: "Manager: tables", description: "What's happening at the tables, and fixing a cart (no money moves)" },
         { name: "Manager: refunds and payments", description: "Refunds, pending payments, pay-backs (money moves)" },
+        { name: "Manager: sales", description: "The shop's sales report over its orders" },
         { name: "Payments", description: "The payment providers' callbacks" },
         { name: "System", description: "Health and this document" },
     ],

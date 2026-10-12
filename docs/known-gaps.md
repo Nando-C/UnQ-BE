@@ -40,4 +40,4 @@ Each changes behaviour, a contract, stored data or several layers at once, so ea
 
 ## Roadmap
 
-In the order decided with the product roadmap: the **sales reports** route over orders (with a shop time-zone setting), then the **sales dashboard**; **staff on a shop** (today a shop's only member is the manager who created it; nothing adds a second) and then **staff roles** narrowing what each member can do; **kitchen** (queue, prep states, live push); **live payment keys**, a deliberate switch rather than a release step.
+In the order decided with the product roadmap: the **sales reports** (the report route and the shop's time zone are in place; the page that reads them is the client's), then the **sales dashboard**; **staff on a shop** (today a shop's only member is the manager who created it; nothing adds a second) and then **staff roles** narrowing what each member can do; **kitchen** (queue, prep states, live push); **live payment keys**, a deliberate switch rather than a release step.

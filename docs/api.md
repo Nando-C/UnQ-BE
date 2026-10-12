@@ -79,6 +79,21 @@ What each step guards, in the document's words:
 
 `500` (Stripe retries) when the outcome isn't settled yet: Stripe or the database erred, the capture's outcome is unclear, or a refund failed. The sweep (`sweepStripeCheckouts`, every 2 minutes) finishes what the webhook doesn't. Locally, forward events with the Stripe CLI (see the README's Setup).
 
+## Sales report
+
+`GET /shops/:shopId/sales?from=YYYY-MM-DD&to=YYYY-MM-DD[&by=day|week|month][&compare=previous]`, for the shop's manager: everything a sales page shows in one answer, so a new range is one request and a new chart none. The full shape is in the OpenAPI document (`SalesReport`); the rules that decide every number are these, and the same ones the orders were designed for ([decisions.md](./decisions.md#2026-10-12-sales-are-counted-as-at-a-till-in-the-shops-own-day)).
+
+- **Days are the shop's.** `from` and `to` are days in the shop's `timeZone` (an IANA name on the shop, `Europe/London` unless set, editable with the shop), both included, at most 366 days apart. Every bucket, weekday and hour in the answer is in that zone, which the answer names (`range.timeZone`). The clocks changing is a 23- or 25-hour day, as at the till.
+- **Gross** is completed payments by the day paid (`paidAt`). Pending payments are not sales and are counted apart (`totals.pendingOrders`); failed ones are not counted at all.
+- **Refunds** count on the day they were made (`refunds[].at`), completed only, whenever their sale was: a refund made in March of a January sale lowers March and leaves January as it was. **Net** is gross − refunds.
+- **Orders** are completed payments; **visits** are distinct carts; **diners** are distinct payers, never named. A **returning diner** had paid at this shop before the range began; a bucket's `newDiners` are those whose first payment at the shop, ever, fell in it.
+- **Items** are counted net of refunded units (`qty − refundedQty`, whenever the refund was made) at the price each was sold for, under the name and price diners saw last in the range, so a renamed or deleted dish keeps one row. `units` in the totals and series count the same way.
+- **Buckets** (`by`) are days, weeks from Monday, or calendar months; unless given, days up to 92 days and weeks beyond. The series has every bucket of the range, zero where nothing was sold; the first week or month may begin before `from`. Its `bucket` is the bucket's first day.
+- **`compare=previous`** adds `previous: { range, totals, series }` for the range of the same length ending the day before `from`, counted and bucketed the same way, so a page's changes against the period before are exact.
+- **Money** is in pounds, every sum made in pence (`lib/money.ts`). The heatmap lists only weekday-and-hour cells with a sale; the tables include one with only refunds in the range, so the tables add up to the totals.
+
+Three reads, each through an index on `orders` (`{shopId, paidAt}`, `{shopId, refunds.at}`, `{shopId, payerId, paidAt}`): one `$facet` over the orders paid in the range, one over the refunds made in it, and one for which of the range's diners had paid before it. The answer is small whatever the shop's history: at most 366 buckets, the menu's items, 168 heatmap cells.
+
 ## Checking a deployment
 
 ```bash
