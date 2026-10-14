@@ -12,7 +12,8 @@
 //
 // The history has the shapes a sales page should show: a lunch and a dinner
 // peak within each shop's hours, a gentle rise in visits over the 90 days,
-// regulars who come back and diners who don't, a dish launched in week six,
+// regulars who come back and newcomers at every shop in any month and in the
+// last week, a dish launched in week six,
 // refund causes weighted the way a kitchen's are (long waits cluster on busy
 // evenings), and one bad week at the café. Days and hours are the shops' own
 // (Europe/London), wherever the seed runs.
@@ -250,6 +251,23 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
     const dayOf = (daysAgo: number) => addDays(today, -daysAgo)
     // `hour`:`minute` on the shop's clock, `daysAgo` days ago.
     const dayAt = (daysAgo: number, hour: number, minute = 0) => instantOf(dayOf(daysAgo), hour, minute, zone)
+    // The live states (a table being ordered at, a payment just made) are
+    // placed at the latest moment the shop was open: now while it is, else the
+    // last hour of its last open day. So a seed run at night, or a nightly one,
+    // writes no order outside the shop's hours, and its report's hours stay
+    // the shop's.
+    const lastOpen = (shop: Pick<ShopDef, "visits" | "openHour" | "closeHour">) => {
+        for (let daysAgo = 0; daysAgo < 8; daysAgo++) {
+            const day = dayOf(daysAgo)
+            if (!shop.visits(weekdayOf(day))) continue
+            const open = instantOf(day, shop.openHour, 0, zone).getTime()
+            const close = instantOf(day, shop.closeHour, 0, zone).getTime()
+            if (t0 >= open && t0 < close) return t0
+            if (t0 >= close) return close - HOUR
+        }
+        return t0
+    }
+    const ago = (shop: Pick<ShopDef, "visits" | "openHour" | "closeHour">, msAgo: number) => new Date(lastOpen(shop) - msAgo)
 
     // ---- Shops, tables, menus ----------------------------------------------
 
@@ -269,7 +287,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
                 { id: rng.oid(), name: "Garden 2" },
                 { id: rng.oid(), name: "Bar" },
             ],
-            deletedTables: [{ id: rng.oid(), name: "Terrace", deletedAt: at(3 * DAY) }],
+            deletedTables: [{ id: rng.oid(), name: "Terrace", deletedAt: dayAt(3, 16, 30) }],
             items: [
                 { name: "Flat White", short_description: "Double ristretto under velvety micro-foam, cut the way Melbourne taught us", description: "Two ristretto shots of our house espresso, a Brazil-Colombia blend roasted ten minutes' walk from here, under 5mm of silky steamed milk. The drink the regulars come back for.", price: 3.2, category: "drinks" },
                 { name: "Latte", short_description: "Our house blend, steamed milk, latte art if you're lucky", description: "A single shot of house espresso in a generous cup of steamed milk, smooth and gentle. Oat, soya and almond at no extra charge.", price: 3.4, category: "drinks" },
@@ -384,6 +402,20 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
     }
     const regulars = dinerIds.slice(0, REGULARS)
     const occasionals = dinerIds.slice(REGULARS)
+    // The regulars were there from the start; the others each make a first
+    // visit at one of the shops, spaced over its history a day or so apart
+    // from the next (the last within the past week), and come now and then
+    // after. So every shop's report has new faces in any month and in the
+    // last seven days, and its returning share is never everyone.
+    const debuts = new Map<string, { shop: ShopDef; daysAgo: number; done: boolean }>()
+    occasionals.forEach((id, i) => {
+        const shop = shops[i % shops.length]
+        const mates = occasionals.filter((_, n) => n % shops.length === i % shops.length).length
+        const step = (shop.since - 4) / (mates - 1)
+        const daysAgo = Math.min(shop.since - 1, Math.max(1, Math.round(2 + Math.floor(i / shops.length) * step) + rng.int(-1, 1)))
+        debuts.set(String(id), { shop, daysAgo, done: false })
+    })
+    const arrivals = new Map([...debuts].map(([id, d]) => [id, d.daysAgo]))
     log(`Users: ${dinerIds.length + 1} (sign-ins: ${DEMO_MANAGER_EMAIL}, ${DEMO_DINER_EMAIL})`)
 
     // ---- Reset what the seed owns ------------------------------------------
@@ -466,17 +498,27 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
             const bad = !!shop.badWeek && daysAgo <= shop.badWeek[0] && daysAgo >= shop.badWeek[1]
             // Busier as the days go by; the bad week well under.
             const trend = (1 + shop.growth * (1 - daysAgo / shop.since)) * (bad ? 0.5 : 1)
-            const visits = Math.round(rng.int(range[0], range[1]) * trend)
+            // Whoever's first visit here is due (on the shop's next open day).
+            const debutants = occasionals.filter((id) => { const d = debuts.get(String(id))!; return d.shop === shop && !d.done && d.daysAgo >= daysAgo })
+            debutants.forEach((id) => { debuts.get(String(id))!.done = true })
+            const visits = Math.max(debutants.length, Math.round(rng.int(range[0], range[1]) * trend))
             for (let v = 0; v < visits; v++) {
                 const table = rng.pick(shop.tables.concat(daysAgo > 3 ? shop.deletedTables : []))
                 // Most visits start in a peak; the rest anywhere in the hours.
                 const [from, to] = rng.chance(0.65) ? rng.pick(shop.peaks) : [shop.openHour, shop.closeHour - 2]
-                const hour = rng.int(from, to)
+                // No visit starts within two hours of closing, peak or not: it
+                // pays within the closing hour.
+                const hour = Math.min(rng.int(from, to), shop.closeHour - 2)
                 const openedAt = dayAt(daysAgo, hour, rng.int(0, 59))
                 const onMenu = shop.items.filter((i) => !i.soldOut && (!i.deleted || daysAgo > 30) && (i.launchedDaysAgo == null || daysAgo <= i.launchedDaysAgo))
                 const lines: Line[] = rng.some(onMenu, rng.int(2, 5)).map((item) => ({ item, qty: rng.int(1, 3) }))
-                // Regulars bring most of the visits; the others come now and then.
-                const payerIds = rng.some(rng.chance(0.7) ? regulars : occasionals, rng.int(1, Math.min(3, lines.length)))
+                // Regulars bring most of the visits; the others, those who have
+                // turned up by this day, come now and then. A first visit is
+                // the newcomer's, with a regular or two along.
+                const arrived = occasionals.filter((id) => arrivals.get(String(id))! >= daysAgo)
+                const payerIds = v < debutants.length
+                    ? [debutants[v], ...rng.some(regulars, rng.int(0, Math.min(2, lines.length - 1)))]
+                    : rng.some(rng.chance(0.7) || arrived.length === 0 ? regulars : arrived, rng.int(1, Math.min(3, lines.length)))
                 // Each line's units go to the payers, one line at a time.
                 const payers: Payer[] = payerIds.map((userId, i) => ({
                     userId,
@@ -492,7 +534,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
                     const payer = rng.pick(payers)
                     const line = rng.pick(payer.lines)
                     const reason = rng.weighted<RefundReason>([
-                        ["unavailable", 15], ["wrong_item", 25], ["quality", bad ? 40 : 20], ["long_wait", bad || busyEvening ? 60 : 8],
+                        ["unavailable", 15], ["wrong_item", 25], ["quality", bad ? 40 : 20], ["long_wait", bad || busyEvening ? 150 : 8],
                         ["paid_by_mistake", 10], ["changed_mind", 10], ["other", 8],
                     ])
                     spec.refunds!.push({
@@ -523,64 +565,67 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
 
     // Fire Place (the QR table): Ada is ordering; nothing selected or paid yet.
     specs.push({
-        shop: rocketlit, table: rTable("Fire Place 🔥"), openedAt: at(25 * MINUTE), payers: [], status: "open",
+        shop: rocketlit, table: rTable("Fire Place 🔥"), openedAt: ago(rocketlit, 25 * MINUTE), payers: [], status: "open",
         unpaid: [{ userId: ada, lines: [{ item: R("Flat White"), qty: 1 }, { item: R("Avocado Toast"), qty: 1 }] }],
     })
     // Window: Ben paid his half by card; Chloe's selection has been held 40 minutes.
     specs.push({
-        shop: rocketlit, table: rTable("Window"), openedAt: at(55 * MINUTE), status: "open",
-        payers: [{ userId: ben, lines: [{ item: R("Latte"), qty: 1 }, { item: R("Carrot Cake"), qty: 1 }], provider: "stripe", paidAt: at(30 * MINUTE) }],
-        unpaid: [{ userId: chloe, lines: [{ item: R("Latte"), qty: 1 }, { item: R("Carrot Cake"), qty: 1 }], selected: [{ line: { item: R("Latte"), qty: 1 }, qty: 1, claimedAt: at(40 * MINUTE) }, { line: { item: R("Carrot Cake"), qty: 1 }, qty: 1, claimedAt: at(40 * MINUTE) }] }],
-        notices: [{ at: at(45 * MINUTE), forUserId: chloe, message: "The staff released your selection of 1× Latte." }],
-        logs: [{ at: at(45 * MINUTE), byUserId: managerId, action: "releaseSelection", details: "Chloe: 1× Latte" }],
+        shop: rocketlit, table: rTable("Window"), openedAt: ago(rocketlit, 55 * MINUTE), status: "open",
+        payers: [{ userId: ben, lines: [{ item: R("Latte"), qty: 1 }, { item: R("Carrot Cake"), qty: 1 }], provider: "stripe", paidAt: ago(rocketlit, 30 * MINUTE) }],
+        unpaid: [{ userId: chloe, lines: [{ item: R("Latte"), qty: 1 }, { item: R("Carrot Cake"), qty: 1 }], selected: [{ line: { item: R("Latte"), qty: 1 }, qty: 1, claimedAt: ago(rocketlit, 40 * MINUTE) }, { line: { item: R("Carrot Cake"), qty: 1 }, qty: 1, claimedAt: ago(rocketlit, 40 * MINUTE) }] }],
+        notices: [{ at: ago(rocketlit, 45 * MINUTE), forUserId: chloe, message: "The staff released your selection of 1× Latte." }],
+        logs: [{ at: ago(rocketlit, 45 * MINUTE), byUserId: managerId, action: "releaseSelection", details: "Chloe: 1× Latte" }],
     })
     // Garden 1: Dev paid with PayPal; a toastie sold out after it was ordered.
     specs.push({
-        shop: rocketlit, table: rTable("Garden 1"), openedAt: at(70 * MINUTE), status: "open",
-        payers: [{ userId: dev, lines: [{ item: R("Shakshuka"), qty: 1 }, { item: R("Fresh Orange Juice"), qty: 1 }], provider: "paypal", paidAt: at(45 * MINUTE) }],
+        shop: rocketlit, table: rTable("Garden 1"), openedAt: ago(rocketlit, 70 * MINUTE), status: "open",
+        payers: [{ userId: dev, lines: [{ item: R("Shakshuka"), qty: 1 }, { item: R("Fresh Orange Juice"), qty: 1 }], provider: "paypal", paidAt: ago(rocketlit, 45 * MINUTE) }],
         unpaid: [{ userId: eva, lines: [{ item: R("Shakshuka"), qty: 1 }, { item: R("Fresh Orange Juice"), qty: 1 }, { item: R("Sourdough Toastie"), qty: 1 }] }],
     })
     // Bar: Hugo's PayPal payment is held for review.
     specs.push({
-        shop: rocketlit, table: rTable("Bar"), openedAt: at(35 * MINUTE), status: "open",
-        payers: [{ userId: hugo, lines: [{ item: R("Chai"), qty: 2 }], provider: "paypal", paidAt: at(15 * MINUTE), status: "pending" }],
+        shop: rocketlit, table: rTable("Bar"), openedAt: ago(rocketlit, 35 * MINUTE), status: "open",
+        payers: [{ userId: hugo, lines: [{ item: R("Chai"), qty: 2 }], provider: "paypal", paidAt: ago(rocketlit, 15 * MINUTE), status: "pending" }],
     })
     // Garden 2 two days ago: Hugo paid for the units Grace was paying for at the
     // same moment; her card payment was captured, couldn't be recorded, and
     // Stripe refused the refund (expired card): a pay-back staff still owe.
-    const garden2 = { shop: rocketlit, table: rTable("Garden 2"), openedAt: at(2 * DAY + 3 * HOUR), status: "closed" as const,
-        payers: [{ userId: hugo, lines: [{ item: R("Shakshuka"), qty: 1 }, { item: R("Flat White"), qty: 1 }], provider: "stripe" as const, paidAt: at(2 * DAY + 2 * HOUR) }],
+    // The dated states sit in the shops' hours, whatever the clock the seed
+    // runs on; the live ones are now.
+    const garden2 = { shop: rocketlit, table: rTable("Garden 2"), openedAt: dayAt(2, 12, 10), status: "closed" as const,
+        payers: [{ userId: hugo, lines: [{ item: R("Shakshuka"), qty: 1 }, { item: R("Flat White"), qty: 1 }], provider: "stripe" as const, paidAt: dayAt(2, 12, 40) }],
         refunds: [] as RefundSpec[] }
     specs.push(garden2)
-    // Terrace, deleted three days ago: a cart paid before, refunded two hours ago.
+    // Terrace, deleted three days ago after closing: a cart paid that morning,
+    // refunded two hours ago.
     specs.push({
-        shop: rocketlit, table: rocketlit.deletedTables[0], openedAt: at(3 * DAY + 4 * HOUR), status: "closed",
-        payers: [{ userId: ada, lines: [{ item: R("Granola Bowl"), qty: 1 }, { item: R("Latte"), qty: 1 }], provider: "stripe", paidAt: at(3 * DAY + 3 * HOUR) }],
+        shop: rocketlit, table: rocketlit.deletedTables[0], openedAt: dayAt(3, 11, 20), status: "closed",
+        payers: [{ userId: ada, lines: [{ item: R("Granola Bowl"), qty: 1 }, { item: R("Latte"), qty: 1 }], provider: "stripe", paidAt: dayAt(3, 11, 50) }],
         refunds: [],
     })
     specs.at(-1)!.refunds!.push({ payer: specs.at(-1)!.payers[0], line: specs.at(-1)!.payers[0].lines[1], qty: 1, reason: "quality", at: at(2 * HOUR) })
-    // Marlow, Table 3: three diners, one has paid, two are selecting right now.
+    // Marlow, Table 3: three diners, one has paid, two are selecting (at the latest moment it was open).
     specs.push({
-        shop: marlow, table: mTable("Table 3"), openedAt: at(50 * MINUTE), status: "open",
-        payers: [{ userId: grace, lines: [{ item: M("Crab Linguine"), qty: 1 }, { item: M("House White"), qty: 1 }], provider: "stripe", paidAt: at(6 * MINUTE) }],
+        shop: marlow, table: mTable("Table 3"), openedAt: ago(marlow, 50 * MINUTE), status: "open",
+        payers: [{ userId: grace, lines: [{ item: M("Crab Linguine"), qty: 1 }, { item: M("House White"), qty: 1 }], provider: "stripe", paidAt: ago(marlow, 6 * MINUTE) }],
         unpaid: [
-            { userId: frankId, lines: [{ item: M("Roast Chicken"), qty: 1 }, { item: M("Pale Ale"), qty: 1 }], selected: [{ line: { item: M("Roast Chicken"), qty: 1 }, qty: 1, claimedAt: at(5 * MINUTE) }, { line: { item: M("Pale Ale"), qty: 1 }, qty: 1, claimedAt: at(5 * MINUTE) }] },
-            { userId: eva, lines: [{ item: M("Burrata"), qty: 1 }, { item: M("Chips"), qty: 1 }, { item: M("Lemonade"), qty: 1 }], selected: [{ line: { item: M("Burrata"), qty: 1 }, qty: 1, claimedAt: at(4 * MINUTE) }] },
+            { userId: frankId, lines: [{ item: M("Roast Chicken"), qty: 1 }, { item: M("Pale Ale"), qty: 1 }], selected: [{ line: { item: M("Roast Chicken"), qty: 1 }, qty: 1, claimedAt: ago(marlow, 5 * MINUTE) }, { line: { item: M("Pale Ale"), qty: 1 }, qty: 1, claimedAt: ago(marlow, 5 * MINUTE) }] },
+            { userId: eva, lines: [{ item: M("Burrata"), qty: 1 }, { item: M("Chips"), qty: 1 }, { item: M("Lemonade"), qty: 1 }], selected: [{ line: { item: M("Burrata"), qty: 1 }, qty: 1, claimedAt: ago(marlow, 4 * MINUTE) }] },
         ],
     })
     // Marlow, Table 6: just sat down.
     specs.push({
-        shop: marlow, table: mTable("Table 6"), openedAt: at(10 * MINUTE), payers: [], status: "open",
+        shop: marlow, table: mTable("Table 6"), openedAt: ago(marlow, 10 * MINUTE), payers: [], status: "open",
         unpaid: [{ userId: ben, lines: [{ item: M("Negroni"), qty: 2 }] }],
     })
     // Marlow, twelve days ago: a manager's card refund Stripe accepted and then
     // failed; the diner was paid back by hand two days later.
     const marlowFailed: CartSpec = {
-        shop: marlow, table: mTable("Table 1"), openedAt: at(12 * DAY + 5 * HOUR), status: "closed",
-        payers: [{ userId: chloe, lines: [{ item: M("Lamb Shoulder"), qty: 1 }, { item: M("House Red"), qty: 2 }], provider: "stripe", paidAt: at(12 * DAY + 4 * HOUR) }],
+        shop: marlow, table: mTable("Table 1"), openedAt: dayAt(12, 19, 0), status: "closed",
+        payers: [{ userId: chloe, lines: [{ item: M("Lamb Shoulder"), qty: 1 }, { item: M("House Red"), qty: 2 }], provider: "stripe", paidAt: dayAt(12, 19, 30) }],
         refunds: [],
     }
-    marlowFailed.refunds!.push({ payer: marlowFailed.payers[0], line: marlowFailed.payers[0].lines[1], qty: 1, reason: "wrong_item", at: at(12 * DAY + 3 * HOUR) })
+    marlowFailed.refunds!.push({ payer: marlowFailed.payers[0], line: marlowFailed.payers[0].lines[1], qty: 1, reason: "wrong_item", at: dayAt(12, 20, 0) })
     specs.push(marlowFailed)
 
     // ---- Build and save each cart ------------------------------------------
@@ -727,7 +772,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
         const cart = saved.get(garden2)!
         const intent = `pi_demo_${rng.hex(24)}`
         const owed = toPence(garden2.payers[0].lines.reduce((s, l) => s + price(l) * l.qty, 0))
-        const since = at(2 * DAY + 2 * HOUR)
+        const since = garden2.payers[0].paidAt
         await new StripeCheckoutModel({
             _id: intent, cartId: cart._id, tableId: cart.tableId, shopId: rocketlit.id, userId: grace, amount: owed,
             state: "refundFailed", confirmed: true, finishedAt: at(DAY + HOUR), status: 409,

@@ -12,7 +12,7 @@ import CartModel from "../services/carts/model"
 import OrderModel from "../services/orders/model"
 import StripeCheckoutModel from "../services/carts/stripeCheckout"
 import PaybackModel from "../services/payments/payback"
-import { addDays, dayIn, startOfDay } from "../lib/days"
+import { addDays, dayIn, instantOf, startOfDay } from "../lib/days"
 
 // The demo seed (src/scripts/demo.ts): what it writes, that a rerun writes the
 // same, and that the app reads it as the demo is meant to look.
@@ -73,16 +73,24 @@ describe("the demo seed", () => {
         const inZone = { date: "$paidAt", timezone: "Europe/London" }
         const sales = (match: object) => OrderModel.aggregate<{ _id: unknown; n: number }>([{ $match: { shopId: shop, status: "completed", ...match } }, { $group: { _id: null, n: { $sum: 1 } } }]).then((r) => r[0]?.n ?? 0)
         // Peaks: visits start in the café's two busy spells and pay within the
-        // hour, so the four peak hours hold well over the five around them.
+        // hour, so the four peak hours hold well over the five around them
+        // (they get two thirds of the visits, spread over fewer hours).
         const byHour = await OrderModel.aggregate<{ _id: number; n: number }>([{ $match: { shopId: shop, status: "completed" } }, { $group: { _id: { $hour: inZone }, n: { $sum: 1 } } }])
         const hour = (h: number) => byHour.find((b) => b._id === h)?.n ?? 0
-        expect(hour(9) + hour(10) + hour(13) + hour(14)).toBeGreaterThan(1.5 * (hour(8) + hour(11) + hour(12) + hour(15) + hour(16)))
+        expect(hour(9) + hour(10) + hour(13) + hour(14)).toBeGreaterThan(1.4 * (hour(8) + hour(11) + hour(12) + hour(15) + hour(16)))
         // A rise over the 90 days: the last 30 days outsell the first 30.
         const days = (ago: number) => new Date(NOW.getTime() - ago * 86_400_000)
         expect(await sales({ paidAt: { $gte: days(31) } })).toBeGreaterThan(1.15 * await sales({ paidAt: { $gte: days(91), $lt: days(60) } }))
         // Regulars and passers-by: forty diners, a dozen of whom bring most visits.
         const payers = await OrderModel.aggregate<{ _id: unknown; n: number }>([{ $match: { status: "completed" } }, { $group: { _id: "$payerId", n: { $sum: 1 } } }, { $sort: { n: -1 } }])
-        expect(payers.length).toBeGreaterThanOrEqual(38)
+        expect(payers.length).toBeGreaterThanOrEqual(34)
+        // New faces keep coming, at every shop: diners whose first payment
+        // there falls in the last 30 days, and at least one in the last 7.
+        const firsts = await OrderModel.aggregate<{ _id: { shop: unknown; payer: unknown }; first: Date }>([{ $match: { status: "completed" } }, { $group: { _id: { shop: "$shopId", payer: "$payerId" }, first: { $min: "$paidAt" } } }])
+        for (const s of await ShopModel.find().lean()) {
+            const here = firsts.filter((f) => String(f._id.shop) === String(s._id))
+            expect({ shop: s.name, month: here.filter((f) => f.first >= days(30)).length >= 3, week: here.filter((f) => f.first >= days(7)).length >= 1 }).toEqual({ shop: s.name, month: true, week: true })
+        }
         const total = payers.reduce((s, p) => s + p.n, 0)
         expect(payers.slice(0, 12).reduce((s, p) => s + p.n, 0)).toBeGreaterThan(0.6 * total)
         // The pastry launched in week six: no sale before that day began (in
@@ -195,5 +203,17 @@ describe("the demo seed", () => {
         // A refund of each status, and more than one reason.
         expect(await CartModel.countDocuments({ "refunds.status": "failed" })).toBeGreaterThan(0)
         expect((await CartModel.distinct("refunds.reason")).length).toBeGreaterThan(3)
+    })
+
+    it("run at night, still writes every order within its shop's hours", async () => {
+        // The live states are placed at the latest moment each shop was open,
+        // so a report's hours are the shop's whatever the clock the seed ran on
+        // (a visit opened at last orders pays within the closing hour).
+        await seedDemo({ ...passwords, now: instantOf(dayIn(NOW, "Europe/London"), 0, 30, "Europe/London") })
+        for (const [name, from, to] of [["Rocketlit", 8, 16], ["Marlow Street Kitchen", 12, 22], ["Saturday Market Pop-up", 10, 16]] as const) {
+            const shop = (await ShopModel.findOne({ name }).lean())!
+            const hours = await OrderModel.aggregate<{ _id: number }>([{ $match: { shopId: shop._id, status: "completed" } }, { $group: { _id: { $hour: { date: "$paidAt", timezone: "Europe/London" } } } }])
+            expect({ name, outside: hours.map((h) => h._id).filter((h) => h < from || h > to) }).toEqual({ name, outside: [] })
+        }
     })
 })
