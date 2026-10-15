@@ -6,6 +6,10 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ## [Unreleased]
 
+### Changed
+
+- The demo seed's occasional diners each make a first visit at one of the shops, spaced over the ninety days rather than all at the start, so every shop's report has new faces in any month and in the last seven days, and its returning share is never everyone. The live table states sit at the latest moment the shop was open, so a seed run at night writes no order outside the shop's hours. A reseed rewrites the demo shops' history, as every rerun does.
+
 ## [2.2.0] - 2026-10-12
 
 Several devices per account, and the sales report over the orders recorded since 2.0.0. Nothing new on the host. Deploying signs every current session out once (the tokens in hand belong to no session); signing in again is all it takes. A deployed demo wants the seed run again, with `FRONTEND_URL` set to the live client, so its history has the shapes the report shows.
