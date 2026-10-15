@@ -6,10 +6,9 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ## [Unreleased]
 
-### Fixed
+## [2.3.0] - 2026-10-15
 
-- `/docs` opened with a trailing slash (`/api/docs/` through the front end's proxy) showed Swagger UI failing to load the document, which it asked for relative to the page; the document's URL is now built from the page's own path.
-- A CSV export computed the whole sales report and kept one table; it now computes only that table's part (the groupings behind the others, the refunds pass and the returning-diner look-up are skipped when the table doesn't read them). Same files.
+The demo reseeds itself every night, exports compute only their table, and the docs page works behind a trailing slash. Nothing changes on the host; the nightly reseed is a GitHub Actions workflow with three repository secrets. The front end at 2.3.0 shows each shop at a glance on My Shops from routes this API already served.
 
 ### Added
 
@@ -18,6 +17,11 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 ### Changed
 
 - The demo seed's occasional diners each make a first visit at one of the shops, spaced over the ninety days rather than all at the start, so every shop's report has new faces in any month and in the last seven days, and its returning share is never everyone. The live table states sit at the latest moment the shop was open, so a seed run at night writes no order outside the shop's hours. A reseed rewrites the demo shops' history, as every rerun does.
+
+### Fixed
+
+- `/docs` opened with a trailing slash (`/api/docs/` through the front end's proxy) showed Swagger UI failing to load the document, which it asked for relative to the page; the document's URL is now built from the page's own path.
+- A CSV export computed the whole sales report and kept one table; it now computes only that table's part (the groupings behind the others, the refunds pass and the returning-diner look-up are skipped when the table doesn't read them). Same files.
 
 ## [2.2.0] - 2026-10-12
 
