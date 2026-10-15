@@ -6,6 +6,10 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ## [Unreleased]
 
+### Added
+
+- A nightly reseed of the deployed demo: a GitHub Actions workflow (`.github/workflows/demo.yml`) runs `npm run seed:demo` at 03:30 UTC every day, and on demand, from three repository secrets, so the demo's ninety days always end yesterday. [docs/operations.md](./docs/operations.md#the-demo-data).
+
 ### Changed
 
 - The demo seed's occasional diners each make a first visit at one of the shops, spaced over the ninety days rather than all at the start, so every shop's report has new faces in any month and in the last seven days, and its returning share is never everyone. The live table states sit at the latest moment the shop was open, so a seed run at night writes no order outside the shop's hours. A reseed rewrites the demo shops' history, as every rerun does.
