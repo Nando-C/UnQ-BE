@@ -6,6 +6,11 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ## [Unreleased]
 
+### Fixed
+
+- `/docs` opened with a trailing slash (`/api/docs/` through the front end's proxy) showed Swagger UI failing to load the document, which it asked for relative to the page; the document's URL is now built from the page's own path.
+- A CSV export computed the whole sales report and kept one table; it now computes only that table's part (the groupings behind the others, the refunds pass and the returning-diner look-up are skipped when the table doesn't read them). Same files.
+
 ### Added
 
 - A nightly reseed of the deployed demo: a GitHub Actions workflow (`.github/workflows/demo.yml`) runs `npm run seed:demo` at 03:30 UTC every day, and on demand, from three repository secrets, so the demo's ninety days always end yesterday. [docs/operations.md](./docs/operations.md#the-demo-data).

@@ -12,8 +12,10 @@ const router = Router()
 let document: ReturnType<typeof buildOpenApi> | undefined
 export const openApiDocument = () => (document ??= buildOpenApi())
 
-// Swagger UI from a CDN, pinned, reading the document next to this page
-// (relative, so it works behind the front end's /api prefix too). Self-hosting
+// Swagger UI from a CDN, pinned, reading the document next to this page: its
+// URL is built from the page's own path, so it works behind the front end's
+// /api prefix and whether the page was opened as /docs or /docs/ (a relative
+// "openapi.json" would resolve under /docs/ from the latter). Self-hosting
 // it would need static-file middleware on the router, which routeList can't
 // list; one HTML route can be.
 const SWAGGER_UI = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.33.1"
@@ -31,7 +33,7 @@ const docsPage = `<!doctype html>
 <script>
 window.onload = () => {
   window.ui = SwaggerUIBundle({
-    url: "openapi.json",
+    url: location.pathname.replace(/[/]docs[/]*$/, "/openapi.json"),
     dom_id: "#swagger-ui",
     deepLinking: true,
     // The auth cookies go with Try it out, so a sign-in there signs in here.
