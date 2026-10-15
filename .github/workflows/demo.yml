@@ -1,0 +1,55 @@
+name: Demo
+
+# Rewrites the live demo's data every night, so its ninety days of history end
+# yesterday whatever the date, and whatever visitors did to the demo venues the
+# day before is gone by morning. 03:30 UTC is 03:30 or 04:30 in London, the
+# shops' zone, hours before the first one opens. Also runs from the Actions tab.
+#
+# Needs three repository secrets: MONGO_CONNECTION (the demo's database),
+# DEMO_MANAGER_PASSWORD and DEMO_DINER_PASSWORD (the two sign-ins). The
+# database must accept connections from GitHub's runners, whose addresses
+# change. GitHub pauses a schedule after 60 days without a commit to the
+# repository; the Actions tab says so and re-enables it.
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+# One seed at a time: a manual run during the nightly one waits for it.
+concurrency:
+  group: demo-seed
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run seed:demo
+        env:
+          MONGO_CONNECTION: ${{ secrets.MONGO_CONNECTION }}
+          DEMO_MANAGER_PASSWORD: ${{ secrets.DEMO_MANAGER_PASSWORD }}
+          DEMO_DINER_PASSWORD: ${{ secrets.DEMO_DINER_PASSWORD }}
+          # The tables' QR codes point at the live client (seedDemo.ts refuses
+          # a localhost one for a database that isn't local).
+          FRONTEND_URL: https://un-q.vercel.app
+          FRONTEND_PROD_URL: https://un-q.vercel.app
+          PUBLIC_API_URL: https://un-q.vercel.app/api
+          # The configuration check every process runs at boot
+          # (src/settings/env.ts) wants the rest of the variables too. The seed
+          # never reads them and dials no provider: it writes to the database
+          # only, with marked provider ids. Placeholders, not secrets.
+          JWT_SECRET: unused-by-the-seed
+          JWT_REFRESH_SECRET: unused-by-the-seed
+          GOOGLE_CLIENT_ID: unused-by-the-seed
+          GOOGLE_SECRET: unused-by-the-seed
+          CLOUDINARY_URL: cloudinary://unused:unused@unused-by-the-seed
+          PAYPAL_CLIENT_ID: unused-by-the-seed
+          PAYPAL_CLIENT_SECRET: unused-by-the-seed
+          STRIPE_SECRET_KEY: sk_test_unused_by_the_seed
+          STRIPE_WEBHOOK_SECRET: whsec_unused_by_the_seed
