@@ -94,12 +94,22 @@ describe("the system routes", () => {
         expect(Object.keys(res.body.paths).sort()).toEqual(Object.keys(document.paths).sort())
     })
 
-    it("GET /docs serves Swagger UI reading the document next to it", async () => {
-        const res = await request(app).get("/docs")
-        expect(res.status).toBe(200)
-        expect(res.type).toBe("text/html")
-        expect(res.text).toContain("swagger-ui-dist@")
-        expect(res.text).toContain('url: "openapi.json"')
+    it("GET /docs serves Swagger UI reading the document next to it, opened with or without a trailing slash", async () => {
+        for (const path of ["/docs", "/docs/"]) {
+            const res = await request(app).get(path)
+            expect(res.status).toBe(200)
+            expect(res.type).toBe("text/html")
+            expect(res.text).toContain("swagger-ui-dist@")
+            // The document's URL comes from the page's own path, never relative:
+            // "openapi.json" under /docs/ would be /docs/openapi.json.
+            const expression = res.text.match(/url: (location\.pathname\.replace\(.*\)),/)?.[1]
+            expect(expression).toBeDefined()
+            const url = (pathname: string) => new Function("location", `return ${expression}`)({ pathname }) as string
+            expect(url("/docs")).toBe("/openapi.json")
+            expect(url("/docs/")).toBe("/openapi.json")
+            expect(url("/api/docs")).toBe("/api/openapi.json")
+            expect(url("/api/docs/")).toBe("/api/openapi.json")
+        }
     })
 
     it("GET /health says the server is up, which version, for how long", async () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "@jest/globals"
+import { describe, it, expect, beforeEach, jest } from "@jest/globals"
 import mongoose from "mongoose"
 import "./setup"
 import { agent, authFor } from "./helpers"
@@ -264,6 +264,28 @@ describe("GET /shops/:shopId/sales/export", () => {
             "2026-03-30,12.3,10.1,2.2,1,1,1,0,2,12.3,0,0,12.3,0",
             "2026-03-31,5,0,5,1,1,1,0,2,0,5,0,0,5",
         ].join("\r\n") + "\r\n")
+    })
+
+    it("computes only its table's part of the report", async () => {
+        const aggregate = jest.spyOn(OrderModel, "aggregate")
+        // The groupings each aggregation ran, in the order the calls were made.
+        const facets = () => aggregate.mock.calls.map(([pipeline]) => Object.keys((pipeline as { $facet?: object }[]).find((stage) => stage.$facet)?.$facet ?? {}).sort())
+        try {
+            expect((await csv({ from: "2026-03-28", to: "2026-03-31", table: "items" })).status).toBe(200)
+            expect(facets()).toEqual([["items"]])
+            aggregate.mockClear()
+            expect((await csv({ from: "2026-03-28", to: "2026-03-31", table: "days" })).status).toBe(200)
+            expect(facets()).toEqual([["payers", "series", "seriesByCategory", "seriesByProvider"], ["series"]])
+            aggregate.mockClear()
+            // The page reads everything.
+            expect((await agent().get(`/shops/${shopId}/sales`).set("Cookie", cookies).query({ from: "2026-03-28", to: "2026-03-31" })).status).toBe(200)
+            expect(facets()).toEqual([
+                ["byProvider", "heatmap", "items", "payers", "pending", "series", "seriesByCategory", "seriesByProvider", "tables", "totals"],
+                ["byHour", "byReason", "byTable", "series", "totals"],
+            ])
+        } finally {
+            aggregate.mockRestore()
+        }
     })
 
     it("needs the table and a good range, and is the shop's manager's alone", async () => {

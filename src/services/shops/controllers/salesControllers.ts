@@ -47,6 +47,12 @@ const bucketOf = (field: string, { by, timeZone }: Range) => ({
 
 
 type Bucketed<T> = T & { _id: string }
+// What a caller reads of the report. The page reads all of it; an export reads
+// one table, so the facets behind the others aren't run (the match and the
+// sort are shared, the groupings are what is saved), nor the refunds pass or
+// the look-up of who had paid before the range when nothing read needs them.
+export type ReportPart = "totals" | "series" | "heatmap" | "items" | "refunds" | "tables"
+const ALL_PARTS: readonly ReportPart[] = ["totals", "series", "heatmap", "items", "refunds", "tables"]
 type OrdersFacets = {
     totals: { gross: number; orders: number; visits: number; diners: number; units: number }[]
     pending: { n: number }[]
@@ -70,65 +76,82 @@ type RefundsFacets = {
 // Everything read from the orders paid in the range, in one pass. Read in the
 // order paid (the index's own order, so no sort is made), so `$last` is the
 // name and price diners saw last.
-const ordersPipeline = (shopId: mongoose.Types.ObjectId, range: Range): PipelineStage[] => {
+const ordersPipeline = (shopId: mongoose.Types.ObjectId, range: Range, want: (part: ReportPart) => boolean): PipelineStage[] => {
     const { start, end } = boundsOf(range)
     const bucket = bucketOf("$paidAt", range)
     const inZone = { date: "$paidAt", timezone: range.timeZone }
+    const facets: Record<string, PipelineStage.FacetPipelineStage[]> = {}
+    if (want("totals")) {
+        facets.totals = summed(null)
+        facets.pending = [{ $match: { status: "pending" } }, { $count: "n" }]
+        facets.byProvider = [completed, { $group: { _id: "$provider", gross, orders: { $sum: 1 } } }]
+    }
+    if (want("series")) {
+        facets.series = summed(bucket)
+        facets.seriesByProvider = [completed, { $group: { _id: { bucket, name: "$provider" }, gross } }]
+        facets.seriesByCategory = [completed, { $unwind: "$lines" }, { $group: { _id: { bucket, name: { $ifNull: ["$lines.category", "other"] } }, gross: { $sum: pence({ $multiply: ["$lines.qty", "$lines.unitPrice"] }) } } }]
+    }
+    // Each diner's first bucket in the range (the keys sort as dates): the
+    // returning diners of the totals, the new diners of the series.
+    if (want("totals") || want("series")) {
+        facets.payers = [completed, { $group: { _id: { payer: "$payerId", bucket } } }, { $group: { _id: "$_id.payer", first: { $min: "$_id.bucket" } } }]
+    }
+    if (want("heatmap")) {
+        facets.heatmap = [completed, { $group: { _id: { dow: { $isoDayOfWeek: inZone }, hour: { $hour: inZone } }, orders: { $sum: 1 }, gross } }]
+    }
+    if (want("items")) {
+        facets.items = [completed, { $unwind: "$lines" },
+            { $group: { _id: "$lines.menuId", name: { $last: "$lines.name" }, category: { $last: "$lines.category" }, unitPrice: { $last: "$lines.unitPrice" }, units: { $sum: lineUnits }, refundedUnits: { $sum: "$lines.refundedQty" }, revenue: { $sum: pence({ $multiply: [lineUnits, "$lines.unitPrice"] }) } } },
+            { $sort: { revenue: -1, name: 1 } }]
+    }
+    if (want("tables")) {
+        facets.tables = [completed, { $group: { _id: "$tableId", name: { $last: "$tableName" }, orders: { $sum: 1 }, carts: { $addToSet: "$cartId" }, gross } },
+            { $project: { name: 1, orders: 1, gross: 1, visits: { $size: "$carts" } } }]
+    }
     return [
         { $match: { shopId, paidAt: { $gte: start, $lt: end } } },
         { $sort: { paidAt: 1 } },
-        {
-            $facet: {
-                totals: summed(null),
-                pending: [{ $match: { status: "pending" } }, { $count: "n" }],
-                byProvider: [completed, { $group: { _id: "$provider", gross, orders: { $sum: 1 } } }],
-                series: summed(bucket),
-                seriesByProvider: [completed, { $group: { _id: { bucket, name: "$provider" }, gross } }],
-                seriesByCategory: [completed, { $unwind: "$lines" }, { $group: { _id: { bucket, name: { $ifNull: ["$lines.category", "other"] } }, gross: { $sum: pence({ $multiply: ["$lines.qty", "$lines.unitPrice"] }) } } }],
-                // Each diner's first bucket in the range (the keys sort as dates).
-                payers: [completed, { $group: { _id: { payer: "$payerId", bucket } } }, { $group: { _id: "$_id.payer", first: { $min: "$_id.bucket" } } }],
-                heatmap: [completed, { $group: { _id: { dow: { $isoDayOfWeek: inZone }, hour: { $hour: inZone } }, orders: { $sum: 1 }, gross } }],
-                items: [completed, { $unwind: "$lines" },
-                    { $group: { _id: "$lines.menuId", name: { $last: "$lines.name" }, category: { $last: "$lines.category" }, unitPrice: { $last: "$lines.unitPrice" }, units: { $sum: lineUnits }, refundedUnits: { $sum: "$lines.refundedQty" }, revenue: { $sum: pence({ $multiply: [lineUnits, "$lines.unitPrice"] }) } } },
-                    { $sort: { revenue: -1, name: 1 } }],
-                tables: [completed, { $group: { _id: "$tableId", name: { $last: "$tableName" }, orders: { $sum: 1 }, carts: { $addToSet: "$cartId" }, gross } },
-                    { $project: { name: 1, orders: 1, gross: 1, visits: { $size: "$carts" } } }],
-            },
-        },
+        { $facet: facets },
     ]
 }
 
 // The refunds made in the range, whenever their sale was.
-const refundsPipeline = (shopId: mongoose.Types.ObjectId, range: Range): PipelineStage[] => {
+const refundsPipeline = (shopId: mongoose.Types.ObjectId, range: Range, want: (part: ReportPart) => boolean): PipelineStage[] => {
     const { start, end } = boundsOf(range)
     const at = { $gte: start, $lt: end }
     const amount = { $sum: pence("$refunds.amount") }
+    const facets: Record<string, PipelineStage.FacetPipelineStage[]> = {}
+    if (want("totals") || want("refunds")) facets.totals = [{ $group: { _id: null, amount, count: { $sum: 1 } } }]
+    if (want("series")) facets.series = [{ $group: { _id: bucketOf("$refunds.at", range), amount } }]
+    if (want("refunds")) {
+        facets.byReason = [{ $group: { _id: "$refunds.reason", count: { $sum: 1 }, amount } }, { $sort: { amount: -1, count: -1, _id: 1 } }]
+        facets.byHour = [{ $group: { _id: { $hour: { date: "$refunds.at", timezone: range.timeZone } }, count: { $sum: 1 }, amount } }, { $sort: { _id: 1 } }]
+    }
+    if (want("tables")) facets.byTable = [{ $group: { _id: "$tableId", name: { $last: "$tableName" }, amount } }]
     return [
         { $match: { shopId, "refunds.at": at } },
         { $unwind: "$refunds" },
         { $match: { "refunds.status": "completed", "refunds.at": at } },
-        {
-            $facet: {
-                totals: [{ $group: { _id: null, amount, count: { $sum: 1 } } }],
-                series: [{ $group: { _id: bucketOf("$refunds.at", range), amount } }],
-                byReason: [{ $group: { _id: "$refunds.reason", count: { $sum: 1 }, amount } }, { $sort: { amount: -1, count: -1, _id: 1 } }],
-                byHour: [{ $group: { _id: { $hour: { date: "$refunds.at", timezone: range.timeZone } }, count: { $sum: 1 }, amount } }, { $sort: { _id: 1 } }],
-                byTable: [{ $group: { _id: "$tableId", name: { $last: "$tableName" }, amount } }],
-            },
-        },
+        { $facet: facets },
     ]
 }
 
 const byKey = <T extends { _id: unknown }>(rows: T[]) => new Map(rows.map((row) => [String(row._id), row]))
 
 // The report for one range. `previous` is the same for the range of the same
-// length ending the day before, with what the comparison needs.
-const report = async (shopId: mongoose.Types.ObjectId, range: Range) => {
+// length ending the day before, with what the comparison needs. With `parts`,
+// only those are computed; the rest of the answer is empty or zero, never read.
+const report = async (shopId: mongoose.Types.ObjectId, range: Range, parts: readonly ReportPart[] = ALL_PARTS) => {
     const { start } = boundsOf(range)
-    const [[orders], [refunds]] = await Promise.all([
-        OrderModel.aggregate<OrdersFacets>(ordersPipeline(shopId, range)),
-        OrderModel.aggregate<RefundsFacets>(refundsPipeline(shopId, range)),
+    const want = (part: ReportPart) => parts.includes(part)
+    const refundsRead = want("totals") || want("series") || want("refunds") || want("tables")
+    const [[ordersGot], [refundsGot]] = await Promise.all([
+        OrderModel.aggregate<Partial<OrdersFacets>>(ordersPipeline(shopId, range, want)),
+        refundsRead ? OrderModel.aggregate<Partial<RefundsFacets>>(refundsPipeline(shopId, range, want)) : [{}],
     ])
+    // A facet not run reads as empty.
+    const orders: OrdersFacets = { totals: [], pending: [], byProvider: [], series: [], seriesByProvider: [], seriesByCategory: [], payers: [], heatmap: [], items: [], tables: [], ...ordersGot }
+    const refunds: RefundsFacets = { totals: [], series: [], byReason: [], byHour: [], byTable: [], ...refundsGot }
     // Who among the range's diners had paid here before it began.
     const payers = orders.payers.map((p) => p._id)
     const before = new Set((payers.length === 0 ? [] : await OrderModel.distinct("payerId", { shopId, payerId: { $in: payers }, status: "completed", paidAt: { $lt: start } })).map(String))
@@ -277,10 +300,10 @@ export const exportSales: TController = async (req, res, next) => {
             rows = await ordersTable(shopId, range)
         } else if (table === "items") {
             rows = [["Item", "Category", "Unit price", "Units", "Refunded units", "Revenue"],
-                ...(await report(shopId, range)).items.map((i) => [i.name, i.category ?? "", i.unitPrice, i.units, i.refundedUnits, i.revenue])]
+                ...(await report(shopId, range, ["items"])).items.map((i) => [i.name, i.category ?? "", i.unitPrice, i.units, i.refundedUnits, i.revenue])]
         } else {
             rows = [["Day", "Gross", "Refunds", "Net", "Orders", "Visits", "Diners", "New diners", "Units", "Food", "Drinks", "Other", "PayPal", "Card"],
-                ...(await report(shopId, range)).series.map((d) => [d.bucket, d.gross, d.refunds, d.net, d.orders, d.visits, d.diners, d.newDiners, d.units,
+                ...(await report(shopId, range, ["series"])).series.map((d) => [d.bucket, d.gross, d.refunds, d.net, d.orders, d.visits, d.diners, d.newDiners, d.units,
                     d.byCategory.food, d.byCategory.drinks, d.byCategory.other, d.byProvider.paypal, d.byProvider.stripe])]
         }
         res.attachment(`${slug(shop.name)}-sales-${from}-${to}-${table}.csv`)
