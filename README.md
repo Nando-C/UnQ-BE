@@ -183,7 +183,7 @@ The suite drives the Express app through Supertest against an in-memory MongoDB,
 npm test
 ```
 
-CI runs the type check, the lint, the suite and the build on Node 24 for every push to `main` and every pull request. No secrets: the suite fills the required variables itself. The gates and the deploy order are in [docs/operations.md](./docs/operations.md#gates-and-ci).
+CI runs the type check, the lint, the suite and the build on Node 24 for every push to `main` and every pull request. No secrets: the suite fills the required variables itself. A second check fails a pull request that changes the code without a word in the changelog or the docs, unless it is labelled `no-docs`. The gates are in [docs/operations.md](./docs/operations.md#gates-and-ci), the release steps under [Cutting a release](./docs/operations.md#cutting-a-release).
 
 To try card payments by hand, use a test key and Stripe's test cards with any future expiry and any CVC: `4242 4242 4242 4242` pays, `4000 0025 0000 3155` asks for the bank's check first, `4000 0000 0000 0002` is declined.
 

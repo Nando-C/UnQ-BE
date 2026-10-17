@@ -1,6 +1,6 @@
 # Operations
 
-Running, deploying and repairing the API. Read from `src/index.ts`, `src/server.ts`, `src/settings/env.ts`, `src/scripts/`, `.github/workflows/ci.yml` and the [changelog](../CHANGELOG.md). Variables are named here, never valued: `.env` holds real secrets.
+Running, deploying and repairing the API. Read from `src/index.ts`, `src/server.ts`, `src/settings/env.ts`, `src/scripts/`, `.github/workflows/` and the [changelog](../CHANGELOG.md). Variables are named here, never valued: `.env` holds real secrets.
 
 ## How the server starts
 
@@ -30,9 +30,20 @@ The variables, with what they are for, are in the README's [Environment Variable
 | Images | Cloudinary | configured by `CLOUDINARY_URL` alone |
 | Payments | PayPal (Orders v2), Stripe (PaymentIntents, manual capture) | sandbox / test mode; going live is a separate step (below) |
 
-### Deploying a release
+### Cutting a release
 
-UnQ releases as a pair: the API at `x.y.0` first, then the front end at `x.y.*` (the rule is at the top of the [changelog](../CHANGELOG.md)). A MAJOR means the host needs a change; read the changelog's deploy notes for it. The order that worked for 2.0.0:
+UnQ releases as a pair: the API at `x.y.0` first, then the front end at `x.y.*` (the rule is at the top of the [changelog](../CHANGELOG.md)). A release goes out on a branch `release/x.y.0` that one pull request merges:
+
+1. **Settle the docs.** Every claim in `README.md`, `docs/` and the OpenAPI document that changed since the last tag is re-read against the code (`git diff $(git describe --tags --abbrev=0)..main --stat -- README.md docs/ src/openapi/` lists the pages), and [known-gaps.md](./known-gaps.md) says what the release still leaves open, its roadmap paragraph included. The front end's README and the product page describe the live demo: a flow that changed changes their sentences too.
+2. **Close the changelog.** The Unreleased section becomes `[x.y.0] - <date>`, opened by a paragraph that says what changed, what the host needs (usually nothing) and which front-end release pairs with it; an empty Unreleased section goes above it.
+3. **Bump the version**: `npm version minor --no-git-tag-version` (or `patch`), and the README's version badge to match; a test fails when they differ.
+4. **Run the gates** (below), open the pull request, and merge once CI agrees. Render deploys `main`: read the boot log, and `GET /health` must answer the new version.
+5. **Tag what is deployed**, `git tag -a vx.y.0 -m "UnQ API x.y.0"` on `main`, and push the tag.
+6. **Release the front end** by its own list ([deployment.md](https://github.com/Nando-C/UnQ-FE/blob/main/docs/deployment.md#releasing)), then close the roadmap issues the pair ships, each with a line on what shipped where.
+
+### When the host changes
+
+A MAJOR means the host needs a change; read the changelog's deploy notes for it. The order that worked for 2.0.0:
 
 1. **Stripe's dashboard, test mode first**: add the webhook endpoint `https://unq-be.onrender.com/payments/stripe/webhook` with the events `payment_intent.amount_capturable_updated`, `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.canceled`, `refund.failed`; copy its signing secret. Register the front end's domain under Payment method domains, or the card form never offers Apple Pay or Google Pay (each subdomain separately; preview URLs and `localhost` aren't covered).
 2. **Set the host's variables** on Render: everything in the README's table that is required, the Stripe pair among them.
@@ -69,7 +80,7 @@ npm test          # Jest, in band; in-memory MongoDB, providers mocked, no secre
 npm run build
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same four on Node 24 for every push to `main` and every pull request, from `npm ci`. **After any `npm install` or `uninstall`, run `npm ci --dry-run --os linux --cpu x64`** and check the exit code: on macOS npm skips the Linux-only optional packages and used to drop their peers (`@emnapi/core`, `@emnapi/runtime`) from the lockfile, which failed CI twice; both are pinned as devDependencies so the lockfile always holds them.
+CI (`.github/workflows/ci.yml`) runs the same four on Node 24 for every push to `main` and every pull request, from `npm ci`. A second workflow, Docs (`.github/workflows/docs.yml`), fails a pull request that changes `src/` (the tests apart) or the nightly reseed workflow without touching `CHANGELOG.md`, `README.md` or `docs/`: a rule that moved while the page describing it didn't is the slip no test can catch. The `no-docs` label says the change is invisible to anyone using or running the API, and the check stands down; it reads the pull request's file list, so it needs no checkout. The pull request template lists what a change carries with it (a changelog entry, the page a changed rule lives on, the OpenAPI operation, the issue it closes), and the issue templates ask which page describes the behaviour. **After any `npm install` or `uninstall`, run `npm ci --dry-run --os linux --cpu x64`** and check the exit code: on macOS npm skips the Linux-only optional packages and used to drop their peers (`@emnapi/core`, `@emnapi/runtime`) from the lockfile, which failed CI twice; both are pinned as devDependencies so the lockfile always holds them.
 
 `package.json`'s `overrides` gives Jest's coverage tooling `js-yaml` 4, for an advisory in `sprintf-js` that has no fixed version; remove it once `@istanbuljs/load-nyc-config` itself depends on js-yaml 4 (`npm ls js-yaml` shows).
 

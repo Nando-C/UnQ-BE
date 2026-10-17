@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Roadmap
+    url: https://github.com/Nando-C/UnQ/issues?q=is%3Aopen+label%3Aroadmap
+    about: Planned features are issues on the product repository, with the work on each side.
+  - name: Security
+    url: https://github.com/Nando-C/UnQ-BE/blob/main/SECURITY.md
+    about: How to report a vulnerability privately.

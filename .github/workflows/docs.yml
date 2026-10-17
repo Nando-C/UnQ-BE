@@ -1,0 +1,33 @@
+name: Docs
+
+# A change to the code without a word in the changelog or the docs is usually
+# a slip: a rule moved and the page that describes it didn't. This check fails
+# such a pull request. The `no-docs` label says the change is invisible to
+# anyone using or running the API (a refactor, a dependency, a test) and the check stands down;
+# adding or removing that label runs it again, other labels don't.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  mentioned:
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-docs') && (github.event.action != 'labeled' && github.event.action != 'unlabeled' || github.event.label.name == 'no-docs') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Code that changed is mentioned in the changelog or the docs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          changed=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')
+          code=$(printf '%s\n' "$changed" | grep -E '^(src/|\.github/workflows/demo\.yml)' | grep -vE '^src/tests/' || true)
+          docs=$(printf '%s\n' "$changed" | grep -E '^(CHANGELOG\.md|README\.md|docs/)' || true)
+          if [ -n "$code" ] && [ -z "$docs" ]; then
+            echo "::error::These files changed and neither CHANGELOG.md, README.md nor docs/ did. Add the entry, or the label no-docs if nothing anyone using or running the API can see has changed."
+            printf '%s\n' "$code"
+            exit 1
+          fi
+          echo "Mentioned."

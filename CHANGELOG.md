@@ -6,6 +6,14 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ## [Unreleased]
 
+### Added
+
+- A pull request template, issue templates and a Docs check (`.github/workflows/docs.yml`): a pull request that changes the code without a word in the changelog or the docs fails the check, unless it carries the `no-docs` label. The steps a release follows are written down in [docs/operations.md](./docs/operations.md#cutting-a-release).
+
+### Fixed
+
+- The known-gaps roadmap no longer lists the shop at a glance on My Shops, which shipped in 2.3.0, as the next step.
+
 ## [2.3.0] - 2026-10-15
 
 The demo reseeds itself every night, exports compute only their table, and the docs page works behind a trailing slash. Nothing changes on the host; the nightly reseed is a GitHub Actions workflow with three repository secrets. The front end at 2.3.0 shows each shop at a glance on My Shops from routes this API already served.
