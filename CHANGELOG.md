@@ -6,6 +6,11 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ## [Unreleased]
 
+### Fixed
+
+- The demo seed places each newcomer's first visit on a day the shop opens, so the Saturday pop-up has a new face on its latest Saturday whatever the weekday the seed runs on; a first visit that fell between two Saturdays used to be skipped.
+- The café's history rises more clearly over its ninety days, so the report's trend reads as a rise on any day of the week; a run of quiet days used to leave the last month within a hair of the first.
+
 ## [2.3.0] - 2026-10-15
 
 The demo reseeds itself every night, exports compute only their table, and the docs page works behind a trailing slash. Nothing changes on the host; the nightly reseed is a GitHub Actions workflow with three repository secrets. The front end at 2.3.0 shows each shop at a glance on My Shops from routes this API already served.

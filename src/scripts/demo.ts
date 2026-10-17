@@ -12,8 +12,8 @@
 //
 // The history has the shapes a sales page should show: a lunch and a dinner
 // peak within each shop's hours, a gentle rise in visits over the 90 days,
-// regulars who come back and newcomers at every shop in any month and in the
-// last week, a dish launched in week six,
+// regulars who come back and newcomers at every shop in any month and on its
+// latest open days, a dish launched in week six,
 // refund causes weighted the way a kitchen's are (long waits cluster on busy
 // evenings), and one bad week at the café. Days and hours are the shops' own
 // (Europe/London), wherever the seed runs.
@@ -307,7 +307,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
             openHour: 8,
             closeHour: 16,
             peaks: [[8, 10], [12, 14]],
-            growth: 0.35,
+            growth: 0.5,
             badWeek: [38, 32],
             since: 90,
         },
@@ -404,16 +404,25 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
     const occasionals = dinerIds.slice(REGULARS)
     // The regulars were there from the start; the others each make a first
     // visit at one of the shops, spaced over its history a day or so apart
-    // from the next (the last within the past week), and come now and then
-    // after. So every shop's report has new faces in any month and in the
-    // last seven days, and its returning share is never everyone.
+    // from the next, each on a day the shop opens (the last on its most
+    // recent open day), and come now and then after. So every shop's report
+    // has new faces in any month and on its latest open days, and its
+    // returning share is never everyone.
+    const opens = (shop: ShopDef, daysAgo: number) => !!shop.visits(weekdayOf(dayOf(daysAgo)))
+    const openDayNear = (shop: ShopDef, daysAgo: number) => {
+        for (let d = daysAgo; d >= 1; d--) if (opens(shop, d)) return d
+        for (let d = daysAgo + 1; d <= shop.since; d++) if (opens(shop, d)) return d
+        return daysAgo
+    }
     const debuts = new Map<string, { shop: ShopDef; daysAgo: number; done: boolean }>()
     occasionals.forEach((id, i) => {
         const shop = shops[i % shops.length]
         const mates = occasionals.filter((_, n) => n % shops.length === i % shops.length).length
         const step = (shop.since - 4) / (mates - 1)
-        const daysAgo = Math.min(shop.since - 1, Math.max(1, Math.round(2 + Math.floor(i / shops.length) * step) + rng.int(-1, 1)))
-        debuts.set(String(id), { shop, daysAgo, done: false })
+        const nth = Math.floor(i / shops.length)
+        const spread = Math.min(shop.since - 1, Math.max(1, Math.round(2 + nth * step) + rng.int(-1, 1)))
+        // The first of each shop's newcomers debuts on its most recent open day.
+        debuts.set(String(id), { shop, daysAgo: openDayNear(shop, nth === 0 ? 1 : spread), done: false })
     })
     const arrivals = new Map([...debuts].map(([id, d]) => [id, d.daysAgo]))
     log(`Users: ${dinerIds.length + 1} (sign-ins: ${DEMO_MANAGER_EMAIL}, ${DEMO_DINER_EMAIL})`)
