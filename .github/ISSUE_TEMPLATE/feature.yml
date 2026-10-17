@@ -1,0 +1,21 @@
+name: Feature request
+description: Something the API should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What it would do
+      description: Who it is for and what changes for them.
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: On the contract
+      description: A new route or field is additive; an existing one keeps its path and shape. Say what the front end would need from it.
+  - type: textarea
+    id: docs
+    attributes:
+      label: Docs to update
+      description: The page in `docs/` or the README section that would describe it, and the OpenAPI operations it adds or extends.

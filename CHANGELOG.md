@@ -6,8 +6,13 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ## [Unreleased]
 
+### Added
+
+- A pull request template, issue templates and a Docs check (`.github/workflows/docs.yml`): a pull request that changes the code without a word in the changelog or the docs fails the check, unless it carries the `no-docs` label. The steps a release follows are written down in [docs/operations.md](./docs/operations.md#cutting-a-release).
+
 ### Fixed
 
+- The known-gaps roadmap no longer lists the shop at a glance on My Shops, which shipped in 2.3.0, as the next step.
 - The demo seed places each newcomer's first visit on a day the shop opens, so the Saturday pop-up has a new face on its latest Saturday whatever the weekday the seed runs on; a first visit that fell between two Saturdays used to be skipped.
 - The café's history rises more clearly over its ninety days, so the report's trend reads as a rise on any day of the week; a run of quiet days used to leave the last month within a hair of the first.
 

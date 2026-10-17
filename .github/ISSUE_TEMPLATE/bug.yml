@@ -1,0 +1,21 @@
+name: Bug report
+description: The API does something it shouldn't
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The request (route, body, who was signed in), the answer you got and the one you expected. Never paste a token, a cookie or a secret.
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: The live demo, or a local run and its version (`GET /health` says).
+  - type: textarea
+    id: docs
+    attributes:
+      label: Docs to update
+      description: The page in `docs/`, the README section or the OpenAPI operation that describes this behaviour, if one does. A fix changes it in the same pull request, with a changelog entry.
