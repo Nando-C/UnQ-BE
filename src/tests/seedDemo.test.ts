@@ -78,18 +78,26 @@ describe("the demo seed", () => {
         const byHour = await OrderModel.aggregate<{ _id: number; n: number }>([{ $match: { shopId: shop, status: "completed" } }, { $group: { _id: { $hour: inZone }, n: { $sum: 1 } } }])
         const hour = (h: number) => byHour.find((b) => b._id === h)?.n ?? 0
         expect(hour(9) + hour(10) + hour(13) + hour(14)).toBeGreaterThan(1.4 * (hour(8) + hour(11) + hour(12) + hour(15) + hour(16)))
-        // A rise over the 90 days: the last 30 days outsell the first 30.
+        // A rise over the 90 days: the last four weeks outsell the first four
+        // (whole weeks, so both windows hold the same number of weekends).
         const days = (ago: number) => new Date(NOW.getTime() - ago * 86_400_000)
-        expect(await sales({ paidAt: { $gte: days(31) } })).toBeGreaterThan(1.15 * await sales({ paidAt: { $gte: days(91), $lt: days(60) } }))
+        expect(await sales({ paidAt: { $gte: days(29) } })).toBeGreaterThan(1.15 * await sales({ paidAt: { $gte: days(91), $lt: days(63) } }))
         // Regulars and passers-by: forty diners, a dozen of whom bring most visits.
         const payers = await OrderModel.aggregate<{ _id: unknown; n: number }>([{ $match: { status: "completed" } }, { $group: { _id: "$payerId", n: { $sum: 1 } } }, { $sort: { n: -1 } }])
         expect(payers.length).toBeGreaterThanOrEqual(34)
         // New faces keep coming, at every shop: diners whose first payment
-        // there falls in the last 30 days, and at least one in the last 7.
+        // there falls in the last 30 days, and at least one on the shop's
+        // last open day before today (the history ends yesterday; today holds
+        // the live states), which is within the week: the pop-up opens on
+        // Saturdays only, so on a Saturday that day is seven days ago.
         const firsts = await OrderModel.aggregate<{ _id: { shop: unknown; payer: unknown }; first: Date }>([{ $match: { status: "completed" } }, { $group: { _id: { shop: "$shopId", payer: "$payerId" }, first: { $min: "$paidAt" } } }])
+        const todayStart = startOfDay(dayIn(NOW, "Europe/London"), "Europe/London")
+        const lastSales = await OrderModel.aggregate<{ _id: unknown; at: Date }>([{ $match: { status: "completed", paidAt: { $lt: todayStart } } }, { $group: { _id: "$shopId", at: { $max: "$paidAt" } } }])
         for (const s of await ShopModel.find().lean()) {
             const here = firsts.filter((f) => String(f._id.shop) === String(s._id))
-            expect({ shop: s.name, month: here.filter((f) => f.first >= days(30)).length >= 3, week: here.filter((f) => f.first >= days(7)).length >= 1 }).toEqual({ shop: s.name, month: true, week: true })
+            const lastSale = lastSales.find((l) => String(l._id) === String(s._id))!.at
+            const lastOpenDay = startOfDay(dayIn(lastSale, "Europe/London"), "Europe/London")
+            expect({ shop: s.name, month: here.filter((f) => f.first >= days(30)).length >= 3, week: lastSale >= days(8), newcomer: here.some((f) => f.first >= lastOpenDay) }).toEqual({ shop: s.name, month: true, week: true, newcomer: true })
         }
         const total = payers.reduce((s, p) => s + p.n, 0)
         expect(payers.slice(0, 12).reduce((s, p) => s + p.n, 0)).toBeGreaterThan(0.6 * total)

@@ -13,6 +13,8 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 ### Fixed
 
 - The known-gaps roadmap no longer lists the shop at a glance on My Shops, which shipped in 2.3.0, as the next step.
+- The demo seed places each newcomer's first visit on a day the shop opens, so the Saturday pop-up has a new face on its latest Saturday whatever the weekday the seed runs on; a first visit that fell between two Saturdays used to be skipped.
+- The café's history rises more clearly over its ninety days, so the report's trend reads as a rise on any day of the week; a run of quiet days used to leave the last month within a hair of the first.
 
 ## [2.3.0] - 2026-10-15
 
