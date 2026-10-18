@@ -53,6 +53,25 @@ describe("the demo seed", () => {
         first = await everything()
     }, 120_000)
 
+    it("keeps an account that holds the id a newer demo account would be given", async () => {
+        // A database seeded before the café's second manager existed: Alex's
+        // address is unknown, and the id the sequence gives Alex belongs to
+        // another account. That account stays as it is; Alex gets another id.
+        const alex = (await UserModel.findOne({ email: DEMO_STAFF_EMAIL }))!
+        await UserModel.deleteOne({ _id: alex._id })
+        await UserModel.create({ _id: alex._id, email: "someone.else@example.net", name: "Someone", surname: "Else", role: "customer" })
+
+        await seedDemo({ ...passwords, now: NOW })
+
+        const other = await UserModel.findById(alex._id).lean()
+        expect(other).toMatchObject({ email: "someone.else@example.net", name: "Someone" })
+        const again = (await UserModel.findOne({ email: DEMO_STAFF_EMAIL }).lean())!
+        expect(again).toMatchObject({ name: "Alex", role: "customer" })
+        expect(String(again._id)).not.toBe(String(alex._id))
+        const shop = await ShopModel.findById(DEMO_SHOP_ID).lean()
+        expect(shop!.members.map((m) => String(m.userId))).toContain(String(again._id))
+    }, 120_000)
+
     it("writes three shops, their tables and menus, forty-two users and the history", async () => {
         expect(summary).toMatchObject({ shops: 3, tables: 14, users: 42, paybacks: 2 })
         expect(summary.menuItems).toBe(await MenuModel.countDocuments())
