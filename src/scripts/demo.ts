@@ -49,6 +49,7 @@ export const DEMO_SHOP_ID = "6158a19282eaef10787cd6f3"
 export const DEMO_TABLE_ID = "61702525cc1ec6af70a92f35"
 export const DEMO_MANAGER_EMAIL = "manager@mail.com"
 export const DEMO_DINER_EMAIL = "frank@mail.com"
+export const DEMO_STAFF_EMAIL = "alex.demo@example.com"
 
 const HOUR = 60 * 60 * 1000
 const MINUTE = 60 * 1000
@@ -383,8 +384,8 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
 
     // Ids drawn up front, whether or not they're needed, so the generator's
     // sequence (and every id after) is the same on a rerun that finds the users.
-    const userIds = { manager: rng.oid(), frank: rng.oid(), diners: DINERS.map(() => rng.oid()) }
-    const user = async (id: Types.ObjectId, email: string, fields: { name: string; surname: string; role: "customer" | "shopMg" }, password?: string) => {
+    const userIds = { manager: rng.oid(), frank: rng.oid(), alex: rng.oid(), diners: DINERS.map(() => rng.oid()) }
+    const user = async (id: Types.ObjectId, email: string, fields: { name: string; surname: string; role: "customer" | "shopMg"; createdBy?: Types.ObjectId }, password?: string) => {
         const existing = await UserModel.findOne({ email })
         const doc = existing ?? new UserModel({ _id: id, email })
         doc.set(fields)
@@ -396,6 +397,9 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
     }
     const managerId = await user(userIds.manager, DEMO_MANAGER_EMAIL, { name: "Sam", surname: "Demo", role: "shopMg" }, managerPassword)
     const frankId = await user(userIds.frank, DEMO_DINER_EMAIL, { name: "Frank", surname: "Demo", role: "customer" }, dinerPassword)
+    // The café's second manager, added by Sam: an account with no sign-in (no
+    // password, no Google), on a reserved domain so no one can claim it.
+    const alexId = await user(userIds.alex, DEMO_STAFF_EMAIL, { name: "Alex", surname: "Demo", role: "customer", createdBy: managerId })
     const dinerIds: Types.ObjectId[] = [frankId]
     for (const [i, d] of DINERS.entries()) {
         dinerIds.push(await user(userIds.diners[i], `${d.name.toLowerCase()}.${d.surname.toLowerCase()}@example.com`, { ...d, role: "customer" }))
@@ -425,7 +429,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
         debuts.set(String(id), { shop, daysAgo: openDayNear(shop, nth === 0 ? 1 : spread), done: false })
     })
     const arrivals = new Map([...debuts].map(([id, d]) => [id, d.daysAgo]))
-    log(`Users: ${dinerIds.length + 1} (sign-ins: ${DEMO_MANAGER_EMAIL}, ${DEMO_DINER_EMAIL})`)
+    log(`Users: ${dinerIds.length + 2} (sign-ins: ${DEMO_MANAGER_EMAIL}, ${DEMO_DINER_EMAIL}; ${DEMO_STAFF_EMAIL} manages the café, no sign-in)`)
 
     // ---- Reset what the seed owns ------------------------------------------
 
@@ -464,9 +468,13 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
             web_URL: shop.web_URL,
             cover: shop.cover,
             timeZone: zone,
-            shopMg: [managerId],
+            // Sam owns every shop; the café has a second manager, added a month in.
+            shopMg: [managerId, ...(String(shop.id) === DEMO_SHOP_ID ? [alexId] : [])],
             ownerId: managerId,
-            members: [{ userId: managerId, role: "owner", since: at(shop.since * DAY + 2 * HOUR) }],
+            members: [
+                { userId: managerId, role: "owner", since: at(shop.since * DAY + 2 * HOUR) },
+                ...(String(shop.id) === DEMO_SHOP_ID ? [{ userId: alexId, role: "manager", since: at((shop.since - 30) * DAY + 2 * HOUR), addedBy: managerId }] : []),
+            ],
             tables: shop.tables.map((t) => ({ _id: t.id, name: t.name, Qr_Url: `${env.FRONTEND_ORIGIN}/shops/${shop.id}/tables/${t.id}` })),
             deletedTables: shop.deletedTables.map((t) => ({ _id: t.id, name: t.name, deletedAt: t.deletedAt })),
             menu: shop.items.filter((i) => !i.deleted).map((i) => i.id),
@@ -826,7 +834,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
         shops: shops.length,
         tables: shops.reduce((n, s) => n + s.tables.length, 0),
         menuItems: menuIds.length,
-        users: dinerIds.length + 1,
+        users: dinerIds.length + 2,
         carts: specs.length,
         payments,
         refunds,

@@ -4,7 +4,7 @@ import mongoose from "mongoose"
 import "./setup"
 import app from "../server"
 import { cookiesFrom } from "./helpers"
-import { seedDemo, DEMO_SHOP_ID, DEMO_TABLE_ID, DEMO_MANAGER_EMAIL, DEMO_DINER_EMAIL } from "../scripts/demo"
+import { seedDemo, DEMO_SHOP_ID, DEMO_TABLE_ID, DEMO_MANAGER_EMAIL, DEMO_DINER_EMAIL, DEMO_STAFF_EMAIL } from "../scripts/demo"
 import UserModel from "../services/users/model"
 import ShopModel from "../services/shops/model"
 import MenuModel from "../services/menus/model"
@@ -53,8 +53,8 @@ describe("the demo seed", () => {
         first = await everything()
     }, 120_000)
 
-    it("writes three shops, their tables and menus, forty-one users and the history", async () => {
-        expect(summary).toMatchObject({ shops: 3, tables: 14, users: 41, paybacks: 2 })
+    it("writes three shops, their tables and menus, forty-two users and the history", async () => {
+        expect(summary).toMatchObject({ shops: 3, tables: 14, users: 42, paybacks: 2 })
         expect(summary.menuItems).toBe(await MenuModel.countDocuments())
         expect(summary.carts).toBe(await CartModel.countDocuments())
         expect(summary.carts).toBeGreaterThan(500)
@@ -137,6 +137,26 @@ describe("the demo seed", () => {
         // Back to the suite's password for the tests below.
         await seedDemo({ ...passwords, now: NOW })
     }, 120_000)
+
+    it("gives every shop an owner, and the café a second manager with no sign-in", async () => {
+        const sam = (await UserModel.findOne({ email: DEMO_MANAGER_EMAIL }).lean())!
+        const alex = (await UserModel.findOne({ email: DEMO_STAFF_EMAIL }).lean())!
+        expect(alex).toMatchObject({ role: "customer", createdBy: sam._id })
+        expect(alex.password).toBeUndefined()
+        for (const shop of await ShopModel.find().lean()) {
+            expect(String(shop.ownerId)).toBe(String(sam._id))
+            expect(shop.members[0]).toMatchObject({ userId: sam._id, role: "owner" })
+            const second = String(shop._id) === DEMO_SHOP_ID
+            expect(shop.shopMg.map(String)).toEqual(second ? [String(sam._id), String(alex._id)] : [String(sam._id)])
+            expect(shop.members).toHaveLength(second ? 2 : 1)
+            if (second) expect(shop.members[1]).toMatchObject({ userId: alex._id, role: "manager", addedBy: sam._id })
+        }
+        // As the staff page reads it.
+        const cookies = await login(DEMO_MANAGER_EMAIL, passwords.managerPassword)
+        const staff = await request(app).get(`/shops/${DEMO_SHOP_ID}/staff`).set("Cookie", cookies)
+        expect(staff.status).toBe(200)
+        expect(staff.body.members.map((m: { role: string; name: string; email: string }) => [m.role, m.name, m.email])).toEqual([["owner", "Sam", DEMO_MANAGER_EMAIL], ["manager", "Alex", DEMO_STAFF_EMAIL]])
+    })
 
     it("leaves what it doesn't own alone", async () => {
         const other = await ShopModel.create({ name: "Someone else's", shopMg: [new mongoose.Types.ObjectId()], menu: [] })

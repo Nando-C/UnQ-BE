@@ -91,8 +91,8 @@ src/
 ├── lib/                   money, payments (both providers), paypal, stripe, the password limit
 ├── services/
 │   ├── auth/              register, login, refresh, logout, Google OAuth, the guards
-│   ├── users/             profile and avatar
-│   ├── shops/             shops and their tables
+│   ├── users/             profile and avatar; the administrator's account routes
+│   ├── shops/             shops, their staff and their tables
 │   ├── menus/             menu items
 │   ├── carts/             the cart, split bills, checkout, the card payment finisher, manager actions
 │   ├── payments/          Stripe's webhook, pay-backs
@@ -123,7 +123,7 @@ To see card payments finish on their own, forward Stripe's events to the dev ser
 stripe listen --events payment_intent.amount_capturable_updated,payment_intent.succeeded,payment_intent.payment_failed,payment_intent.canceled,refund.failed --forward-to localhost:3001/payments/stripe/webhook
 ```
 
-For something to look at, and a manager to sign in as, write the demo data: three venues with menus and tables, forty diners, ninety days of payments and refunds shaped the way a real history is (busy hours, regulars, a new dish, a bad week), and the live table states. Set `DEMO_MANAGER_PASSWORD` and `DEMO_DINER_PASSWORD` in `.env` first; the manager is `manager@mail.com`. The tables' QR codes point at `FRONTEND_URL`, so a deployed database is seeded with it set to the live client. The live demo is reseeded every night by a workflow, from repository secrets ([operations](./docs/operations.md#the-demo-data)).
+For something to look at, and a manager to sign in as, write the demo data: three venues with menus and tables, a second manager at the café, forty diners, ninety days of payments and refunds shaped the way a real history is (busy hours, regulars, a new dish, a bad week), and the live table states. Set `DEMO_MANAGER_PASSWORD` and `DEMO_DINER_PASSWORD` in `.env` first; the manager is `manager@mail.com`. The tables' QR codes point at `FRONTEND_URL`, so a deployed database is seeded with it set to the live client. The live demo is reseeded every night by a workflow, from repository secrets ([operations](./docs/operations.md#the-demo-data)).
 
 ```bash
 npm run seed:demo
@@ -157,7 +157,7 @@ db.users.updateOne({ email: "you@example.com" }, { $set: { role: "admin" } })
 | `STRIPE_WEBHOOK_SECRET` | Signing secret (`whsec_…`) of the Stripe webhook endpoint |
 | `PASSWORD_FAILS_PER_ACCOUNT` | Wrong passwords allowed per account in fifteen minutes (default 10) |
 | `CART_EDITS_PER_MINUTE` | Cart changes allowed per diner a minute (default 120) |
-| `PEOPLE_ADDED_PER_HOUR` | Accounts created or attached per administrator or shop owner an hour (default 20) |
+| `PEOPLE_ADDED_PER_HOUR` | People added (an account created or attached) per calling account an hour (default 20) |
 | `BCRYPT_ROUNDS` | bcrypt cost for stored passwords, 10 to 13 (default 10) |
 | `DEMO_MANAGER_PASSWORD` | The demo manager's password, set by `npm run seed:demo` |
 | `DEMO_DINER_PASSWORD` | The demo diner's password, set by the same seed |
@@ -204,7 +204,7 @@ The contract is an OpenAPI 3.1 document the server builds from its own code, bro
 
 ## Roadmap
 
-Next is a sales dashboard over the report route, then staff on a shop and staff roles, and kitchen screens with live updates. The list and its order are in [known-gaps.md](./docs/known-gaps.md#roadmap).
+Next is staff roles (till, floor, kitchen), narrowing what each member of a shop can do, then kitchen screens with live updates. The list and its order are in [known-gaps.md](./docs/known-gaps.md#roadmap).
 
 ## About
 
