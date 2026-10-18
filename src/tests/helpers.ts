@@ -22,7 +22,7 @@ export const createUser = async (overrides: Partial<{
     surname: string
     email: string
     password: string
-    role: "customer" | "shopMg"
+    role: "customer" | "shopMg" | "admin"
 }> = {}) => {
     const data = {
         name: "Test",
@@ -46,7 +46,7 @@ export const loginCookies = async (email: string, password: string): Promise<str
 export const quiet = () => jest.spyOn(console, "error").mockImplementation(() => {})
 
 // Convenience: create a user with a role and return usable auth cookies.
-export const authFor = async (role: "customer" | "shopMg" = "customer") => {
+export const authFor = async (role: "customer" | "shopMg" | "admin" = "customer") => {
     const { user, email, password } = await createUser({ role })
     const cookies = await loginCookies(email, password)
     return { user, email, password, cookies }

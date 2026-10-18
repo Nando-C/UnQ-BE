@@ -47,7 +47,7 @@ Two middlewares read the access cookie (`auth/middlewares.ts`):
 
 ### Changing what guards the account
 
-`PUT /users/me` needs `currentPassword` to change the email or set a new password (`400 "Enter your current password to change your email or password"`, `403 "Your current password is incorrect"`): a stolen access token alone can't take the account over. A wrong one is a `403`, not a `401`, so the front end doesn't go off to refresh the session. A new password issues fresh cookies to this device and ends every other session of the account. A Google-only account can't be given a password at all (`403 "This account signs in with Google, so it can't have a password"`): nothing could confirm it, so a stolen token could otherwise set one and keep the account for good. `DELETE /users/me` needs the current password for the same reason, and is refused while the user still manages a shop (`409 "Delete your shops first"`).
+`PUT /users/me` needs `currentPassword` to change the email or set a new password (`400 "Enter your current password to change your email or password"`, `403 "Your current password is incorrect"`): a stolen access token alone can't take the account over. A wrong one is a `403`, not a `401`, so the front end doesn't go off to refresh the session. A new password issues fresh cookies to this device and ends every other session of the account. A Google-only account can't be given a password at all (`403 "This account signs in with Google, so it can't have a password"`): nothing could confirm it, so a stolen token could otherwise set one and keep the account for good. `DELETE /users/me` needs the current password for the same reason, and is refused while the user still owns a shop (`409 "Delete your shops first"`: hand it over or delete it) or is an administrator (`409 "An administrator's account is deleted by another administrator"`); a shop the user merely works at loses them.
 
 What leaves the server about a user (`toJSON`): never the hash or the sessions; `hasPassword` says whether the account can sign in with a password, so the front end knows when to ask for the current one.
 
@@ -66,15 +66,22 @@ On success the cookies are set and the browser is redirected to `FRONTEND_URL`, 
 
 ## Roles and ownership
 
-Two roles, on the user: `customer` (the default) and `shopMg`. **The manager role is set in the database, never through the API**: register and profile edit ignore it (mass assignment was a 1.0 bug).
+Who may do what is decided in two places: the account's role, and the account's membership of a shop.
 
-Three guards, always after `JWTAuthMiddleware`:
+**Three account roles**, on the user: `customer` (the default), `shopMg` (may create shops for themselves) and `admin` (may do everything on every shop). **Neither of the last two comes from a request body**: register and profile edit take a fixed list of fields (mass assignment was a 1.0 bug), and both roles are set in the database. An administrator is never a member of a shop: the guards let them through everywhere instead.
+
+**Membership** is on the shop: `shopMg` holds every member's id (what the guards read, indexed), and `members` holds one entry per id with a role, `owner` (exactly one per shop: the only member who deletes it) or `manager` (runs it), when they joined and, once something adds members, who added them. The two are only ever written together, in one update. A shop saved before membership existed has `shopMg` alone; the first time a member or an administrator opens it (any guarded route, or `GET /shops/me`), `membershipOf` sets `ownerId` to its first manager and `members` from the stored array, in one pipeline update conditioned on `ownerId` being absent, so two fills at once land once, nothing stale is written back, and a fill can never overwrite a later staff write. Public reads never fill. Until then, "owns a shop" is read in both shapes (`ownedBy` in the model): `ownerId`, or no `ownerId` and first in `shopMg`.
+
+Four guards, always after `JWTAuthMiddleware`:
 
 | Guard | Lets through | Otherwise |
 |---|---|---|
-| `adminOnly` | any user with the `shopMg` role (creating a shop) | `403 "Shop Manager Only!!"` |
-| `isShopManager` | a user listed in the shop's `shopMg` array, for the `:shopId` in the path | `403 "Shop Manager Only!"`, or `404 "Shop Not Found!"` |
+| `canCreateShops` | the `shopMg` or `admin` role (creating a shop) | `403 "Shop Manager Only!!"` |
+| `isShopManager` | any member of the shop in `:shopId`, or an administrator | `403 "Shop Manager Only!"`, or `404 "Shop Not Found!"` |
+| `isShopOwner` | the owner of the shop in `:shopId`, or an administrator | `403 "Only the owner can do this"`, or `404 "Shop Not Found!"` |
 | a cart's own checks | the cart must belong to the table in the URL, and a cart read by id only to a diner who started it or has a selection on it | `404 "Cart Not Found!"` |
+
+The two shop guards set `req.shopRole` to how the caller got through (`admin`, or their member role), and the controllers behind them no longer filter on `shopMg` themselves: the guard is the one place that decides. `GET /shops/me` needs only a sign-in and answers the shops the caller is a member of (`[]` for none, every shop for an administrator). Creating a shop makes the caller its owner; an administrator names the owner (`ownerId`, any account but another administrator's: `404 "Owner not found"`, `409 "An administrator can't be a member of a shop"`), and from anyone else that field is `403 "Only an administrator names an owner"`.
 
 The table's cart (`GET /carts/tables/:tableId`) is **public** by design: anyone at the table, signed in or not, sees the order. What the public view strips (payment and refund records, the manager log, the providers' ids, other diners' notices) is in [data-model.md](./data-model.md). Ordering, selecting and paying need a signed-in user, since payments and selections are theirs.
 

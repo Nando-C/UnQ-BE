@@ -32,7 +32,7 @@ const User = object({
     surname: { type: "string", description: "Absent on some Google accounts" },
     email: { type: "string", format: "email", description: "Stored trimmed and lowercased" },
     avatar: { type: "string", format: "uri" },
-    role: { type: "string", enum: ["customer", "shopMg"], description: "shopMg (shop manager) is set in the database, never through the API" },
+    role: { type: "string", enum: ["customer", "shopMg", "admin"], description: "shopMg (shop manager) can create shops; admin can do everything on every shop. Neither is taken from a request body: both are set in the database" },
     googleId: { type: "string" },
     hasPassword: { type: "boolean", description: "Whether the account can sign in with a password; a Google-only account can't" },
     ...timestamps,
@@ -74,6 +74,14 @@ const MenuItem = object({
     ...timestamps,
 }, ["_id", "name", "image", "short_description", "price", "available", "category", "createdAt", "updatedAt"])
 
+// One member of a shop, as stored (the staff route joins them to names).
+const Member = object({
+    userId: objectId,
+    role: { type: "string", enum: ["owner", "manager"], description: "owner: one per shop, the only member who deletes it; manager: runs it" },
+    since: { ...date, description: "When they joined (the shop's creation for a shop from before membership)" },
+    addedBy: { ...objectId, description: "Who added them; absent for a shop's first owner" },
+}, ["userId", "role", "since"])
+
 const shopFields = {
     _id: objectId,
     name: { type: "string" },
@@ -83,20 +91,23 @@ const shopFields = {
     phone: { type: "string", description: "As typed" },
     web_URL: { type: "string" },
     timeZone: { type: "string", description: "The zone the shop's days are counted in (an IANA name); Europe/London unless set" },
-    shopMg: { ...array(objectId), description: "The managers' user ids" },
+    shopMg: { ...array(objectId), description: "Every member's user id, the owner's included: who may run the shop" },
+    ownerId: { ...objectId, description: "The owner's user id. Absent on a shop from before membership that no member has opened yet; set the first time one does" },
     tables: array(ref("Table")),
     ...timestamps,
 }
 const shopRequired = ["_id", "name", "cover", "timeZone", "shopMg", "tables", "menu", "createdAt", "updatedAt"]
+// The members' roles and dates are the staff's to see, not the public's.
+const members = { members: { ...array(ref("Member")), description: "One per id in shopMg; [] on a shop from before membership that no member has opened yet" } }
 
 const Shop = object({ ...shopFields, menu: array(ref("MenuItem")) }, shopRequired,
     "A shop as everyone sees it: menu items populated, deleted tables left out")
 
-const ShopRecord = object({ ...shopFields, menu: { ...array(objectId), description: "The menu items' ids" }, deletedTables: array(ref("DeletedTable")) },
-    [...shopRequired, "deletedTables"], "A shop as stored: menu items by id, deleted tables included (the answer to creating or editing one)")
+const ShopRecord = object({ ...shopFields, ...members, menu: { ...array(objectId), description: "The menu items' ids" }, deletedTables: array(ref("DeletedTable")) },
+    [...shopRequired, "deletedTables"], "A shop as stored: menu items by id, deleted tables and members included (the answer to creating or editing one)")
 
-const ManagerShop = object({ ...shopFields, menu: array(ref("MenuItem")), deletedTables: array(ref("ManagerDeletedTable")) },
-    [...shopRequired, "deletedTables"], "A shop for its manager: menu items populated, deleted tables with what still needs them")
+const ManagerShop = object({ ...shopFields, ...members, menu: array(ref("MenuItem")), deletedTables: array(ref("ManagerDeletedTable")) },
+    [...shopRequired, "deletedTables"], "A shop for its staff: menu items populated, deleted tables with what still needs them, members")
 
 const ShopSummary = object({ _id: objectId, name: { type: "string" }, bio: { type: "string" }, cover: { type: "string", format: "uri" } },
     ["_id", "name", "cover"], "A shop on the home page's list")
@@ -367,7 +378,7 @@ const ErrorBody = object({
 }, ["message"], "Every error answer (errorMiddlewares.ts). A 5xx says only \"Generic Server Error\" unless its message was written for the user")
 
 export const schemas: Record<string, JsonSchema> = {
-    User, Session, Table, DeletedTable, ManagerDeletedTable, MenuItem, Shop, ShopRecord, ManagerShop, ShopSummary, ShopPage,
+    User, Session, Table, DeletedTable, ManagerDeletedTable, MenuItem, Member, Shop, ShopRecord, ManagerShop, ShopSummary, ShopPage,
     MenuRef, CartItem, Split, ManagerSplit, Notice, ManagerNotice, PaymentLine, Payment, Refund, LogEntry,
     Cart, ManagerCart, CartNotFound, TableStatus, Payback, TableCarts, CloseResult, RefundResult, PaymentCheckResult, PaybackResult,
     PayPalOrder, StripeIntent, Received, Health, Error: ErrorBody,
@@ -393,8 +404,8 @@ export const responses: Record<string, Response> = {
     ValidationFailed: error('"Validation failed", with `details`: the body (or query) failed its schema'),
     Unauthorized: error('No access-token cookie ("Please provide credentials in cookies!"), or an expired or invalid one ("Invalid token"): refresh the token (POST /auth/refreshToken) and retry'),
     UserGone: error('"User not found!": the token\'s account no longer exists'),
-    ManagerOnly: error('"Shop Manager Only!!": the account isn\'t a shop manager'),
-    NotThisShopsManager: error('"Shop Manager Only!": the account doesn\'t manage this shop'),
+    NotThisShopsManager: error('"Shop Manager Only!": the account isn\'t a member of this shop (nor an administrator)'),
+    NotThisShopsOwner: error('"Only the owner can do this": the account isn\'t this shop\'s owner (nor an administrator)'),
     ShopNotFound: error('"Shop Not Found!"'),
     TooManyEdits: {
         ...error('"Too many changes to your order — wait a minute and try again": more than CART_EDITS_PER_MINUTE (default 120) changes by this account in a minute'),

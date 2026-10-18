@@ -4,7 +4,8 @@ import createError from "http-errors"
 import * as bcrypt from "bcrypt"
 import { destroyReplacedImage, discardUpload } from "../../settings/cloudinary"
 import { clearAuthCookies, deviceOf, getTokens, setAuthCookies } from "../auth/tools"
-import ShopModel from "../shops/model"
+import ShopModel, { ownedBy } from "../shops/model"
+import { isAdmin } from "./model"
 import { isDuplicateKey } from "../../lib/mongo"
 import { limitedPasswordCheck, TOO_MANY_WRONG_PASSWORDS } from "../../lib/passwordLimit"
 
@@ -93,9 +94,14 @@ export const deleteMe: TController = async ( req, res, next ) => {
     try {
         const refusal = await currentPasswordRefusal(me, req.body?.currentPassword, "delete your account")
         if (refusal) return next(refusal)
-        // A manager's shops would be left with no one to run them (or settle
-        // their payments): they're deleted first.
-        if (await ShopModel.exists({ shopMg: me._id })) return next(createError(409, "Delete your shops first"))
+        // An administrator's account is another administrator's to delete, so
+        // the last one can't take the role away by leaving.
+        if (isAdmin(me)) return next(createError(409, "An administrator's account is deleted by another administrator"))
+        // An owner's shops would be left with no one to delete them or settle
+        // their payments: they're handed over or deleted first. A shop they
+        // merely work at just loses them.
+        if (await ShopModel.exists(ownedBy(me._id))) return next(createError(409, "Delete your shops first"))
+        await ShopModel.updateMany({ shopMg: me._id }, { $pull: { shopMg: me._id, members: { userId: me._id } } })
         await me.deleteOne()
         // The session ends with the account.
         clearAuthCookies(res)

@@ -1,6 +1,6 @@
 import { Router } from "express"
 import { shopCoverUpload } from "../../settings/cloudinary"
-import { adminOnly, isShopManager, JWTAuthMiddleware } from "../auth/middlewares"
+import { canCreateShops, isShopManager, isShopOwner, JWTAuthMiddleware } from "../auth/middlewares"
 import * as shopControllers from "./controllers/shopControllers"
 import * as tableControllers from "./controllers/tableControllers"
 import * as salesControllers from "./controllers/salesControllers"
@@ -14,17 +14,21 @@ import { cartItemSchema, releaseSelectionSchema, refundSchema } from "../carts/s
 const router = Router()
 
 // My Shop Routes
-router.post("/", JWTAuthMiddleware, adminOnly, validate(createShopSchema), shopControllers.createShop)
+router.post("/", JWTAuthMiddleware, canCreateShops, validate(createShopSchema), shopControllers.createShop)
 router.get("/", shopControllers.getAllShops)
-router.get("/me", JWTAuthMiddleware, adminOnly, shopControllers.getMyShops)
+// Any signed-in account: the shops it is a member of ([] for none; every shop
+// for an administrator).
+router.get("/me", JWTAuthMiddleware, shopControllers.getMyShops)
 // Before "/:shopId", which would otherwise take "browse" as a shop id.
 router.get("/browse", validate(browseShopsSchema, "query"), shopControllers.browseShops)
 router.get("/:shopId", shopControllers.getSingleShop)
-router.put("/:shopId", JWTAuthMiddleware, adminOnly, validate(editShopSchema), shopControllers.editMyShop)
+// Any member of the shop (isShopManager), whatever their account role.
+router.put("/:shopId", JWTAuthMiddleware, isShopManager, validate(editShopSchema), shopControllers.editMyShop)
 // isShopManager (manages THIS shop) runs before the upload, so a refused
 // request never reaches Cloudinary.
 router.put("/:shopId/cover", JWTAuthMiddleware, isShopManager, shopCoverUpload, shopControllers.editMyShopCover)
-router.delete("/:shopId", JWTAuthMiddleware, adminOnly, shopControllers.deleteMyShop)
+// The owner alone (or an administrator): the shop goes with everything in it.
+router.delete("/:shopId", JWTAuthMiddleware, isShopOwner, shopControllers.deleteMyShop)
 
 // The shop's sales report, over its orders.
 router.get("/:shopId/sales", JWTAuthMiddleware, isShopManager, validate(salesQuerySchema, "query"), salesControllers.getSales)

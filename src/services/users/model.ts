@@ -42,13 +42,15 @@ const UserSchema = new Schema<IUserDocument, IUserModel>(
             type: String,
         },
         avatar: String,
-        // "shopMg" (shop manager) can create and run shops; set in the database,
-        // never through the API.
+        // "shopMg" (shop manager) can create shops for themselves; "admin" can
+        // do everything on every shop and manage accounts. Neither is taken
+        // from a request body: an administrator gives them, or the database.
         role: {
             type: String,
-            enum: ["customer", "shopMg"],
+            enum: ["customer", "shopMg", "admin"],
             default: "customer"
         },
+
         // The devices signed in, one refresh token each (see auth/tools.ts).
         sessions: { type: [SessionSchema], default: [] },
         // Looked up on every Google sign-in.
@@ -82,4 +84,8 @@ UserSchema.methods.toJSON = function () {
     return user
 }
 
-export default model<IUserDocument, IUserModel>("User", UserSchema)
+const UserModel = model<IUserDocument, IUserModel>("User", UserSchema)
+export default UserModel
+
+// Administrators can do everything on every shop; no shop guard refuses them.
+export const isAdmin = (user: Pick<IUserDocument, "role">) => user.role === "admin"
