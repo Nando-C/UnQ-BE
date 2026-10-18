@@ -384,10 +384,17 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
 
     // Ids drawn up front, whether or not they're needed, so the generator's
     // sequence (and every id after) is the same on a rerun that finds the users.
-    const userIds = { manager: rng.oid(), frank: rng.oid(), alex: rng.oid(), diners: DINERS.map(() => rng.oid()) }
+    // The accounts' ids come from the sequence in the order the accounts were
+    // added to the seed, newest last: a database seeded before keeps every
+    // account by email with the id it was given, so an id drawn earlier in the
+    // sequence for a new account would be one an older account already holds.
+    const userIds = { manager: rng.oid(), frank: rng.oid(), diners: DINERS.map(() => rng.oid()), alex: rng.oid() }
     const user = async (id: Types.ObjectId, email: string, fields: { name: string; surname: string; role: "customer" | "shopMg"; createdBy?: Types.ObjectId }, password?: string) => {
         const existing = await UserModel.findOne({ email })
-        const doc = existing ?? new UserModel({ _id: id, email })
+        // A new address never takes an id another account holds (one seeded
+        // under an earlier version of this file, or any other): a fresh one then.
+        const taken = !existing && (await UserModel.exists({ _id: id }))
+        const doc = existing ?? new UserModel({ _id: taken ? new Types.ObjectId() : id, email })
         doc.set(fields)
         if (!doc.avatar) doc.avatar = `https://ui-avatars.com/api/?name=${fields.name}+${fields.surname}`
         // Rehashed only when it differs (a rotation), so a rerun changes nothing.
