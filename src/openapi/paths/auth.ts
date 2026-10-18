@@ -14,7 +14,7 @@ export const authPaths: Paths = {
         post: {
             operationId: "registerUser", tags: tag, security: PUBLIC,
             summary: "Create an account and sign in",
-            description: `A new account with the customer role (the shopMg and admin roles are set in the database). ${cookiesSet} The avatar is a generated initials image.`,
+            description: `A new account with the customer role; the shopMg and admin roles are given by an administrator (POST /users, PUT /users/{userId}/role), the first administrator in the database. ${cookiesSet} The avatar is a generated initials image.`,
             requestBody: jsonBody(fromZod(registerSchema, { email: "Trimmed and lowercased before it's checked and stored", password: "At least 8 characters" })),
             responses: {
                 201: json("The new account", ref("User")),

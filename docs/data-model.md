@@ -56,11 +56,11 @@ Indexes: `email` unique; `googleId` sparse.
 | `web_URL` | string |  |
 | `timeZone` | string | an IANA name, `Europe/London` unless set: the zone the shop's days are counted in ([api.md](./api.md#sales-report)); shops from before it read as the default |
 | `shopMg` | [ObjectId → User] | required: every member's id, the owner's included (what the guards read) |
-| `ownerId` | ObjectId → User | the owner; absent on a shop no member has opened since membership arrived |
+| `ownerId` | ObjectId → User | the owner; absent on a shop no member or administrator has opened since membership arrived |
 | `members[].userId` | ObjectId → User | required; one entry per id in `shopMg` |
 | `members[].role` | `owner` \| `manager` | required; one `owner` per shop |
 | `members[].since` | Date | required: when they joined |
-| `members[].addedBy` | ObjectId → User | who added them; absent for a shop's first owner and for the members of a shop from before membership |
+| `members[].addedBy` | ObjectId → User | who added them; absent for the first owner of a shop they created themselves (an administrator who creates the shop for them is recorded) and for the members of a shop from before membership |
 | `tables[]._id` | ObjectId | what every other record means by `tableId` |
 | `tables[].name` | string | required; unique within the shop |
 | `tables[].Qr_Url` | string (URL) | the table's page in the front end |

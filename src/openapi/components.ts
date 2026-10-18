@@ -63,7 +63,7 @@ const StaffMember = object({
     avatar: { type: "string", format: "uri" },
     role: { type: "string", enum: ["owner", "manager"] },
     since: { ...date, description: "When they joined" },
-    addedBy: { ...objectId, description: "Who added them; absent for a shop's first owner and for the members of a shop from before membership" },
+    addedBy: { ...objectId, description: "Who added them; absent for the first owner of a shop they created themselves (an administrator who creates the shop for them is recorded) and for the members of a shop from before membership" },
 }, ["userId", "name", "email", "role", "since"], "A member of a shop, with their account's name, email and avatar (null once the account is gone)")
 
 const StaffAdded = object({
@@ -111,7 +111,7 @@ const Member = object({
     userId: objectId,
     role: { type: "string", enum: ["owner", "manager"], description: "owner: one per shop, the only member who deletes it; manager: runs it" },
     since: { ...date, description: "When they joined (the shop's creation for a shop from before membership)" },
-    addedBy: { ...objectId, description: "Who added them; absent for a shop's first owner and for the members of a shop from before membership" },
+    addedBy: { ...objectId, description: "Who added them; absent for the first owner of a shop they created themselves (an administrator who creates the shop for them is recorded) and for the members of a shop from before membership" },
 }, ["userId", "role", "since"])
 
 const shopFields = {
@@ -124,13 +124,13 @@ const shopFields = {
     web_URL: { type: "string" },
     timeZone: { type: "string", description: "The zone the shop's days are counted in (an IANA name); Europe/London unless set" },
     shopMg: { ...array(objectId), description: "Every member's user id, the owner's included: who may run the shop" },
-    ownerId: { ...objectId, description: "The owner's user id. Absent on a shop from before membership that no member has opened yet; set the first time one does" },
+    ownerId: { ...objectId, description: "The owner's user id. Absent on a shop from before membership that no member or administrator has opened yet; set the first time one does" },
     tables: array(ref("Table")),
     ...timestamps,
 }
 const shopRequired = ["_id", "name", "cover", "timeZone", "shopMg", "tables", "menu", "createdAt", "updatedAt"]
 // The members' roles and dates are the staff's to see, not the public's.
-const members = { members: { ...array(ref("Member")), description: "One per id in shopMg; [] on a shop from before membership that no member has opened yet" } }
+const members = { members: { ...array(ref("Member")), description: "One per id in shopMg; [] on a shop from before membership that no member or administrator has opened yet" } }
 
 const Shop = object({ ...shopFields, menu: array(ref("MenuItem")) }, shopRequired,
     "A shop as everyone sees it: menu items populated, deleted tables left out")
