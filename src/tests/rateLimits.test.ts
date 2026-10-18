@@ -12,13 +12,31 @@ import { accountsCounted, limitedPasswordCheck, TOO_MANY_WRONG_PASSWORDS } from 
 
 beforeAll(() => {
     // Fails here, plainly, if the settings were read before realLimits ran.
-    expect([env.PASSWORD_FAILS_PER_ACCOUNT, env.CART_EDITS_PER_MINUTE]).toEqual([10, 120])
+    expect([env.PASSWORD_FAILS_PER_ACCOUNT, env.CART_EDITS_PER_MINUTE, env.PEOPLE_ADDED_PER_HOUR]).toEqual([10, 120, 20])
 })
 
 const signIn = (email: string, password: string) => request(app).post("/auth/login").send({ email, password })
 const wrongTimes = async (n: number, email: string) => {
     for (let i = 0; i < n; i++) expect((await signIn(email, "wrong-password")).status).toBe(401)
 }
+
+describe("people-added limit", () => {
+    it("stops an account after 20 people added in an hour, across both routes", async () => {
+        const admin = await authFor("admin")
+        const owner = await authFor("shopMg")
+        const shopId = (await request(app).post("/shops").set("Cookie", owner.cookies).send({ name: "Cafe" })).body._id
+        const stamp = Date.now()
+        const person = (i: number) => ({ name: "P", surname: String(i), email: `p${i}-${stamp}@example.com`, password: "firstpass1" })
+
+        for (let i = 0; i < 20; i++) expect((await request(app).post("/users").set("Cookie", admin.cookies).send(person(i))).status).toBe(201)
+        const refused = await request(app).post("/users").set("Cookie", admin.cookies).send(person(20))
+        expect([refused.status, refused.body.message]).toEqual([429, "Too many people added in an hour — wait a while and try again"])
+        // The same count serves the staff route, and attaching counts too.
+        expect((await request(app).post(`/shops/${shopId}/staff`).set("Cookie", admin.cookies).send({ email: person(0).email, role: "manager" })).status).toBe(429)
+        // Another account's count is its own.
+        expect((await request(app).post(`/shops/${shopId}/staff`).set("Cookie", owner.cookies).send({ email: person(0).email, role: "manager" })).status).toBe(200)
+    })
+})
 
 describe("wrong-password limit", () => {
     it("locks an account after 10 wrong passwords, even for the right one; other accounts still sign in", async () => {

@@ -129,10 +129,10 @@ For something to look at, and a manager to sign in as, write the demo data: thre
 npm run seed:demo
 ```
 
-A shop's staff are its members: an owner and managers, whatever their account role. An account with the `shopMg` role can open shops of its own, and one with the `admin` role can do everything on every shop; neither role comes from the sign-up form. To give an account of your own one of them:
+A shop's staff are its members: an owner, who adds the managers by email (an existing account is attached, a new one is created with a first password the owner passes on), and managers. An account with the `shopMg` role can open shops of its own, and one with the `admin` role can do everything on every shop and manage accounts; neither role comes from the sign-up form. An administrator gives them from the app; the first administrator is set in the database ([operations](./docs/operations.md#the-first-administrator)):
 
 ```js
-db.users.updateOne({ email: "you@example.com" }, { $set: { role: "shopMg" } })
+db.users.updateOne({ email: "you@example.com" }, { $set: { role: "admin" } })
 ```
 
 ### Environment variables
@@ -157,6 +157,7 @@ db.users.updateOne({ email: "you@example.com" }, { $set: { role: "shopMg" } })
 | `STRIPE_WEBHOOK_SECRET` | Signing secret (`whsec_…`) of the Stripe webhook endpoint |
 | `PASSWORD_FAILS_PER_ACCOUNT` | Wrong passwords allowed per account in fifteen minutes (default 10) |
 | `CART_EDITS_PER_MINUTE` | Cart changes allowed per diner a minute (default 120) |
+| `PEOPLE_ADDED_PER_HOUR` | Accounts created or attached per administrator or shop owner an hour (default 20) |
 | `BCRYPT_ROUNDS` | bcrypt cost for stored passwords, 10 to 13 (default 10) |
 | `DEMO_MANAGER_PASSWORD` | The demo manager's password, set by `npm run seed:demo` |
 | `DEMO_DINER_PASSWORD` | The demo diner's password, set by the same seed |

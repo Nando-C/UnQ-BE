@@ -33,6 +33,7 @@ process.env.STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "whsec_
 // checks the real ones.
 process.env.PASSWORD_FAILS_PER_ACCOUNT = "10000"
 process.env.CART_EDITS_PER_MINUTE = "10000"
+process.env.PEOPLE_ADDED_PER_HOUR = "10000"
 
 // bcrypt's lowest cost: the same checks at about half the suite's CPU (it ran
 // at 10, and with the test database competing for the machine its health

@@ -1,5 +1,5 @@
 import { Paths, PUBLIC, empty, error, fromZod, imageBody, json, jsonBody, param, queryParams, ref, sharedResponse, uploadErrors } from "../helpers"
-import { MAX_REPORT_DAYS, browseShopsSchema, createShopSchema, createTableSchema, editShopSchema, editTableSchema, salesExportSchema, salesQuerySchema } from "../../services/shops/schemas"
+import { MAX_REPORT_DAYS, addStaffSchema, browseShopsSchema, createShopSchema, createTableSchema, editShopSchema, editTableSchema, handOverSchema, salesExportSchema, salesQuerySchema } from "../../services/shops/schemas"
 import { cartItemSchema, refundSchema, releaseSelectionSchema } from "../../services/carts/schemas"
 import { paybackDoneSchema } from "../../services/payments/paybackControllers"
 
@@ -11,6 +11,7 @@ const tables = ["Tables"]
 const manage = ["Manager: tables"]
 const money = ["Manager: refunds and payments"]
 const sales = ["Manager: sales"]
+const staff = ["Staff"]
 
 const signedIn = { 401: sharedResponse("Unauthorized") }
 // JWTAuthMiddleware then isShopManager (a member of THIS shop, or an administrator; 404 if there's no such shop).
@@ -120,6 +121,71 @@ export const shopPaths: Paths = {
                 404: error('"Shop Not Found!"; "User not found!"'),
                 409: error('"A table in this shop has an open cart — close it first"; "A payment or refund at table … is still awaiting PayPal|Stripe — check it there first"; "A payment at table … can still be refunded from its sheet: the shop can be deleted once no paid cart has changed for a day"; or a card-payment reason (carts/stripeDeletion.ts)'),
                 500: error('"The shop\'s sales records couldn\'t be saved, so nothing was deleted. Try again shortly."; or "Generic Server Error"'),
+            },
+        },
+    },
+    "/shops/{shopId}/staff": {
+        get: {
+            operationId: "listStaff", tags: staff,
+            summary: "The shop's members",
+            description: "Each joined to their account (name, email, avatar), the owner first. Any member of the shop, or an administrator.",
+            parameters: [param("shopId")],
+            responses: {
+                200: json("The members", { type: "object", properties: { members: { type: "array", items: ref("StaffMember") } }, required: ["members"] }),
+                ...thisManager,
+                404: error('"Shop Not Found!"; "User not found!"'),
+                500: sharedResponse("ServerError"),
+            },
+        },
+        post: {
+            operationId: "addStaff", tags: staff,
+            summary: "Add someone to the shop",
+            description: "By their email. An address with an account attaches that account, name and password untouched (200); one without gets an account created from `name`, `surname` and `password`, which the caller tells them (201; account role `customer`, `createdBy` the caller). Only the owner (or an administrator) adds a `manager`. One update puts them in both membership lists, so two adds of one person land once. Counts towards the caller's people-added limit, created or attached.",
+            parameters: [param("shopId")],
+            requestBody: jsonBody(fromZod(addStaffSchema, { email: "Trimmed and lowercased", role: "The membership role they get", name: "For a new account", surname: "For a new account", password: "For a new account: at least 8 characters, its first password" })),
+            responses: {
+                200: json("An existing account, attached", ref("StaffAdded")),
+                201: json("An account created for them, attached", ref("StaffAdded")),
+                400: error('"Validation failed" (details; for a new account, name, surname and password are "Required for a new account"); "That is your own address"'),
+                401: sharedResponse("Unauthorized"),
+                403: error('"Shop Manager Only!": not a member of this shop; "Only the owner adds managers"'),
+                404: error('"Shop Not Found!"; "User not found!"'),
+                409: error('"Already a member"; "An administrator can\'t be a member of a shop"; "The shop\'s staff changed, please retry": the shop lost its owner or the account went in the same instant'),
+                429: sharedResponse("TooManyAdded"),
+                500: sharedResponse("ServerError"),
+            },
+        },
+    },
+    "/shops/{shopId}/staff/{userId}": {
+        delete: {
+            operationId: "removeStaff", tags: staff,
+            summary: "Remove a member",
+            description: "The owner (or an administrator) removes anyone but the owner; a manager only the roles below manager (none yet); any member themselves (leaving). The owner is never removed: the shop is handed over first. The account stays.",
+            parameters: [param("shopId"), param("userId")],
+            responses: {
+                204: empty("Removed"),
+                401: sharedResponse("Unauthorized"),
+                403: error('"Shop Manager Only!": not a member of this shop; "The owner can\'t be removed"; "Only the owner removes a manager"'),
+                404: error('"Shop Not Found!"; "Not a member of this shop"; "User not found!"'),
+                409: error('"The shop\'s staff changed, please retry": a hand-over landed in the same instant'),
+                500: sharedResponse("ServerError"),
+            },
+        },
+    },
+    "/shops/{shopId}/owner": {
+        put: {
+            operationId: "handOver", tags: staff,
+            summary: "Make another member the owner",
+            description: "The owner (or an administrator) names a member, who becomes the owner; the previous owner becomes a manager. One update, matched on the current owner.",
+            parameters: [param("shopId")],
+            requestBody: jsonBody(fromZod(handOverSchema, { userId: "A member of the shop" })),
+            responses: {
+                200: json("The members, as GET /shops/{shopId}/staff lists them", { type: "object", properties: { members: { type: "array", items: ref("StaffMember") } }, required: ["members"] }),
+                400: sharedResponse("ValidationFailed"),
+                ...thisOwner,
+                404: error('"Shop Not Found!"; "Not a member of this shop"; "User not found!"'),
+                409: error('"Already the owner"; "The shop\'s staff changed, please retry": another hand-over, a removal or a deletion landed in the same instant'),
+                500: sharedResponse("ServerError"),
             },
         },
     },

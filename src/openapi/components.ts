@@ -26,18 +26,50 @@ const timestamps = { createdAt: date, updatedAt: date }
 // account is gone.
 const userName = nullable(object({ _id: objectId, name: { type: "string" } }, ["_id", "name"], "A user by first name"))
 
-const User = object({
+const userFields = {
     _id: objectId,
     name: { type: "string" },
     surname: { type: "string", description: "Absent on some Google accounts" },
     email: { type: "string", format: "email", description: "Stored trimmed and lowercased" },
     avatar: { type: "string", format: "uri" },
-    role: { type: "string", enum: ["customer", "shopMg", "admin"], description: "shopMg (shop manager) can create shops; admin can do everything on every shop. Neither is taken from a request body: both are set in the database" },
+    role: { type: "string", enum: ["customer", "shopMg", "admin"], description: "shopMg (shop manager) can create shops; admin can do everything on every shop and manage accounts. Never from the account's own request (register, profile edit): an administrator gives them (POST /users, PUT /users/{userId}/role); the first administrator is set in the database" },
     googleId: { type: "string" },
     hasPassword: { type: "boolean", description: "Whether the account can sign in with a password; a Google-only account can't" },
+    createdBy: { ...objectId, description: "Who made the account when it wasn't the person (an administrator, or a shop's owner adding staff); absent on a self-registered one" },
     ...timestamps,
-}, ["_id", "name", "email", "role", "hasPassword", "createdAt", "updatedAt"],
+}
+const User = object(userFields, ["_id", "name", "email", "role", "hasPassword", "createdAt", "updatedAt"],
 "An account, as users/model.ts's toJSON sends it: never the password hash or the sessions")
+
+// GET /users: an account with the shops it is a member of.
+const ListedUser = object({
+    ...userFields,
+    shops: array(object({ _id: objectId, name: { type: "string" }, role: { type: "string", enum: ["owner", "manager"] } }, ["_id", "name", "role"])),
+}, ["_id", "name", "email", "role", "hasPassword", "createdAt", "updatedAt", "shops"], "An account and the shops it is a member of, with its role on each")
+
+const AccountPage = object({
+    users: array(ref("ListedUser")),
+    total: { type: "integer", description: "Accounts matching, over every page" },
+    page: { type: "integer" },
+    limit: { type: "integer" },
+}, ["users", "total", "page", "limit"], "A page of accounts, newest first")
+
+// GET /shops/{shopId}/staff: a member joined to their account.
+const StaffMember = object({
+    userId: nullable(objectId),
+    name: nullable({ type: "string" }),
+    surname: { type: "string" },
+    email: nullable({ type: "string", format: "email" }),
+    avatar: { type: "string", format: "uri" },
+    role: { type: "string", enum: ["owner", "manager"] },
+    since: { ...date, description: "When they joined" },
+    addedBy: { ...objectId, description: "Who added them; absent for a shop's first owner and for the members of a shop from before membership" },
+}, ["userId", "name", "email", "role", "since"], "A member of a shop, with their account's name, email and avatar (null once the account is gone)")
+
+const StaffAdded = object({
+    member: ref("StaffMember"),
+    created: { type: "boolean", description: "true: the account was created for them (201); false: an existing account was attached (200)" },
+}, ["member", "created"])
 
 const Session = object({
     _id: objectId,
@@ -79,7 +111,7 @@ const Member = object({
     userId: objectId,
     role: { type: "string", enum: ["owner", "manager"], description: "owner: one per shop, the only member who deletes it; manager: runs it" },
     since: { ...date, description: "When they joined (the shop's creation for a shop from before membership)" },
-    addedBy: { ...objectId, description: "Who added them; absent for a shop's first owner" },
+    addedBy: { ...objectId, description: "Who added them; absent for a shop's first owner and for the members of a shop from before membership" },
 }, ["userId", "role", "since"])
 
 const shopFields = {
@@ -378,7 +410,7 @@ const ErrorBody = object({
 }, ["message"], "Every error answer (errorMiddlewares.ts). A 5xx says only \"Generic Server Error\" unless its message was written for the user")
 
 export const schemas: Record<string, JsonSchema> = {
-    User, Session, Table, DeletedTable, ManagerDeletedTable, MenuItem, Member, Shop, ShopRecord, ManagerShop, ShopSummary, ShopPage,
+    User, ListedUser, AccountPage, StaffMember, StaffAdded, Session, Table, DeletedTable, ManagerDeletedTable, MenuItem, Member, Shop, ShopRecord, ManagerShop, ShopSummary, ShopPage,
     MenuRef, CartItem, Split, ManagerSplit, Notice, ManagerNotice, PaymentLine, Payment, Refund, LogEntry,
     Cart, ManagerCart, CartNotFound, TableStatus, Payback, TableCarts, CloseResult, RefundResult, PaymentCheckResult, PaybackResult,
     PayPalOrder, StripeIntent, Received, Health, Error: ErrorBody,
@@ -397,6 +429,13 @@ export const parameters: Record<string, Parameter> = {
     refundId: pathParam("refundId", "The refund (a cart's refunds[]._id)"),
     paybackId: pathParam("paybackId", "The pay-back"),
     sessionId: pathParam("sessionId", "The session (a user's sessions[]._id, from GET /auth/sessions)"),
+    userId: pathParam("userId", "The account"),
+}
+
+// What express-rate-limit's standard headers say on a 429.
+const rateLimitHeaders = {
+    "RateLimit": { description: "The limit's current state (IETF draft 8)", schema: { type: "string" } },
+    "RateLimit-Policy": { description: "The limit's policy (IETF draft 8)", schema: { type: "string" } },
 }
 
 // Answers several routes give the same way.
@@ -406,13 +445,15 @@ export const responses: Record<string, Response> = {
     UserGone: error('"User not found!": the token\'s account no longer exists'),
     NotThisShopsManager: error('"Shop Manager Only!": the account isn\'t a member of this shop (nor an administrator)'),
     NotThisShopsOwner: error('"Only the owner can do this": the account isn\'t this shop\'s owner (nor an administrator)'),
+    AdministratorOnly: error('"Administrator only": the account isn\'t an administrator'),
+    TooManyAdded: {
+        ...error('"Too many people added in an hour — wait a while and try again": more than PEOPLE_ADDED_PER_HOUR (default 20) accounts created or attached by this account in an hour'),
+        headers: rateLimitHeaders,
+    },
     ShopNotFound: error('"Shop Not Found!"'),
     TooManyEdits: {
         ...error('"Too many changes to your order — wait a minute and try again": more than CART_EDITS_PER_MINUTE (default 120) changes by this account in a minute'),
-        headers: {
-            "RateLimit": { description: "The limit's current state (IETF draft 8)", schema: { type: "string" } },
-            "RateLimit-Policy": { description: "The limit's policy (IETF draft 8)", schema: { type: "string" } },
-        },
+        headers: rateLimitHeaders,
     },
     TooManyWrongPasswords: error('"Too many wrong passwords for this account — try again in 15 minutes": more than PASSWORD_FAILS_PER_ACCOUNT (default 10) wrong passwords for the account in 15 minutes, wherever they were tried'),
     ServerError: error('"Generic Server Error", unless the message was written for the user (then it is shown as is)'),

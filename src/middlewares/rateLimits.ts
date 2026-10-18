@@ -22,3 +22,17 @@ export const cartEditLimit = rateLimit({
     // A 429 with a message, through errorsHandler like any error.
     handler: (req, res, next) => next(createError(429, "Too many changes to your order — wait a minute and try again")),
 })
+
+// People added per caller (after JWTAuthMiddleware and the role or membership
+// guard): accounts an administrator creates, and staff a shop's owner adds,
+// whether that creates an account or attaches one (the limiter counts before
+// the controller knows which). Counted before validate. The register route
+// has no limit, so this keeps the new doors no wider than the existing one.
+export const peopleAddedLimit = rateLimit({
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    windowMs: 60 * 60 * 1000,
+    limit: env.PEOPLE_ADDED_PER_HOUR,
+    keyGenerator: (req) => `user:${(req.user as IUserDocument)._id}`,
+    handler: (req, res, next) => next(createError(429, "Too many people added in an hour — wait a while and try again")),
+})

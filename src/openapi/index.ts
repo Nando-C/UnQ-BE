@@ -27,11 +27,11 @@ const description = `The API behind UnQ, a food and drinks ordering app: diners 
 ## Conventions
 
 - **Sign-in** is two HttpOnly cookies, \`accessToken\` (15 minutes) and \`refreshToken\` (4 weeks), set by the auth routes. Each sign-in is a session of its own, so an account can be signed in on several devices (up to 10) and sign one out (\`DELETE /auth/sessions/{sessionId}\`). A 401 means refresh (\`POST /auth/refreshToken\`) and retry; a refresh that fails ends the session. Operations marked with the lock need the cookie; the rest are public, and some show more to a signed-in caller.
-- **Roles.** Every account is a \`customer\`; a \`shopMg\` (shop manager) can create shops, and an \`admin\` can do everything on every shop. Neither comes from a request body: both are set in the database. A shop's staff are its \`members\`, each with a role (\`owner\`, one per shop, or \`manager\`); manager routes check that the caller is a member of the shop in the URL, or an administrator (403 otherwise), and deleting a shop that they own it.
+- **Roles.** Every account is a \`customer\`; a \`shopMg\` (shop manager) can create shops, and an \`admin\` can do everything on every shop. Never from the account's own request (register, profile edit): an administrator gives them (the Accounts operations), and the first administrator is set in the database. A shop's staff are its \`members\`, each with a role (\`owner\`, one per shop, or \`manager\`), added by the owner (the Staff operations); the owner, or an administrator, alone adds and removes managers and hands the shop over; manager routes check that the caller is a member of the shop in the URL, or an administrator (403 otherwise).
 - **Ids** are MongoDB ObjectIds (24 hex characters). A table's id is its \`_id\` in the shop's \`tables\`.
 - **Money** is in pounds (GBP) to the penny everywhere a cart, a payment or a refund says an amount, and the \`price\` a manager sets is the same. The one exception is \`createStripeCheckout\`'s \`amount\`, in pence, as Stripe counts. The client never names an amount to pay: every total comes from database prices.
 - **Errors** are \`{ message, details?, reason? }\`. \`400 Validation failed\` carries \`details\`, one \`{ path, message }\` per problem; a few errors carry a machine-readable \`reason\`. A 5xx says only "Generic Server Error" unless its message was written for the user.
-- **Rate limits**, per account, not per IP: wrong passwords (10 in 15 minutes, wherever tried) and a diner's cart changes (120 a minute, starting a card payment included; capturing a payment is never limited). Both configurable (\`PASSWORD_FAILS_PER_ACCOUNT\`, \`CART_EDITS_PER_MINUTE\`).
+- **Rate limits**, per account, not per IP: wrong passwords (10 in 15 minutes, wherever tried), a diner's cart changes (120 a minute, starting a card payment included; capturing a payment is never limited) and people added (20 an hour, an account created or attached by an administrator or a shop's staff). All configurable (\`PASSWORD_FAILS_PER_ACCOUNT\`, \`CART_EDITS_PER_MINUTE\`, \`PEOPLE_ADDED_PER_HOUR\`).
 - **Soft deletes.** A deleted menu item stays, unavailable, for the carts that hold it; a deleted table stays under the shop's \`deletedTables\` so its carts and money stay reachable; a shop is deleted for good, with everything in it, once no money is moving.
 - **Concurrency.** A cart is saved under optimistic concurrency: a write that meets a newer version retries or answers 409 "The cart changed, please retry".
 
@@ -57,6 +57,8 @@ export const buildOpenApi = () => ({
     tags: [
         { name: "Auth", description: "Sign up, sign in, tokens, devices, Google" },
         { name: "Users", description: "The signed-in account" },
+        { name: "Accounts", description: "Every account, for administrators: list, create, set a role, delete" },
+        { name: "Staff", description: "A shop's members: list, add, remove, hand the shop over" },
         { name: "Shops", description: "Shops and their covers" },
         { name: "Menu", description: "A shop's menu items" },
         { name: "Tables", description: "A shop's tables and their QR URLs" },

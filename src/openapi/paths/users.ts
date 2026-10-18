@@ -1,13 +1,84 @@
-import { Paths, empty, error, fromZod, imageBody, json, jsonBody, ref, sharedResponse, uploadErrors } from "../helpers"
-import { deleteMeSchema, editMeSchema } from "../../services/users/schemas"
+import { Paths, empty, error, fromZod, imageBody, json, jsonBody, param, queryParams, ref, sharedResponse, uploadErrors } from "../helpers"
+import { createUserSchema, deleteMeSchema, editMeSchema, listUsersSchema, setRoleSchema } from "../../services/users/schemas"
 
 // services/users/routes.ts, controllers.ts.
 
 const tag = ["Users"]
 
 const signedIn = { 401: sharedResponse("Unauthorized"), 404: sharedResponse("UserGone") }
+const accounts = ["Accounts"]
+// JWTAuthMiddleware then isAdministrator.
+const administrator = { 401: sharedResponse("Unauthorized"), 403: sharedResponse("AdministratorOnly") }
 
 export const userPaths: Paths = {
+    "/users": {
+        get: {
+            operationId: "listUsers", tags: accounts,
+            summary: "A page of accounts",
+            description: "Newest first, each with the shops it is a member of and its role on each. `q` matches the name, surname or email, case aside. An empty parameter counts as absent.",
+            parameters: queryParams(listUsersSchema, {
+                q: "Text to search for (up to 100 characters); empty or absent lists every account",
+                role: "Only accounts with this role",
+                page: "1 is the first (default 1)",
+                limit: "Accounts per page, 1 to 50 (default 20)",
+            }),
+            responses: {
+                200: json("A page", ref("AccountPage")),
+                400: sharedResponse("ValidationFailed"),
+                ...administrator,
+                404: sharedResponse("UserGone"),
+                500: sharedResponse("ServerError"),
+            },
+        },
+        post: {
+            operationId: "createUser", tags: accounts,
+            summary: "Create an account",
+            description: "With any role (`customer` unless said); `createdBy` is the administrator. The person is told the password and changes it on their account page. Counts towards the administrator's people-added limit.",
+            requestBody: jsonBody(fromZod(createUserSchema, { email: "Trimmed and lowercased", password: "At least 8 characters: the account's first password", role: "customer unless said" })),
+            responses: {
+                201: json("The new account", ref("User")),
+                400: sharedResponse("ValidationFailed"),
+                ...administrator,
+                404: sharedResponse("UserGone"),
+                409: error('"Email already registered"'),
+                429: sharedResponse("TooManyAdded"),
+                500: sharedResponse("ServerError"),
+            },
+        },
+    },
+    "/users/{userId}": {
+        delete: {
+            operationId: "deleteUser", tags: accounts,
+            summary: "Delete an account",
+            description: "The shops it works at lose it; its sessions end. Not the caller's own (so the last administrator stays), not one that owns a shop (handed over or deleted first).",
+            parameters: [param("userId")],
+            responses: {
+                204: empty("Deleted"),
+                400: error('"Another administrator deletes your account": the caller\'s own'),
+                ...administrator,
+                404: error('"User not found": no such account; "User not found!": the caller\'s is gone'),
+                409: error('"Transfer or delete their shops first": the account owns a shop'),
+                500: sharedResponse("ServerError"),
+            },
+        },
+    },
+    "/users/{userId}/role": {
+        put: {
+            operationId: "setRole", tags: accounts,
+            summary: "Set an account's role",
+            description: "Not the caller's own, so the last administrator can't demote themselves and another would have to exist to demote them. `admin` only for an account on no shop (an administrator is never a member).",
+            parameters: [param("userId")],
+            requestBody: jsonBody(fromZod(setRoleSchema)),
+            responses: {
+                200: json("The account as it is now", ref("User")),
+                400: error('"Validation failed" (details); "You can\'t change your own role"'),
+                ...administrator,
+                404: error('"User not found": no such account; "User not found!": the caller\'s is gone'),
+                409: error('"Hand over or leave their shops first": `admin` for an account on a shop'),
+                500: sharedResponse("ServerError"),
+            },
+        },
+    },
     "/users/me": {
         get: {
             operationId: "getMe", tags: tag,

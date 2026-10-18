@@ -18,7 +18,17 @@ The variables, with what they are for, are in the README's [Environment Variable
 - **`FRONTEND_URL`** (else `FRONTEND_DEV_URL`) is where Google sign-in redirects back to and what table QR codes point at; **`FRONTEND_DEV_URL` + `FRONTEND_PROD_URL`** are the CORS whitelist. At least one of each pair.
 - **`STRIPE_WEBHOOK_SECRET`** must exist before the API deploys: the server won't start without it, so the webhook endpoint is created in Stripe's dashboard first.
 - **`BCRYPT_ROUNDS`** below 10 is refused outside Jest.
-- Rate limits (`PASSWORD_FAILS_PER_ACCOUNT`, `CART_EDITS_PER_MINUTE`) count in the process's memory: they reset with a restart and aren't shared between instances.
+- Rate limits (`PASSWORD_FAILS_PER_ACCOUNT`, `CART_EDITS_PER_MINUTE`, `PEOPLE_ADDED_PER_HOUR`) count in the process's memory: they reset with a restart and aren't shared between instances.
+
+### The first administrator
+
+Roles never come from the account's own request: the `shopMg` and `admin` roles are given by an administrator (`POST /users`, `PUT /users/:userId/role`), and the first administrator is set in the database, on an account that is on no shop (an administrator is never a member; hand over or leave first, through the app):
+
+```js
+db.users.updateOne({ email: "you@example.com" }, { $set: { role: "admin" } })
+```
+
+The same line is the way back if no administrator is left (an administrator never acts on their own account, so only two acting on each other in the same instant can manage it: [known-gaps.md](./known-gaps.md#accepted-residuals)). The demo seed never creates an administrator and never touches an account it didn't create, so an administrator on any other address survives every nightly reseed; keep it off the demo's addresses (`manager@mail.com`, `frank@mail.com`, the `@example.com` diners), which the seed rewrites by email.
 
 ## Where it runs
 
@@ -102,7 +112,7 @@ All read `MONGO_CONNECTION` from `.env` (never printed), run with `npx tsx`, and
 
 The tables' QR codes point at `FRONTEND_URL` (else `FRONTEND_DEV_URL`), so seeding a deployed database from a development machine needs it set to the live client (`FRONTEND_URL=https://un-q.vercel.app npm run seed:demo`); the seed prints the origin it used and refuses a localhost one for a database that isn't local. It needs `DEMO_MANAGER_PASSWORD` and `DEMO_DINER_PASSWORD` in `.env` (the two sign-ins, `manager@mail.com` and `frank@mail.com`; found by email, so existing accounts keep their id and sessions, and a password is rehashed only when it changes) and refuses to run without them. It deletes and rewrites only the demo shops' records, by their fixed ids, their carts, orders, card payment records and pay-backs, and the menu items it created; nothing else in the database is touched. The provider ids it writes are marked (`pi_demo_…`, `DEMO…`), so the held PayPal payment answers "unreachable" to a manager's check and the owed pay-back can't be looked up in Stripe: they are there to be seen, not settled. `src/tests/seedDemo.test.ts` runs it twice against the in-memory database and reads the result back through the manager's routes.
 
-The deployed demo is reseeded every night by `.github/workflows/demo.yml`: at 03:30 UTC (03:30 or 04:30 in London, hours before the first shop opens), and on demand from the repository's Actions tab, it runs `npm run seed:demo` on a GitHub runner from three repository secrets, `MONGO_CONNECTION`, `DEMO_MANAGER_PASSWORD` and `DEMO_DINER_PASSWORD`, with the QR codes pointing at the live client and placeholders for the variables the seed never reads. So the demo's ninety days end yesterday whatever the date, and whatever visitors did at its venues is gone by morning (accounts they created stay: the seed touches only its own records). The database's network access must admit GitHub's runners, whose addresses change. One run at a time: a manual run during the nightly one waits for it. GitHub pauses a schedule after sixty days without a commit to the repository; the Actions tab says so, and re-enables it.
+The deployed demo is reseeded every night by `.github/workflows/demo.yml`: at 03:30 UTC (03:30 or 04:30 in London, hours before the first shop opens), and on demand from the repository's Actions tab, it runs `npm run seed:demo` on a GitHub runner from three repository secrets, `MONGO_CONNECTION`, `DEMO_MANAGER_PASSWORD` and `DEMO_DINER_PASSWORD`, with the QR codes pointing at the live client and placeholders for the variables the seed never reads. So the demo's ninety days end yesterday whatever the date, and whatever visitors did at its venues is gone by morning, staff added to them included (accounts visitors created or were given stay: the seed touches only its own records). The database's network access must admit GitHub's runners, whose addresses change. One run at a time: a manual run during the nightly one waits for it. GitHub pauses a schedule after sixty days without a commit to the repository; the Actions tab says so, and re-enables it.
 
 ## What to look at when something is wrong
 
