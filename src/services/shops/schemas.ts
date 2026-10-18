@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { email, password } from "../auth/schemas"
 import { emptyAsAbsent } from "../../lib/emptyAsAbsent"
 import { DAY_PATTERN, GROUP_BY, daysBetween, isDay, isTimeZone } from "../../lib/days"
 
@@ -23,6 +24,22 @@ export const createShopSchema = z.object({
 export const editShopSchema = z.object({
     ...shopFields,
     name: shopFields.name.optional(),
+})
+
+// POST /shops/:shopId/staff: the person's address, the role they get (the
+// owner's role is never given this way), and, for an address with no account
+// yet, the account's name, surname and first password.
+export const addStaffSchema = z.object({
+    email,
+    role: z.enum(["manager"]),
+    name: z.string().min(1).optional(),
+    surname: z.string().min(1).optional(),
+    password: password.optional(),
+})
+
+// PUT /shops/:shopId/owner: the member who becomes the owner.
+export const handOverSchema = z.object({
+    userId: z.string().regex(/^[0-9a-f]{24}$/i, "Not a user id"),
 })
 
 export const createTableSchema = z.object({

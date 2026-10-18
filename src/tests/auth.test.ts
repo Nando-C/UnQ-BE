@@ -35,16 +35,18 @@ describe("auth", () => {
             expect(res.body).not.toHaveProperty("__v")
         })
 
-        it.each(["shopMg", "admin"])("ignores a client-supplied role (%s: no privilege escalation)", async (role) => {
+        it.each(["shopMg", "admin"])("ignores a client-supplied role (%s: no privilege escalation) and createdBy", async (role) => {
             const res = await request(app)
                 .post("/auth/register")
-                .send({ ...validUser, role })
+                .send({ ...validUser, role, createdBy: "0123456789abcdef01234567" })
 
             expect(res.status).toBe(201)
             expect(res.body.role).toBe("customer")
+            expect(res.body.createdBy).toBeUndefined()
 
             const stored = await UserModel.findById(res.body._id)
             expect(stored?.role).toBe("customer")
+            expect(stored?.createdBy).toBeUndefined()
         })
 
         it("rejects a duplicate email with 409", async () => {

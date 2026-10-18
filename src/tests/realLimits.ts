@@ -2,3 +2,4 @@
 // the real limits apply there instead of the test setup's (see env.ts).
 delete process.env.PASSWORD_FAILS_PER_ACCOUNT
 delete process.env.CART_EDITS_PER_MINUTE
+delete process.env.PEOPLE_ADDED_PER_HOUR

@@ -24,6 +24,8 @@ export interface IUser {
     role: string
     sessions: ISession[]
     googleId?: string
+    // Who made the account when it wasn't the person; absent on a self-registered one.
+    createdBy?: Types.ObjectId
 }
 
 export interface IUserDocument extends Document, IUser {}

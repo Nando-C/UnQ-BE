@@ -55,9 +55,11 @@ const envSchema = z
         STRIPE_WEBHOOK_SECRET: required,
 
         // Rate limits (see middlewares/rateLimits.ts): wrong passwords per account
-        // in 15 minutes, and cart edits per diner in a minute.
+        // in 15 minutes, cart edits per diner in a minute, and people added (an
+        // account created or attached) per caller in an hour.
         PASSWORD_FAILS_PER_ACCOUNT: limit(10),
         CART_EDITS_PER_MINUTE: limit(120),
+        PEOPLE_ADDED_PER_HOUR: limit(20),
 
         // bcrypt's cost for stored passwords, 10 to 13 (above, a hash takes
         // seconds and a few sign-ups at once stall the server). Lower, down to

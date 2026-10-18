@@ -4,11 +4,13 @@ import { canCreateShops, isShopManager, isShopOwner, JWTAuthMiddleware } from ".
 import * as shopControllers from "./controllers/shopControllers"
 import * as tableControllers from "./controllers/tableControllers"
 import * as salesControllers from "./controllers/salesControllers"
+import * as staffControllers from "./controllers/staffControllers"
 import * as managerControllers from "../carts/managerControllers"
 import * as paybackControllers from "../payments/paybackControllers"
 import { paybackDoneSchema } from "../payments/paybackControllers"
 import { validate } from "../../middlewares/validate"
-import { createShopSchema, editShopSchema, createTableSchema, editTableSchema, browseShopsSchema, salesQuerySchema, salesExportSchema } from "./schemas"
+import { peopleAddedLimit } from "../../middlewares/rateLimits"
+import { createShopSchema, editShopSchema, createTableSchema, editTableSchema, browseShopsSchema, salesQuerySchema, salesExportSchema, addStaffSchema, handOverSchema } from "./schemas"
 import { cartItemSchema, releaseSelectionSchema, refundSchema } from "../carts/schemas"
 
 const router = Router()
@@ -29,6 +31,14 @@ router.put("/:shopId", JWTAuthMiddleware, isShopManager, validate(editShopSchema
 router.put("/:shopId/cover", JWTAuthMiddleware, isShopManager, shopCoverUpload, shopControllers.editMyShopCover)
 // The owner alone (or an administrator): the shop goes with everything in it.
 router.delete("/:shopId", JWTAuthMiddleware, isShopOwner, shopControllers.deleteMyShop)
+
+// The shop's staff (staffControllers.ts): any member sees the list; who may
+// add or remove whom is decided there from the guard's req.shopRole. Handing
+// the shop over has its own path, so "owner" is never taken for a userId.
+router.get("/:shopId/staff", JWTAuthMiddleware, isShopManager, staffControllers.listStaff)
+router.post("/:shopId/staff", JWTAuthMiddleware, isShopManager, peopleAddedLimit, validate(addStaffSchema), staffControllers.addStaff)
+router.delete("/:shopId/staff/:userId", JWTAuthMiddleware, isShopManager, staffControllers.removeStaff)
+router.put("/:shopId/owner", JWTAuthMiddleware, isShopOwner, validate(handOverSchema), staffControllers.handOver)
 
 // The shop's sales report, over its orders.
 router.get("/:shopId/sales", JWTAuthMiddleware, isShopManager, validate(salesQuerySchema, "query"), salesControllers.getSales)

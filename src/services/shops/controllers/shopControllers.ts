@@ -13,9 +13,8 @@ import PaybackModel from "../../payments/payback"
 import { destroyReplacedImage, discardUpload } from "../../../settings/cloudinary"
 import mongoose, { PipelineStage } from "mongoose"
 import { BrowseShopsQuery } from "../schemas"
+import { escapeRegExp } from "../../../lib/regexp"
 
-// The text as a pattern that matches it literally.
-const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 // -------------------------------------------------------------------------
 

@@ -6,6 +6,9 @@ import env from "../../settings/env"
 
 const { Schema, model } = mongoose
 
+// The account roles (docs/auth.md#roles-and-ownership).
+export const ACCOUNT_ROLES = ["customer", "shopMg", "admin"] as const
+
 // One signed-in device: the id of the refresh token it holds (never the token
 // itself), and of the one it held before its last rotation (see auth/tools.ts).
 const SessionSchema = new Schema<ISession>({
@@ -47,7 +50,7 @@ const UserSchema = new Schema<IUserDocument, IUserModel>(
         // from a request body: an administrator gives them, or the database.
         role: {
             type: String,
-            enum: ["customer", "shopMg", "admin"],
+            enum: ACCOUNT_ROLES,
             default: "customer"
         },
 
@@ -55,6 +58,10 @@ const UserSchema = new Schema<IUserDocument, IUserModel>(
         sessions: { type: [SessionSchema], default: [] },
         // Looked up on every Google sign-in.
         googleId: { type: String, index: { sparse: true } },
+        // Who made the account when it wasn't the person: an administrator
+        // (POST /users) or a shop's owner adding staff (POST /shops/:shopId/staff).
+        // Absent on a self-registered one.
+        createdBy: { type: Schema.Types.ObjectId, ref: "User" },
     },
     { timestamps: true }
 )

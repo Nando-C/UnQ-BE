@@ -59,6 +59,14 @@ export const JWTAuthMiddleware: TController = async (req, res, next) => {
 
 // -------------------------------------------------------------------------
 
+// After JWTAuthMiddleware: the user is an administrator (the account routes).
+export const isAdministrator: TController = async ( req, res, next ) => {
+    if (isAdmin(req.user as IUserDocument)) next()
+    else next(createError(403, "Administrator only"))
+}
+
+// -------------------------------------------------------------------------
+
 // After JWTAuthMiddleware: the user may create shops (the shop-manager role,
 // or an administrator). Membership of a shop is not enough.
 export const canCreateShops: TController = async ( req, res, next ) => {
