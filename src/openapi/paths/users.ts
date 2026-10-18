@@ -36,13 +36,13 @@ export const userPaths: Paths = {
         delete: {
             operationId: "deleteMe", tags: tag,
             summary: "Delete the signed-in account",
-            description: "Needs `currentPassword` when the account has a password. A manager's shops must be deleted first. Clears the cookies.",
+            description: "Needs `currentPassword` when the account has a password. The shops the account owns must be handed over or deleted first; the shops it merely works at lose it. An administrator's account is deleted by another administrator. Clears the cookies.",
             requestBody: jsonBody(fromZod(deleteMeSchema, { currentPassword: "Required when the account has a password" })),
             responses: {
                 204: empty("Deleted; cookies cleared"),
                 400: error('"Validation failed" (details); "Enter your current password to delete your account"'),
                 403: error('"Your current password is incorrect"'),
-                409: error('"Delete your shops first"'),
+                409: error('"Delete your shops first": the account owns a shop (hand it over or delete it); "An administrator\'s account is deleted by another administrator"'),
                 429: sharedResponse("TooManyWrongPasswords"),
                 500: error('"An Error ocurred while deleting the user"'),
                 ...signedIn,

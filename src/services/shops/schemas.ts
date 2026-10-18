@@ -13,7 +13,12 @@ const shopFields = {
     timeZone: z.string().refine(isTimeZone, "Not a time zone name (an IANA name, like Europe/London)").optional(),
 }
 
-export const createShopSchema = z.object(shopFields)
+// `ownerId` is an administrator's field: who the shop is for (controllers.ts
+// refuses it from anyone else).
+export const createShopSchema = z.object({
+    ...shopFields,
+    ownerId: z.string().regex(/^[0-9a-f]{24}$/i, "Not a user id").optional(),
+})
 
 export const editShopSchema = z.object({
     ...shopFields,

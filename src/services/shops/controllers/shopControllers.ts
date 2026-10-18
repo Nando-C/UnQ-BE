@@ -1,7 +1,8 @@
 import { TController } from "../../../typings/controllers"
 import { IUserDocument } from "src/typings/users"
 import { IDeletedTable } from "src/typings/shop"
-import ShopModel from "../model"
+import ShopModel, { membershipOf } from "../model"
+import UserModel, { isAdmin } from "../../users/model"
 import createError from "http-errors"
 import CartModel, { AWAITING_PROVIDER, RECENTLY_CLOSED_MS } from "../../carts/model"
 import { awaitedProvider } from "../../../lib/payments"
@@ -18,16 +19,31 @@ const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&
 
 // -------------------------------------------------------------------------
 
+// The caller becomes the shop's owner. An administrator is never a member, so
+// one names the owner instead (`ownerId`), any account but another
+// administrator's; from anyone else the field is refused.
 export const createShop: TController = async ( req, res, next ) => {
     try {
-    const user = req.user as IUserDocument
+        const user = req.user as IUserDocument
+        const { ownerId: namedOwner, ...fields } = req.body as { ownerId?: string }
 
-    const newShop = { 
-        ...req.body, 
-        shopMg: [ user._id ],
-    }
+        let ownerId = user._id
+        if (isAdmin(user)) {
+            if (!namedOwner) return next(createError(400, "Name the shop's owner (ownerId): an administrator isn't a member"))
+            const owner = await UserModel.findById(namedOwner).select("role")
+            if (!owner) return next(createError(404, "Owner not found"))
+            if (isAdmin(owner)) return next(createError(409, "An administrator can't be a member of a shop"))
+            ownerId = owner._id
+        } else if (namedOwner) {
+            return next(createError(403, "Only an administrator names an owner"))
+        }
 
-        const shop = await new ShopModel(newShop).save()
+        const shop = await new ShopModel({
+            ...fields,
+            shopMg: [ownerId],
+            ownerId,
+            members: [{ userId: ownerId, role: "owner", since: new Date(), ...(isAdmin(user) && { addedBy: user._id }) }],
+        }).save()
         res.send(shop)
     } catch (error) {
         next(createError(500, error as Error))
@@ -36,11 +52,18 @@ export const createShop: TController = async ( req, res, next ) => {
 
 // -------------------------------------------------------------------------
 
+// The shops the caller is a member of; every shop for an administrator.
 export const getMyShops: TController = async ( req, res, next) => {
     try {
         const user = req.user as IUserDocument
 
-        const myShops = await ShopModel.find({ shopMg: user._id }).populate("menu")
+        const myShops = await ShopModel.find(isAdmin(user) ? {} : { shopMg: user._id }).populate("menu")
+        // Older shops get their owner and members on the way (model.ts), and
+        // are answered as filled.
+        for (const shop of myShops.filter((s) => !s.ownerId)) {
+            const filled = await membershipOf(shop._id)
+            if (filled) shop.set({ ownerId: filled.ownerId, members: filled.members })
+        }
 
         // The manager's page lists a deleted table while its sheet has something
         // on it: `needsAttention` when there's something left to do (an open
@@ -81,8 +104,8 @@ export const getMyShops: TController = async ( req, res, next) => {
 
 export const getAllShops: TController = async ( req, res, next) => {
     try {
-        // Deleted tables are the manager's alone (GET /shops/me).
-        const shopList = await ShopModel.find().select("-deletedTables").populate("menu")
+        // Deleted tables and the members' details are the staff's alone (GET /shops/me).
+        const shopList = await ShopModel.find().select("-deletedTables -members").populate("menu")
 
         res.send(shopList)
     } catch (error) {
@@ -146,7 +169,7 @@ export const browseShops: TController = async ( req, res, next) => {
 
 export const getSingleShop: TController = async ( req, res, next ) => {
     try {
-        const myShop = await ShopModel.findById(req.params.shopId).select("-deletedTables").populate("menu")
+        const myShop = await ShopModel.findById(req.params.shopId).select("-deletedTables -members").populate("menu")
 
         if (myShop) {
             res.send(myShop)
@@ -160,13 +183,14 @@ export const getSingleShop: TController = async ( req, res, next ) => {
 
 // -------------------------------------------------------------------------
 
+// Who may edit was settled by the guard (isShopManager: any member, or an
+// administrator), so the update filters on the id alone.
 export const editMyShop: TController = async ( req, res, next ) => {
     try {
-        const user = req.user as IUserDocument
         const shopId = req.params.shopId
 
-        const modifiedShop = await ShopModel.findOneAndUpdate({_id: shopId, shopMg: user._id }, req.body, {runValidators: true })
-        if (!modifiedShop) return next(createError(400, "Shop Not Found or you are not authorized!"))
+        const modifiedShop = await ShopModel.findByIdAndUpdate(shopId, req.body, {runValidators: true })
+        if (!modifiedShop) return next(createError(404, "Shop Not Found!"))
 
         res.send(modifiedShop)
     } catch (error) {
@@ -176,9 +200,9 @@ export const editMyShop: TController = async ( req, res, next ) => {
 
 // -------------------------------------------------------------------------
 
+// The owner's alone, or an administrator's (isShopOwner).
 export const deleteMyShop: TController = async ( req, res, next ) => {
     try {
-        const user = req.user as IUserDocument
         const shopId = req.params.shopId
 
         // The shop goes with everything in it: its menu items (deleted ones too)
@@ -188,8 +212,8 @@ export const deleteMyShop: TController = async ( req, res, next ) => {
         // confirmed), which a manager can only settle from this shop's pages,
         // and while a payment with something left to refund is on its table's
         // sheet (a cart closed or changed in the last 24 hours).
-        const shop = await ShopModel.findOne({_id: shopId, shopMg: user._id }).select("tables deletedTables")
-        if (!shop) return next(createError(400, "Shop Not Found or you are not authorized!"))
+        const shop = await ShopModel.findById(shopId).select("tables deletedTables")
+        if (!shop) return next(createError(404, "Shop Not Found!"))
         const allTables = [...shop.tables, ...shop.deletedTables]
         const tableIds = allTables.map((t) => String(t._id))
         // Its carts, and its card payments' records: by the shop they record
@@ -230,8 +254,8 @@ export const deleteMyShop: TController = async ( req, res, next ) => {
             return next(createError(500, "The shop's sales records couldn't be saved, so nothing was deleted. Try again shortly.", { expose: true }))
         }
 
-        const deletedShop = await ShopModel.findOneAndDelete({_id: shopId, shopMg: user._id })
-        if (!deletedShop) return next(createError(400, "Shop Not Found or you are not authorized!"))
+        const deletedShop = await ShopModel.findByIdAndDelete(shopId)
+        if (!deletedShop) return next(createError(404, "Shop Not Found!"))
 
         await Promise.all([
             MenuModel.deleteMany({ $or: [{ _id: { $in: deletedShop.menu } }, { deletedFrom: deletedShop._id }] }),
@@ -254,16 +278,16 @@ export const deleteMyShop: TController = async ( req, res, next ) => {
 
 // -------------------------------------------------------------------------
 
+// Who may upload was settled by the guard (isShopManager), before the upload.
 export const editMyShopCover: TController = async ( req, res, next ) => {
     try {
-        const user = req.user as IUserDocument
         const shopId = req.params.shopId
 
         const previous = await ShopModel.findById(shopId).select("cover")
-        const shopWithNewCover = await ShopModel.findOneAndUpdate({_id: shopId, shopMg: user._id }, { cover: req.file?.path }, {runValidators: true })
+        const shopWithNewCover = await ShopModel.findByIdAndUpdate(shopId, { cover: req.file?.path }, {runValidators: true })
         if (!shopWithNewCover) {
             discardUpload(req)
-            return next(createError(400, "Shop Not Found or you are not authorized!"))
+            return next(createError(404, "Shop Not Found!"))
         }
 
         destroyReplacedImage(previous?.cover)

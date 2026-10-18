@@ -129,7 +129,7 @@ For something to look at, and a manager to sign in as, write the demo data: thre
 npm run seed:demo
 ```
 
-A manager is an account with the `shopMg` role, which only the database sets (the sign-up form can't). To promote an account of your own:
+A shop's staff are its members: an owner and managers, whatever their account role. An account with the `shopMg` role can open shops of its own, and one with the `admin` role can do everything on every shop; neither role comes from the sign-up form. To give an account of your own one of them:
 
 ```js
 db.users.updateOne({ email: "you@example.com" }, { $set: { role: "shopMg" } })

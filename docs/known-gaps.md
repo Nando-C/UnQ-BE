@@ -35,7 +35,7 @@ Each changes behaviour, a contract, stored data or several layers at once, so ea
 7. **`decreaseSplitItem` takes one unit per call**; an additive `qty` would let the front end send one request.
 8. **The Stripe webhook's raw body** is a per-route exception inside the global JSON parser, with a hand-rolled URL check; mounting `express.raw()` on that path would be cleaner but the startup route listing forbids app-level routes. Decide the two together.
 9. **Cart archiving**: once orders hold the history, closed carts should expire about 30 days after closing, through an `expiresAt` set on close and unset while a payment or refund awaits a provider (a TTL filter can't express the `$or`). Decided, not built.
-10. **Two contract wrinkles**, kept until the front end's handling changes with them: `"Shop Not Found or you are not authorized!"` is a `400` where `404`/`403` would fit; `PUT /shops/:shopId/tables/:tableId` answers the shop's whole tables array, not the table.
+10. **One contract wrinkle**, kept until the front end's handling changes with it: `PUT /shops/:shopId/tables/:tableId` answers the shop's whole tables array, not the table. (The other, a `400 "Shop Not Found or you are not authorized!"` where `403`/`404` fit, went when the guards took over authorisation from the shop controllers.)
 11. Smaller: `decreaseItem` runs an unconditional delete-and-close after every `−`; `changeMySplit`'s precheck repeats the update's 404; `optionalJWT` loads the whole user for the public cart; `GET /shops` still answers every shop with its menu though the front end moved to `/shops/browse`; `heldSince` in the table status is sent but never read; the test files' `scaffold` could be shared.
 
 ## Roadmap

@@ -8,7 +8,13 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ### Added
 
+- **Shop membership.** A shop's staff are its `members`, each with a role: the `owner` (one per shop, who alone deletes it) and `manager`s. `shopMg` still lists every member's id. Shops from before get their owner and members the first time a member opens them. A third account role, `admin`, set in the database like `shopMg`, can do everything on every shop and is never a member of one; an administrator creating a shop names its owner (`ownerId`). [docs/auth.md](./docs/auth.md#roles-and-ownership), [docs/data-model.md](./docs/data-model.md#shop).
 - A pull request template, issue templates and a Docs check (`.github/workflows/docs.yml`): a pull request that changes the code without a word in the changelog or the docs fails the check, unless it carries the `no-docs` label. The steps a release follows are written down in [docs/operations.md](./docs/operations.md#cutting-a-release).
+
+### Changed
+
+- Who may do what on a shop is decided by the guards alone, from membership rather than the account role: `GET /shops/me` answers any signed-in account (`[]` for one on no shop, every shop for an administrator) instead of refusing a `customer`; editing a shop and its cover is any member's; deleting it is the owner's (`403 "Only the owner can do this"`). The shop controllers no longer refuse with `400 "Shop Not Found or you are not authorized!"`: a missing shop is `404 "Shop Not Found!"` from the guard.
+- Deleting an account is refused while it owns a shop (the message stays "Delete your shops first") or is an administrator's; a shop the account merely worked at loses it.
 
 ### Fixed
 

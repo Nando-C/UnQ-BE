@@ -2,9 +2,10 @@ import { TController } from "src/typings/controllers"
 import createError from "http-errors"
 import { verifyJWT } from "./tools"
 import { JwtPayload } from "jsonwebtoken"
-import UserModel from "../users/model"
-import ShopModel from "../shops/model"
+import UserModel, { isAdmin } from "../users/model"
+import { membershipOf } from "../shops/model"
 import { IUserDocument } from "src/typings/users"
+import { Request } from "express"
 
 
 // -------------------------------------------------------------------------
@@ -58,11 +59,12 @@ export const JWTAuthMiddleware: TController = async (req, res, next) => {
 
 // -------------------------------------------------------------------------
 
-// After JWTAuthMiddleware: the user has the shop-manager role (any shop).
-export const adminOnly: TController = async ( req, res, next ) => {
+// After JWTAuthMiddleware: the user may create shops (the shop-manager role,
+// or an administrator). Membership of a shop is not enough.
+export const canCreateShops: TController = async ( req, res, next ) => {
     const user = req.user as IUserDocument
 
-    if (user.role === "shopMg") {
+    if (user.role === "shopMg" || isAdmin(user)) {
         next()
     } else {
         next(createError(403, "Shop Manager Only!!"))
@@ -71,27 +73,46 @@ export const adminOnly: TController = async ( req, res, next ) => {
 
 // -------------------------------------------------------------------------
 
-// After JWTAuthMiddleware: the user manages the shop in :shopId (404 if
-// there's no such shop).
+// After JWTAuthMiddleware: the user is a member of the shop in :shopId, or an
+// administrator (404 if there's no such shop). Sets req.shopRole to how they
+// got through (the staff routes read it), and fills an older shop's membership
+// on the way (model.ts).
 export const isShopManager: TController = async ( req, res, next ) => {
     try {
-        const user = req.user as IUserDocument
-        const shopId = req.params.shopId
-
-        const myShop = await ShopModel.findById(shopId).select("shopMg")
-
-        if (myShop) {
-            if ( myShop.shopMg.some((managerId) => managerId.equals(String(user._id)))){
-                next()
-            } else {
-                next(createError(403, `Shop Manager Only!`))
-            }
-        } else {
-            next(createError(404, `Shop Not Found!`))
-        }
+        const role = await shopRoleOf(req)
+        if (role === undefined) return next(createError(404, `Shop Not Found!`))
+        if (!role) return next(createError(403, `Shop Manager Only!`))
+        req.shopRole = role
+        next()
     } catch (error) {
         next(error)
     }
+}
+
+// After JWTAuthMiddleware: the user owns the shop in :shopId, or is an
+// administrator. A member who isn't the owner is refused, as is everyone else.
+export const isShopOwner: TController = async ( req, res, next ) => {
+    try {
+        const role = await shopRoleOf(req)
+        if (role === undefined) return next(createError(404, `Shop Not Found!`))
+        if (role !== "owner" && role !== "admin") return next(createError(403, `Only the owner can do this`))
+        req.shopRole = role
+        next()
+    } catch (error) {
+        next(error)
+    }
+}
+
+// The caller's standing on the shop in :shopId: "admin", their member role,
+// null for a stranger, undefined for no such shop. Reads the membership, which
+// fills an older shop's owner and members first (an administrator's visit
+// fills it too), so the role it reads is always there.
+const shopRoleOf = async (req: Request) => {
+    const user = req.user as IUserDocument
+    const shop = await membershipOf(req.params.shopId as string)
+    if (!shop) return undefined
+    if (isAdmin(user)) return "admin" as const
+    return shop.members.find((m) => m.userId.equals(String(user._id)))?.role ?? null
 }
 
 // -------------------------------------------------------------------------

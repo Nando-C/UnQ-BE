@@ -364,7 +364,8 @@ describe("marking a pay-back done", () => {
         const { t } = await handedOver()
         const [owed] = await paybacksOf(t.tableId)
         const other = await authFor("shopMg")
-        await ShopModel.updateOne({ _id: t.shopId }, { $push: { shopMg: other.user._id } })
+        // Added as the staff routes add a member: in both lists.
+        await ShopModel.updateOne({ _id: t.shopId }, { $push: { shopMg: other.user._id, members: { userId: other.user._id, role: "manager", since: new Date() } } })
         await markDone(t, String(owed._id), "paidBack", other)
 
         const res = await markDone(t, String(owed._id), "checked")

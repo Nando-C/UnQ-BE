@@ -134,6 +134,20 @@ describe("uploads", () => {
             expect(mockUploads).toEqual([])
         })
 
+        it("uploads for an administrator, who is no member of the shop", async () => {
+            const owner = await authFor("shopMg")
+            const shopId = (await request(app).post("/shops").set("Cookie", owner.cookies).send({ name: "Cafe" })).body._id
+            const admin = await authFor("admin")
+
+            const res = await request(app)
+                .put(`/shops/${shopId}/cover`)
+                .set("Cookie", admin.cookies)
+                .attach("cover", jpeg, "c.jpg")
+
+            expect(res.status).toBe(200)
+            expect(res.body.cover).toBe(urlOf("UnQ-App/Shops/img-1"))
+        })
+
         it("replaces the cover, deleting the old upload but never the default", async () => {
             const owner = await authFor("shopMg")
             const shopId = (await request(app).post("/shops").set("Cookie", owner.cookies).send({ name: "Cafe" })).body._id

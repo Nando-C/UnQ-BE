@@ -35,10 +35,10 @@ describe("auth", () => {
             expect(res.body).not.toHaveProperty("__v")
         })
 
-        it("ignores a client-supplied role (no privilege escalation)", async () => {
+        it.each(["shopMg", "admin"])("ignores a client-supplied role (%s: no privilege escalation)", async (role) => {
             const res = await request(app)
                 .post("/auth/register")
-                .send({ ...validUser, role: "shopMg" })
+                .send({ ...validUser, role })
 
             expect(res.status).toBe(201)
             expect(res.body.role).toBe("customer")

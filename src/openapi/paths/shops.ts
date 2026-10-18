@@ -13,12 +13,10 @@ const money = ["Manager: refunds and payments"]
 const sales = ["Manager: sales"]
 
 const signedIn = { 401: sharedResponse("Unauthorized") }
-// JWTAuthMiddleware then adminOnly (the role, any shop).
-const anyManager = { ...signedIn, 403: sharedResponse("ManagerOnly") }
-// JWTAuthMiddleware then isShopManager (manages THIS shop; 404 if there's no such shop).
+// JWTAuthMiddleware then isShopManager (a member of THIS shop, or an administrator; 404 if there's no such shop).
 const thisManager = { ...signedIn, 403: sharedResponse("NotThisShopsManager") }
-
-const notAuthorized = error('"Shop Not Found or you are not authorized!": no such shop, or the caller doesn\'t manage it')
+// JWTAuthMiddleware then isShopOwner (THIS shop's owner, or an administrator; 404 if there's no such shop).
+const thisOwner = { ...signedIn, 403: sharedResponse("NotThisShopsOwner") }
 const cartChanged = '"The cart changed, please retry": another write landed first (a payment settling, another manager)'
 const cartParams = [param("shopId"), param("tableId"), param("cartId")]
 const managedCart404 = error('"Cart Not Found!": no open cart with this id at this table of this shop; "Shop Not Found!"')
@@ -33,13 +31,15 @@ export const shopPaths: Paths = {
         post: {
             operationId: "createShop", tags: shops,
             summary: "Create a shop",
-            description: "The caller becomes its manager (`shopMg`).",
-            requestBody: jsonBody(fromZod(createShopSchema, { phone: "As typed, up to 30 characters: digits, spaces, dashes, brackets, +", timeZone: "An IANA time zone name (Europe/London, America/New_York): the zone the shop's days are counted in; Europe/London unless set" })),
+            description: "The caller becomes its owner (`ownerId`, the first of its `members`). An administrator is never a member, so one names the owner instead (`ownerId`, any account but another administrator's); from anyone else the field is refused.",
+            requestBody: jsonBody(fromZod(createShopSchema, { phone: "As typed, up to 30 characters: digits, spaces, dashes, brackets, +", timeZone: "An IANA time zone name (Europe/London, America/New_York): the zone the shop's days are counted in; Europe/London unless set", ownerId: "Administrators only: the account that owns the new shop" })),
             responses: {
                 200: json("The new shop", ref("ShopRecord")),
-                400: sharedResponse("ValidationFailed"),
-                ...anyManager,
-                404: sharedResponse("UserGone"),
+                400: error('"Validation failed" (details); "Name the shop\'s owner (ownerId): an administrator isn\'t a member"'),
+                401: sharedResponse("Unauthorized"),
+                403: error('"Shop Manager Only!!": the account can\'t create shops; "Only an administrator names an owner": `ownerId` from a shop manager'),
+                404: error('"User not found!": the token\'s account no longer exists; "Owner not found": no account has the `ownerId`'),
+                409: error('"An administrator can\'t be a member of a shop": the `ownerId` is an administrator\'s'),
                 500: sharedResponse("ServerError"),
             },
         },
@@ -57,10 +57,10 @@ export const shopPaths: Paths = {
         get: {
             operationId: "getMyShops", tags: shops,
             summary: "The caller's shops",
-            description: "Menus populated. Each deleted table says whether something there still needs the manager (`needsAttention`) and until when its closed carts stay on its sheet (`recentCartsUntil`).",
+            description: "The shops the caller is a member of, whatever their account role: `[]` for an account on none, every shop for an administrator. Menus populated. Each deleted table says whether something there still needs the staff (`needsAttention`) and until when its closed carts stay on its sheet (`recentCartsUntil`). A shop from before membership gets its `ownerId` and `members` here, from its `shopMg`.",
             responses: {
-                200: json("The shops the caller manages", { type: "array", items: ref("ManagerShop") }),
-                ...anyManager,
+                200: json("The shops the caller is a member of", { type: "array", items: ref("ManagerShop") }),
+                ...signedIn,
                 404: sharedResponse("UserGone"),
                 500: sharedResponse("ServerError"),
             },
@@ -97,28 +97,27 @@ export const shopPaths: Paths = {
         },
         put: {
             operationId: "editMyShop", tags: shops,
-            summary: "Edit a shop the caller manages",
-            description: "Every field optional; only the ones sent change. An empty `phone` clears it.",
+            summary: "Edit a shop the caller is a member of",
+            description: "Any member of the shop, whatever their account role (or an administrator). Every field optional; only the ones sent change. An empty `phone` clears it.",
             parameters: [param("shopId")],
             requestBody: jsonBody(fromZod(editShopSchema, { phone: "As typed, up to 30 characters: digits, spaces, dashes, brackets, +", timeZone: "An IANA time zone name (Europe/London, America/New_York): the zone the shop's days are counted in" })),
             responses: {
                 200: json("The shop as it is now (menu by id)", ref("ShopRecord")),
-                400: error('"Validation failed" (details); "Shop Not Found or you are not authorized!" (no such shop, or not the caller\'s)'),
-                ...anyManager,
-                404: sharedResponse("UserGone"),
+                400: sharedResponse("ValidationFailed"),
+                ...thisManager,
+                404: error('"Shop Not Found!"; "User not found!"'),
                 500: sharedResponse("ServerError"),
             },
         },
         delete: {
             operationId: "deleteMyShop", tags: shops,
             summary: "Delete a shop and everything in it",
-            description: "Takes its menu items (deleted ones too), its carts (payment records included) and its pay-backs; the orders remain as the sales record, written first (nothing is deleted if they can't be). Refused while money is still moving: an open cart, a payment or refund a provider hasn't confirmed, a card payment still being finished, a diner to pay back, or a payment that can still be refunded from a table's sheet (a paid cart closed or changed in the last 24 hours).",
+            description: "The owner's alone (or an administrator's). Takes its menu items (deleted ones too), its carts (payment records included) and its pay-backs; the orders remain as the sales record, written first (nothing is deleted if they can't be). Refused while money is still moving: an open cart, a payment or refund a provider hasn't confirmed, a card payment still being finished, a diner to pay back, or a payment that can still be refunded from a table's sheet (a paid cart closed or changed in the last 24 hours).",
             parameters: [param("shopId")],
             responses: {
                 204: empty("Deleted"),
-                400: notAuthorized,
-                ...anyManager,
-                404: sharedResponse("UserGone"),
+                ...thisOwner,
+                404: error('"Shop Not Found!"; "User not found!"'),
                 409: error('"A table in this shop has an open cart — close it first"; "A payment or refund at table … is still awaiting PayPal|Stripe — check it there first"; "A payment at table … can still be refunded from its sheet: the shop can be deleted once no paid cart has changed for a day"; or a card-payment reason (carts/stripeDeletion.ts)'),
                 500: error('"The shop\'s sales records couldn\'t be saved, so nothing was deleted. Try again shortly."; or "Generic Server Error"'),
             },
@@ -133,7 +132,7 @@ export const shopPaths: Paths = {
             requestBody: imageBody("cover"),
             responses: {
                 200: json("The shop with its new cover (menu by id)", ref("ShopRecord")),
-                400: error('"Only JPEG, PNG, WebP, GIF, AVIF or HEIC images can be uploaded"; "No image was sent (field \\"cover\\")"; "Shop Not Found or you are not authorized!"'),
+                400: error('"Only JPEG, PNG, WebP, GIF, AVIF or HEIC images can be uploaded"; "No image was sent (field \\"cover\\")"'),
                 413: uploadErrors[413],
                 ...thisManager,
                 404: sharedResponse("ShopNotFound"),

@@ -465,6 +465,8 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
             cover: shop.cover,
             timeZone: zone,
             shopMg: [managerId],
+            ownerId: managerId,
+            members: [{ userId: managerId, role: "owner", since: at(shop.since * DAY + 2 * HOUR) }],
             tables: shop.tables.map((t) => ({ _id: t.id, name: t.name, Qr_Url: `${env.FRONTEND_ORIGIN}/shops/${shop.id}/tables/${t.id}` })),
             deletedTables: shop.deletedTables.map((t) => ({ _id: t.id, name: t.name, deletedAt: t.deletedAt })),
             menu: shop.items.filter((i) => !i.deleted).map((i) => i.id),
