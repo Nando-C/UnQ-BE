@@ -6,6 +6,10 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-18
+
+Staff on a shop: a shop has an owner and managers, whom the owner adds by email, and an `admin` account role runs every shop and the accounts. Nothing changes on the host: the one new variable, `PEOPLE_ADDED_PER_HOUR`, has a default. The first administrator is set in the database, on an account that is on no shop's staff ([operations.md](./docs/operations.md#the-first-administrator)). The front end at 2.4.0 shows the manager side to every member, the Staff section on the shop page and the administrator's Accounts page.
+
 ### Added
 
 - **Shop membership.** A shop's staff are its `members`, each with a role: the `owner` (one per shop, who alone deletes it) and `manager`s. `shopMg` still lists every member's id. Shops from before get their owner and members the first time a member opens them. A third account role, `admin`, can do everything on every shop and is never a member of one; an administrator creating a shop names its owner (`ownerId`). [docs/auth.md](./docs/auth.md#roles-and-ownership), [docs/data-model.md](./docs/data-model.md#shop).
