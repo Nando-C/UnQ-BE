@@ -1,4 +1,4 @@
-import { Paths, empty, error, fromZod, imageBody, json, jsonBody, param, ref, sharedResponse, uploadErrors } from "../helpers"
+import { Paths, abilityOf, empty, error, fromZod, imageBody, json, jsonBody, param, ref, sharedResponse, uploadErrors } from "../helpers"
 import { createMenuItemSchema, editMenuItemSchema } from "../../services/menus/schemas"
 
 // services/menus/routes.ts, controllers.ts. Mounted under /shops next to the shop routes.
@@ -6,7 +6,7 @@ import { createMenuItemSchema, editMenuItemSchema } from "../../services/menus/s
 const tag = ["Menu"]
 
 const signedIn = { 401: sharedResponse("Unauthorized") }
-// JWTAuthMiddleware, isShopManager, then (where the route has it) isOnShopMenu.
+// JWTAuthMiddleware, isShopManager, the ability guard (x-ability), then (where the route has it) isOnShopMenu.
 const manager = { ...signedIn, 403: sharedResponse("NotThisShopsManager") }
 
 const itemFields = {
@@ -17,7 +17,7 @@ const itemFields = {
 export const menuPaths: Paths = {
     "/shops/{shopId}/menu": {
         post: {
-            operationId: "createMenuItem", tags: tag,
+            operationId: "createMenuItem", tags: tag, ...abilityOf("menu.edit"),
             summary: "Add an item to the shop's menu",
             parameters: [param("shopId")],
             requestBody: jsonBody(fromZod(createMenuItemSchema, itemFields)),
@@ -56,9 +56,9 @@ export const menuPaths: Paths = {
             },
         },
         put: {
-            operationId: "editMenuItem", tags: tag,
+            operationId: "editMenuItem", tags: tag, ...abilityOf("menu.edit", "menu.availability"),
             summary: "Edit an item",
-            description: "Every field optional; only the ones sent change.",
+            description: "Every field optional; only the ones sent change. Two abilities share the route: a body of `available` and nothing else is the availability switch (`menu.availability`, every member's); any other body, an empty one included, is an edit (`menu.edit`, the owner's and managers'). The body is validated and the item looked up before the role is checked, so a malformed body answers 400 and an item not on this shop's menu 404 whatever the role.",
             parameters: [param("shopId"), param("itemId")],
             requestBody: jsonBody(fromZod(editMenuItemSchema, itemFields)),
             responses: {
@@ -70,7 +70,7 @@ export const menuPaths: Paths = {
             },
         },
         delete: {
-            operationId: "deleteMenuItem", tags: tag,
+            operationId: "deleteMenuItem", tags: tag, ...abilityOf("menu.edit"),
             summary: "Take an item off the menu",
             description: "The item leaves the shop's menu but is kept, unavailable and marked `deletedFrom`, so carts that hold it still name it (as sold out). It goes for good with the shop.",
             parameters: [param("shopId"), param("itemId")],
@@ -84,7 +84,7 @@ export const menuPaths: Paths = {
     },
     "/shops/{shopId}/menu/{itemId}/img": {
         put: {
-            operationId: "editMenuItemImage", tags: tag,
+            operationId: "editMenuItemImage", tags: tag, ...abilityOf("menu.edit"),
             summary: "Upload an item's image",
             description: "The permission checks run before the upload, so a refused request never reaches Cloudinary. The replaced image is deleted there if this app uploaded it.",
             parameters: [param("shopId"), param("itemId")],

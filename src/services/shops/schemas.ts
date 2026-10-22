@@ -2,6 +2,7 @@ import { z } from "zod"
 import { email, password } from "../auth/schemas"
 import { emptyAsAbsent } from "../../lib/emptyAsAbsent"
 import { DAY_PATTERN, GROUP_BY, daysBetween, isDay, isTimeZone } from "../../lib/days"
+import { GIVABLE_ROLES } from "./roles"
 
 const shopFields = {
     name: z.string().min(1),
@@ -31,10 +32,16 @@ export const editShopSchema = z.object({
 // yet, the account's name, surname and first password.
 export const addStaffSchema = z.object({
     email,
-    role: z.enum(["manager"]),
+    role: z.enum(GIVABLE_ROLES),
     name: z.string().min(1).optional(),
     surname: z.string().min(1).optional(),
     password: password.optional(),
+})
+
+// PUT /shops/:shopId/staff/:userId: the member's new role (never owner: a
+// hand-over gives that).
+export const setMemberRoleSchema = z.object({
+    role: z.enum(GIVABLE_ROLES),
 })
 
 // PUT /shops/:shopId/owner: the member who becomes the owner.

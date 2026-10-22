@@ -3,15 +3,16 @@ import request from "supertest"
 import { spawnSync } from "child_process"
 import path from "path"
 import "./setup"
-import app, { routeList } from "../server"
+import app, { routeAbilities, routeList } from "../server"
 import { buildOpenApi } from "../openapi"
 import { version } from "../openapi"
+import { ABILITIES, Ability, MEMBER_ROLES, holdersOf } from "../services/shops/roles"
 
 // The OpenAPI document (src/openapi/) is the API's contract: these keep it
 // complete and well-formed. What each operation says is checked by reading,
 // against the controllers (see src/openapi/components.ts for where).
 
-type Operation = { operationId: string; parameters?: ({ $ref: string } | { name: string; in: string })[]; responses: Record<string, unknown>; tags: string[]; security?: unknown[] }
+type Operation = { operationId: string; parameters?: ({ $ref: string } | { name: string; in: string })[]; responses: Record<string, unknown>; tags: string[]; security?: unknown[]; description?: string; "x-ability"?: readonly string[]; "x-roles"?: readonly string[] }
 
 const document = buildOpenApi()
 const operations = Object.entries(document.paths).flatMap(([path, methods]) =>
@@ -77,6 +78,37 @@ describe("the OpenAPI document", () => {
         }
         walk(document)
         expect(dangling).toEqual([])
+    })
+
+    // The ability a route's guard checks (auth/middlewares.ts allows, isShopOwner)
+    // and the roles holding it travel in the document; the guard is read off the
+    // route, so the two can't drift. shops/roles.ts, docs/auth.md#what-each-role-may-do.
+    it("says on every guarded operation what the route checks of the caller's role, and who holds it", () => {
+        const guards = routeAbilities()
+        let carried = 0
+        for (const { path, method, op } of operations) {
+            const route = `${method} ${path.replace(/\{(\w+)\}/g, ":$1")}`
+            const abilities = guards.get(route)
+            expect({ route, ability: op["x-ability"] }).toEqual({ route, ability: abilities })
+            expect({ route, roles: op["x-roles"] }).toEqual({ route, roles: abilities && holdersOf(abilities as Ability[]) })
+            if (abilities) carried++
+        }
+        expect(carried).toBe(24)
+        // Every ability in the table is checked by some route.
+        const used = new Set([...guards.values()].flatMap((a) => a ?? []))
+        expect([...used].sort()).toEqual(Object.keys(ABILITIES).sort())
+    })
+
+    it("explains the roles and the two extensions in its description", () => {
+        const text = document.info.description
+        for (const role of MEMBER_ROLES) expect(text).toContain(`\`${role}\``)
+        expect(text).toContain("`x-ability`")
+        expect(text).toContain("`x-roles`")
+        type Fields = Record<string, { enum?: string[]; items?: { properties: Fields } }>
+        const fields = (name: string) => (document.components.schemas as Record<string, { properties: Fields }>)[name].properties
+        expect(fields("Member").role.enum).toEqual([...MEMBER_ROLES])
+        expect(fields("StaffMember").role.enum).toEqual([...MEMBER_ROLES])
+        expect(fields("ListedUser").shops.items?.properties.role.enum).toEqual([...MEMBER_ROLES])
     })
 
     it("carries the package's version", () => {

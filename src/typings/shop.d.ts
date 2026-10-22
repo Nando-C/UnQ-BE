@@ -23,8 +23,9 @@ export interface IShop {
     menu: Types.ObjectId[]
 }
 
-// The roles a member can hold (shops/model.ts MEMBER_ROLES).
-export type MemberRole = "owner" | "manager"
+// The roles a member can hold (shops/roles.ts MEMBER_ROLES).
+export type { MemberRole } from "../services/shops/roles"
+import type { MemberRole } from "../services/shops/roles"
 
 export interface IMember {
     userId: Types.ObjectId

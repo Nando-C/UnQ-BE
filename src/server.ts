@@ -55,7 +55,7 @@ for (const [path, router] of mounts) app.use(path, router)
 // Express 5 doesn't keep a mounted router's path where a library can read it
 // back, so routes must be in a mounted router, not nested deeper or on `app`,
 // and declared with plain string paths (routeList.test.ts checks).
-export const routeList = () =>
+const routes = () =>
     mounts.flatMap(([base, router]) =>
         router.stack.flatMap((layer) => {
             if (!layer.route) return []
@@ -63,9 +63,16 @@ export const routeList = () =>
             const path = layer.route.path === "/" ? base : prefix + layer.route.path
             // A route's `all()` layers have no method.
             const methods = new Set(layer.route.stack.map((l) => (l.method ?? "all").toUpperCase()))
-            return [...methods].map((method) => ({ method, path }))
+            // The guard that decides by the caller's role on the shop, if the
+            // route has one (auth/middlewares.ts AbilityGuard).
+            const guard = layer.route.stack.map((l) => l.handle as { abilities?: readonly string[] }).find((h) => h.abilities)
+            return [...methods].map((method) => ({ method, path, abilities: guard?.abilities }))
         })
     )
+export const routeList = () => routes().map(({ method, path }) => ({ method, path }))
+// Each route's ability guard, for the OpenAPI test: "METHOD path" → the
+// abilities it checks, or undefined for a route without one.
+export const routeAbilities = () => new Map(routes().map(({ method, path, abilities }) => [`${method} ${path}`, abilities]))
 
 // ===================== ERROR HANDLERS =============================
 app.use(errorsHandler)

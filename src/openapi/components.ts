@@ -4,6 +4,7 @@ import { PAYMENT_PROVIDERS, PAYMENT_STATUSES, REFUND_REASONS, REFUND_STATUSES } 
 import { DONE_AS, PAYBACK_KINDS } from "../services/payments/payback"
 import { MAX_REPORT_DAYS } from "../services/shops/schemas"
 import { GROUP_BY } from "../lib/days"
+import { MEMBER_ROLES } from "../services/shops/roles"
 
 // Response schemas, written from the Mongoose models (services/*/model.ts),
 // their toJSON methods, and the controllers' select/populate/strip logic. The
@@ -44,7 +45,7 @@ const User = object(userFields, ["_id", "name", "email", "role", "hasPassword", 
 // GET /users: an account with the shops it is a member of.
 const ListedUser = object({
     ...userFields,
-    shops: array(object({ _id: objectId, name: { type: "string" }, role: { type: "string", enum: ["owner", "manager"] } }, ["_id", "name", "role"])),
+    shops: array(object({ _id: objectId, name: { type: "string" }, role: { type: "string", enum: [...MEMBER_ROLES] } }, ["_id", "name", "role"])),
 }, ["_id", "name", "email", "role", "hasPassword", "createdAt", "updatedAt", "shops"], "An account and the shops it is a member of, with its role on each")
 
 const AccountPage = object({
@@ -61,7 +62,7 @@ const StaffMember = object({
     surname: { type: "string" },
     email: nullable({ type: "string", format: "email" }),
     avatar: { type: "string", format: "uri" },
-    role: { type: "string", enum: ["owner", "manager"] },
+    role: { type: "string", enum: [...MEMBER_ROLES] },
     since: { ...date, description: "When they joined" },
     addedBy: { ...objectId, description: "Who added them; absent for the first owner of a shop they created themselves (an administrator who creates the shop for them is recorded) and for the members of a shop from before membership" },
 }, ["userId", "name", "email", "role", "since"], "A member of a shop, with their account's name, email and avatar (null once the account is gone)")
@@ -109,7 +110,7 @@ const MenuItem = object({
 // One member of a shop, as stored (the staff route joins them to names).
 const Member = object({
     userId: objectId,
-    role: { type: "string", enum: ["owner", "manager"], description: "owner: one per shop, the only member who deletes it; manager: runs it" },
+    role: { type: "string", enum: [...MEMBER_ROLES], description: "owner: one per shop, the only member who deletes it, adds and removes managers and hands it over; manager: runs it, and adds, re-roles and removes the three below; till: the tables and the money; floor: the tables, no money; kitchen: reads the tables and their orders. Every member may flip a dish's availability. What each may call is each operation's x-roles" },
     since: { ...date, description: "When they joined (the shop's creation for a shop from before membership)" },
     addedBy: { ...objectId, description: "Who added them; absent for the first owner of a shop they created themselves (an administrator who creates the shop for them is recorded) and for the members of a shop from before membership" },
 }, ["userId", "role", "since"])
@@ -443,7 +444,7 @@ export const responses: Record<string, Response> = {
     ValidationFailed: error('"Validation failed", with `details`: the body (or query) failed its schema'),
     Unauthorized: error('No access-token cookie ("Please provide credentials in cookies!"), or an expired or invalid one ("Invalid token"): refresh the token (POST /auth/refreshToken) and retry'),
     UserGone: error('"User not found!": the token\'s account no longer exists'),
-    NotThisShopsManager: error('"Shop Manager Only!": the account isn\'t a member of this shop (nor an administrator)'),
+    NotThisShopsManager: error('"Shop Manager Only!": the account isn\'t a member of this shop (nor an administrator); "Your role on this shop doesn\'t allow this": a member whose role isn\'t among the operation\'s x-roles'),
     NotThisShopsOwner: error('"Only the owner can do this": the account isn\'t this shop\'s owner (nor an administrator)'),
     AdministratorOnly: error('"Administrator only": the account isn\'t an administrator'),
     TooManyAdded: {

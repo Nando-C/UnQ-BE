@@ -1,10 +1,8 @@
 import mongoose, { Types } from "mongoose"
-import { IShopDocument, MemberRole } from "src/typings/shop"
+import { IShopDocument } from "src/typings/shop"
+import { MEMBER_ROLES } from "./roles"
 
 const { Schema, model } = mongoose
-
-// The roles a member can hold today: the owner (one per shop) and managers.
-export const MEMBER_ROLES: readonly MemberRole[] = ["owner", "manager"]
 
 import { DEFAULT_TIME_ZONE, canonicalTimeZone } from "../../lib/days"
 

@@ -1,4 +1,5 @@
 import { z, ZodType } from "zod"
+import { Ability, MemberRole, holdersOf } from "../services/shops/roles"
 
 // Building blocks for the OpenAPI document (index.ts). Loose types on purpose:
 // the document is checked whole against the OpenAPI 3.1 schema in
@@ -16,6 +17,11 @@ export type Operation = {
     parameters?: (Parameter | { $ref: string })[]
     requestBody?: { required: true; content: Record<string, { schema: JsonSchema }> }
     responses: Record<string, Response | { $ref: string }>
+    // On an operation behind an ability guard (auth/middlewares.ts): the
+    // abilities the guard checks, and the roles that hold any of them today
+    // (shops/roles.ts). tests/openapi.test.ts checks both against the route.
+    "x-ability"?: readonly Ability[]
+    "x-roles"?: readonly MemberRole[]
 }
 export type Paths = Record<string, Record<string, Operation>>
 
@@ -97,3 +103,8 @@ export const jsonBody = (schema: JsonSchema): Operation["requestBody"] =>
 
 // Open to everyone: no cookie needed (the document's default is cookieAuth).
 export const PUBLIC: Operation["security"] = []
+
+// What a guarded operation asks of the caller's role on the shop: the ability
+// (the fact the guard checks) and the roles holding it (its current assignment).
+export const abilityOf = (...abilities: Ability[]): Pick<Operation, "x-ability" | "x-roles"> =>
+    ({ "x-ability": abilities, "x-roles": holdersOf(abilities) })
