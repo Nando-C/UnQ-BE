@@ -44,8 +44,9 @@ const ShopSchema = new Schema<IShopDocument> (
             // Saved under its canonical name, whatever spelling was sent.
             set: (name: string) => canonicalTimeZone(name) ?? name,
         },
-        // Every account with access, owner included: what the guards read.
-        // Changed only together with `members`, in the same update.
+        // Every account with access, owner included: what /shops/me and the
+        // account routes query (indexed); the guards read the role from
+        // `members`. Changed only together with `members`, in the same update.
         shopMg: {
             type: [Schema.Types.ObjectId],
             required: true,
