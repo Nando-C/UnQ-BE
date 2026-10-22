@@ -253,6 +253,8 @@ describe("who handles whom on the staff", () => {
         expect(refused(await o.put(`/staff/${till.user._id}`, { role: "manager" }))).toEqual([409, "Already that role"])
         expect(refused(await o.put(`/staff/${owner.user._id}`, { role: "manager" }))).toEqual([403, "The owner's role changes by handing the shop over"])
         expect((await o.put(`/staff/${till.user._id}`, { role: "owner" })).status).toBe(400)
+        // The shop is handed over to a manager only.
+        expect(refused(await o.put("/owner", { userId: String(second.user._id) }))).toEqual([403, "Make them a manager first"])
         expect((await roles())[String(second.user._id)]).toBe("till")
         expect((await roles())[String(owner.user._id)]).toBe("owner")
     })
@@ -274,20 +276,27 @@ describe("who handles whom on the staff", () => {
     })
 
     it("a re-role and a hand-over to the same member in the same instant leave the shop consistent", async () => {
-        const { owner, till, as, roles } = await scaffold()
+        const { owner, manager, as, roles } = await scaffold()
         const o = as(owner)
         const [reroled, handed] = await Promise.all([
-            o.put(`/staff/${till.user._id}`, { role: "floor" }),
-            o.put("/owner", { userId: String(till.user._id) }),
+            o.put(`/staff/${manager.user._id}`, { role: "till" }),
+            o.put("/owner", { userId: String(manager.user._id) }),
         ])
-        expect(handed.status).toBe(200)
-        // Landing first, the re-role went through and the hand-over followed;
-        // landing second, it found the member no longer a till and asked for a retry.
+        // Three orders, each consistent: the hand-over read a manager and went
+        // through (the re-role then landed first and was kept, or landed second
+        // and found the member no longer a manager, 409); or the hand-over read a
+        // till and was refused while the re-role went through.
         expect([200, 409]).toContain(reroled.status)
-        if (reroled.status === 409) expect(reroled.body.message).toBe("The shop's staff changed, please retry")
+        expect([200, 403]).toContain(handed.status)
         const after = await roles()
-        expect(after[String(till.user._id)]).toBe("owner")
-        expect(after[String(owner.user._id)]).toBe("manager")
         expect(Object.values(after).filter((r) => r === "owner")).toHaveLength(1)
+        if (handed.status === 200) {
+            expect(after[String(manager.user._id)]).toBe("owner")
+            expect(after[String(owner.user._id)]).toBe("manager")
+        } else {
+            expect(handed.body.message).toBe("Make them a manager first")
+            expect([reroled.status, after[String(manager.user._id)], after[String(owner.user._id)]]).toEqual([200, "till", "owner"])
+        }
+        if (reroled.status === 409) expect(reroled.body.message).toBe("The shop's staff changed, please retry")
     })
 })

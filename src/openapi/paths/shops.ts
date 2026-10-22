@@ -192,14 +192,15 @@ export const shopPaths: Paths = {
     "/shops/{shopId}/owner": {
         put: {
             operationId: "handOver", tags: staff, ...abilityOf("shop.own"),
-            summary: "Make another member the owner",
-            description: "The owner (or an administrator) names a member, who becomes the owner; the previous owner becomes a manager. One update, matched on the current owner.",
+            summary: "Make a manager the owner",
+            description: "The owner (or an administrator) names a manager, who becomes the owner; the previous owner becomes a manager. A till, floor or kitchen member is made a manager first. One update, matched on the current owner.",
             parameters: [param("shopId")],
             requestBody: jsonBody(fromZod(handOverSchema, { userId: "A member of the shop" })),
             responses: {
                 200: json("The members, as GET /shops/{shopId}/staff lists them", { type: "object", properties: { members: { type: "array", items: ref("StaffMember") } }, required: ["members"] }),
                 400: sharedResponse("ValidationFailed"),
-                ...thisOwner,
+                401: sharedResponse("Unauthorized"),
+                403: error('"Only the owner can do this": not this shop\'s owner (nor an administrator); "Make them a manager first": the member is till, floor or kitchen'),
                 404: error('"Shop Not Found!"; "Not a member of this shop"; "User not found!"'),
                 409: error('"Already the owner"; "The shop\'s staff changed, please retry": another hand-over, a removal or a deletion landed in the same instant'),
                 500: sharedResponse("ServerError"),
