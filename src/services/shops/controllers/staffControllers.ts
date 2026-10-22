@@ -6,6 +6,7 @@ import mongoose, { Types } from "mongoose"
 import ShopModel, { membershipOf } from "../model"
 import UserModel, { isAdmin } from "../../users/model"
 import { isDuplicateKey } from "../../../lib/mongo"
+import { ROLE_REFUSED } from "../../auth/middlewares"
 
 // A shop's staff: who is on it, adding someone (creating their account when
 // there is none), removing someone, handing the shop over. Who may do which is
@@ -43,11 +44,18 @@ export const listStaff: TController = async ( req, res, next ) => {
     }
 }
 
-// Whether a caller with `callerRole` may add or remove a member with `role`:
-// the owner (or an administrator) anyone but the owner; a manager only the
-// roles below manager (none yet).
+// Whether a caller with `callerRole` may add, re-role or remove a member with
+// `role`: the owner (or an administrator) anyone but the owner; a manager only
+// the roles below manager (till, floor, kitchen); the three below nobody.
 const mayHandle = (callerRole: string | undefined, role: MemberRole) =>
     role !== "owner" && (callerRole === "owner" || callerRole === "admin" || (callerRole === "manager" && role !== "manager"))
+
+// Why a caller may not handle a member: a manager (who may handle the three
+// below, so it must have asked about a manager) is told it is the owner's; one
+// of the three below, who handles nobody, gets the one role message every
+// guarded route gives (auth/middlewares.ts).
+const refusal = (callerRole: string | undefined, ownersAlone: string) =>
+    createError(403, callerRole === "manager" ? ownersAlone : ROLE_REFUSED)
 
 // Adds a person to the shop by their email: the account with that address, or
 // a new one (name, surname and a first password, which the caller tells them;
@@ -58,7 +66,7 @@ export const addStaff: TController = async ( req, res, next ) => {
     const caller = req.user as IUserDocument
     try {
         const { email, role, name, surname, password } = req.body as { email: string; role: MemberRole; name?: string; surname?: string; password?: string }
-        if (!mayHandle(req.shopRole, role)) return next(createError(403, "Only the owner adds managers"))
+        if (!mayHandle(req.shopRole, role)) return next(refusal(req.shopRole, "Only the owner adds managers"))
         if (email === caller.email) return next(createError(400, "That is your own address"))
 
         let user = await UserModel.findOne({ email })
@@ -97,6 +105,38 @@ export const addStaff: TController = async ( req, res, next ) => {
     }
 }
 
+// Changes a member's role to another below owner. The caller must be allowed
+// to handle both the role the member has and the one asked for (mayHandle
+// twice), so a manager moves till, floor and kitchen among themselves and
+// never makes or unmakes a manager; nobody re-roles themselves. The owner's
+// role changes only by handing the shop over. One update, matched on the
+// member still holding the role just read, so a hand-over, a removal or another
+// re-role landing in the same instant is told to retry.
+export const setMemberRole: TController = async ( req, res, next ) => {
+    try {
+        const { shopId, userId } = req.params
+        const { role } = req.body as { role: MemberRole }
+        const shop = await membershipOf(shopId)
+        if (!shop) return next(createError(404, "Shop Not Found!"))
+        const member = mongoose.isValidObjectId(userId) ? shop.members.find((m) => m.userId.equals(userId)) : undefined
+        if (!member) return next(createError(404, "Not a member of this shop"))
+        if (member.role === "owner") return next(createError(403, "The owner's role changes by handing the shop over"))
+        if (!mayHandle(req.shopRole, member.role) || !mayHandle(req.shopRole, role)) {
+            return next(refusal(req.shopRole, "Only the owner changes a manager's role"))
+        }
+        if (member.role === role) return next(createError(409, "Already that role"))
+
+        const changed = await ShopModel.updateOne(
+            { _id: shopId, members: { $elemMatch: { userId: member.userId, role: member.role } } },
+            { $set: { "members.$.role": role } },
+        )
+        if (changed.matchedCount === 0) return next(createError(409, STAFF_CHANGED))
+        res.send({ members: await staffOf(shopId) })
+    } catch (error) {
+        next(createError(500, error as Error))
+    }
+}
+
 // Removes a member: the owner (or an administrator) anyone but the owner, a
 // manager only the roles below manager, anyone themselves. The owner is never
 // removed: the shop is handed over first. The account stays.
@@ -110,7 +150,7 @@ export const removeStaff: TController = async ( req, res, next ) => {
         if (!member) return next(createError(404, "Not a member of this shop"))
         if (member.role === "owner") return next(createError(403, "The owner can't be removed"))
         const themselves = member.userId.equals(String(caller._id))
-        if (!themselves && !mayHandle(req.shopRole, member.role)) return next(createError(403, "Only the owner removes a manager"))
+        if (!themselves && !mayHandle(req.shopRole, member.role)) return next(refusal(req.shopRole, "Only the owner removes a manager"))
 
         // Matched on the member still not being the owner: a hand-over landing
         // in the same instant would otherwise leave the shop with no owner on it.

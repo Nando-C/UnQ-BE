@@ -6,6 +6,10 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ## [Unreleased]
 
+### Added
+
+- **Staff roles.** Three roles below manager on a shop's `members`: `till` (the tables and the money), `floor` (the tables, no money) and `kitchen` (reads the tables and their orders); every member may flip a dish's availability. The owner adds, removes and re-roles anyone but the owner; a manager handles the three below. A new route changes a member's role (`PUT /shops/:shopId/staff/:userId`). Each shop route names an ability and one table says which roles hold it; every guarded operation in the OpenAPI document carries `x-ability` and `x-roles`, checked against the routes by the tests. A member whose role lacks the ability gets `403 "Your role on this shop doesn't allow this"`. [docs/auth.md](./docs/auth.md#what-each-role-may-do), [docs/decisions.md](./docs/decisions.md#2026-10-22-routes-check-abilities-not-roles-the-ability-travels-in-the-contract).
+
 ## [2.4.0] - 2026-10-18
 
 Staff on a shop: a shop has an owner and managers, whom the owner adds by email, and an `admin` account role runs every shop and the accounts. Nothing changes on the host: the one new variable, `PEOPLE_ADDED_PER_HOUR`, has a default. The first administrator is set in the database, on an account that is on no shop's staff ([operations.md](./docs/operations.md#the-first-administrator)). The front end at 2.4.0 shows the manager side to every member, the Staff section on the shop page and the administrator's Accounts page.

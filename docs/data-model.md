@@ -58,7 +58,7 @@ Indexes: `email` unique; `googleId` sparse.
 | `shopMg` | [ObjectId → User] | required: every member's id, the owner's included (what the guards read) |
 | `ownerId` | ObjectId → User | the owner; absent on a shop no member or administrator has opened since membership arrived |
 | `members[].userId` | ObjectId → User | required; one entry per id in `shopMg` |
-| `members[].role` | `owner` \| `manager` | required; one `owner` per shop |
+| `members[].role` | `owner` \| `manager` \| `till` \| `floor` \| `kitchen` | required; one `owner` per shop. What each may do: [auth.md](./auth.md#what-each-role-may-do) |
 | `members[].since` | Date | required: when they joined |
 | `members[].addedBy` | ObjectId → User | who added them; absent for the first owner of a shop they created themselves (an administrator who creates the shop for them is recorded) and for the members of a shop from before membership |
 | `tables[]._id` | ObjectId | what every other record means by `tableId` |

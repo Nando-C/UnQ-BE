@@ -1,5 +1,5 @@
-import { Paths, PUBLIC, empty, error, fromZod, imageBody, json, jsonBody, param, queryParams, ref, sharedResponse, uploadErrors } from "../helpers"
-import { MAX_REPORT_DAYS, addStaffSchema, browseShopsSchema, createShopSchema, createTableSchema, editShopSchema, editTableSchema, handOverSchema, salesExportSchema, salesQuerySchema } from "../../services/shops/schemas"
+import { Paths, PUBLIC, abilityOf, empty, error, fromZod, imageBody, json, jsonBody, param, queryParams, ref, sharedResponse, uploadErrors } from "../helpers"
+import { MAX_REPORT_DAYS, addStaffSchema, browseShopsSchema, createShopSchema, createTableSchema, editShopSchema, editTableSchema, handOverSchema, salesExportSchema, salesQuerySchema, setMemberRoleSchema } from "../../services/shops/schemas"
 import { cartItemSchema, refundSchema, releaseSelectionSchema } from "../../services/carts/schemas"
 import { paybackDoneSchema } from "../../services/payments/paybackControllers"
 
@@ -14,7 +14,8 @@ const sales = ["Manager: sales"]
 const staff = ["Staff"]
 
 const signedIn = { 401: sharedResponse("Unauthorized") }
-// JWTAuthMiddleware then isShopManager (a member of THIS shop, or an administrator; 404 if there's no such shop).
+// JWTAuthMiddleware then isShopManager (a member of THIS shop, or an administrator; 404 if there's no such shop),
+// then, where the operation says so (x-ability), allows: the member's role holds the ability.
 const thisManager = { ...signedIn, 403: sharedResponse("NotThisShopsManager") }
 // JWTAuthMiddleware then isShopOwner (THIS shop's owner, or an administrator; 404 if there's no such shop).
 const thisOwner = { ...signedIn, 403: sharedResponse("NotThisShopsOwner") }
@@ -97,9 +98,9 @@ export const shopPaths: Paths = {
             },
         },
         put: {
-            operationId: "editMyShop", tags: shops,
+            operationId: "editMyShop", tags: shops, ...abilityOf("shop.edit"),
             summary: "Edit a shop the caller is a member of",
-            description: "Any member of the shop, whatever their account role (or an administrator). Every field optional; only the ones sent change. An empty `phone` clears it.",
+            description: "The owner's and managers' (`x-roles`), whatever their account role, or an administrator's. Every field optional; only the ones sent change. An empty `phone` clears it.",
             parameters: [param("shopId")],
             requestBody: jsonBody(fromZod(editShopSchema, { phone: "As typed, up to 30 characters: digits, spaces, dashes, brackets, +", timeZone: "An IANA time zone name (Europe/London, America/New_York): the zone the shop's days are counted in" })),
             responses: {
@@ -111,7 +112,7 @@ export const shopPaths: Paths = {
             },
         },
         delete: {
-            operationId: "deleteMyShop", tags: shops,
+            operationId: "deleteMyShop", tags: shops, ...abilityOf("shop.own"),
             summary: "Delete a shop and everything in it",
             description: "The owner's alone (or an administrator's). Takes its menu items (deleted ones too), its carts (payment records included) and its pay-backs; the orders remain as the sales record, written first (nothing is deleted if they can't be). Refused while money is still moving: an open cart, a payment or refund a provider hasn't confirmed, a card payment still being finished, a diner to pay back, or a payment that can still be refunded from a table's sheet (a paid cart closed or changed in the last 24 hours).",
             parameters: [param("shopId")],
@@ -126,9 +127,9 @@ export const shopPaths: Paths = {
     },
     "/shops/{shopId}/staff": {
         get: {
-            operationId: "listStaff", tags: staff,
+            operationId: "listStaff", tags: staff, ...abilityOf("staff.read"),
             summary: "The shop's members",
-            description: "Each joined to their account (name, email, avatar), the owner first. Any member of the shop, or an administrator.",
+            description: "Each joined to their account (name, email, avatar), the owner first. Every member of the shop, or an administrator.",
             parameters: [param("shopId")],
             responses: {
                 200: json("The members", { type: "object", properties: { members: { type: "array", items: ref("StaffMember") } }, required: ["members"] }),
@@ -140,15 +141,15 @@ export const shopPaths: Paths = {
         post: {
             operationId: "addStaff", tags: staff,
             summary: "Add someone to the shop",
-            description: "By their email. An address with an account attaches that account, name and password untouched (200); one without gets an account created from `name`, `surname` and `password`, which the caller tells them (201; account role `customer`, `createdBy` the caller). Only the owner (or an administrator) adds a `manager`. One update puts them in both membership lists, so two adds of one person land once. Counts towards the caller's people-added limit, created or attached.",
+            description: "By their email. An address with an account attaches that account, name and password untouched (200); one without gets an account created from `name`, `surname` and `password`, which the caller tells them (201; account role `customer`, `createdBy` the caller). The owner (or an administrator) gives any role but owner; a manager gives `till`, `floor` or `kitchen`. One update puts them in both membership lists, so two adds of one person land once. Counts towards the caller's people-added limit, created or attached.",
             parameters: [param("shopId")],
-            requestBody: jsonBody(fromZod(addStaffSchema, { email: "Trimmed and lowercased", role: "The membership role they get", name: "For a new account", surname: "For a new account", password: "For a new account: at least 8 characters, its first password" })),
+            requestBody: jsonBody(fromZod(addStaffSchema, { email: "Trimmed and lowercased", role: "The membership role they get: manager (the owner gives it), or till, floor or kitchen", name: "For a new account", surname: "For a new account", password: "For a new account: at least 8 characters, its first password" })),
             responses: {
                 200: json("An existing account, attached", ref("StaffAdded")),
                 201: json("An account created for them, attached", ref("StaffAdded")),
                 400: error('"Validation failed" (details; for a new account, name, surname and password are "Required for a new account"); "That is your own address"'),
                 401: sharedResponse("Unauthorized"),
-                403: error('"Shop Manager Only!": not a member of this shop; "Only the owner adds managers"'),
+                403: error('"Shop Manager Only!": not a member of this shop; "Only the owner adds managers": a manager asked for one; "Your role on this shop doesn\'t allow this": the caller is till, floor or kitchen'),
                 404: error('"Shop Not Found!"; "User not found!"'),
                 409: error('"Already a member"; "An administrator can\'t be a member of a shop"; "The shop\'s staff changed, please retry": the shop lost its owner or the account went in the same instant'),
                 429: sharedResponse("TooManyAdded"),
@@ -157,15 +158,31 @@ export const shopPaths: Paths = {
         },
     },
     "/shops/{shopId}/staff/{userId}": {
+        put: {
+            operationId: "setMemberRole", tags: staff,
+            summary: "Change a member's role",
+            description: "To any role but owner. The caller must be allowed to handle both the role the member has and the new one: the owner (or an administrator) changes anyone's but the owner's; a manager moves `till`, `floor` and `kitchen` among themselves and never makes or unmakes a manager; nobody changes their own. The owner's role changes by handing the shop over. One update, matched on the member still holding the role read.",
+            parameters: [param("shopId"), param("userId")],
+            requestBody: jsonBody(fromZod(setMemberRoleSchema, { role: "The new role" })),
+            responses: {
+                200: json("The members, as GET /shops/{shopId}/staff lists them", { type: "object", properties: { members: { type: "array", items: ref("StaffMember") } }, required: ["members"] }),
+                400: sharedResponse("ValidationFailed"),
+                401: sharedResponse("Unauthorized"),
+                403: error('"Shop Manager Only!": not a member of this shop; "The owner\'s role changes by handing the shop over"; "Only the owner changes a manager\'s role": a manager, to or from manager; "Your role on this shop doesn\'t allow this": the caller is till, floor or kitchen'),
+                404: error('"Shop Not Found!"; "Not a member of this shop"; "User not found!"'),
+                409: error('"Already that role"; "The shop\'s staff changed, please retry": a hand-over, a removal or another change landed in the same instant'),
+                500: sharedResponse("ServerError"),
+            },
+        },
         delete: {
             operationId: "removeStaff", tags: staff,
             summary: "Remove a member",
-            description: "The owner (or an administrator) removes anyone but the owner; a manager only the roles below manager (none yet); any member themselves (leaving). The owner is never removed: the shop is handed over first. The account stays.",
+            description: "The owner (or an administrator) removes anyone but the owner; a manager only `till`, `floor` and `kitchen`; any member themselves (leaving). The owner is never removed: the shop is handed over first. The account stays.",
             parameters: [param("shopId"), param("userId")],
             responses: {
                 204: empty("Removed"),
                 401: sharedResponse("Unauthorized"),
-                403: error('"Shop Manager Only!": not a member of this shop; "The owner can\'t be removed"; "Only the owner removes a manager"'),
+                403: error('"Shop Manager Only!": not a member of this shop; "The owner can\'t be removed"; "Only the owner removes a manager": a manager asked; "Your role on this shop doesn\'t allow this": the caller is till, floor or kitchen'),
                 404: error('"Shop Not Found!"; "Not a member of this shop"; "User not found!"'),
                 409: error('"The shop\'s staff changed, please retry": a hand-over landed in the same instant'),
                 500: sharedResponse("ServerError"),
@@ -174,7 +191,7 @@ export const shopPaths: Paths = {
     },
     "/shops/{shopId}/owner": {
         put: {
-            operationId: "handOver", tags: staff,
+            operationId: "handOver", tags: staff, ...abilityOf("shop.own"),
             summary: "Make another member the owner",
             description: "The owner (or an administrator) names a member, who becomes the owner; the previous owner becomes a manager. One update, matched on the current owner.",
             parameters: [param("shopId")],
@@ -191,9 +208,9 @@ export const shopPaths: Paths = {
     },
     "/shops/{shopId}/cover": {
         put: {
-            operationId: "editMyShopCover", tags: shops,
+            operationId: "editMyShopCover", tags: shops, ...abilityOf("shop.edit"),
             summary: "Upload a shop's cover image",
-            description: "The manager check runs before the upload, so a refused request never reaches Cloudinary. The replaced image is deleted there if this app uploaded it.",
+            description: "The membership and role checks run before the upload, so a refused request never reaches Cloudinary. The replaced image is deleted there if this app uploaded it.",
             parameters: [param("shopId")],
             requestBody: imageBody("cover"),
             responses: {
@@ -210,7 +227,7 @@ export const shopPaths: Paths = {
     // Tables.
     "/shops/{shopId}/tables": {
         post: {
-            operationId: "createTable", tags: tables,
+            operationId: "createTable", tags: tables, ...abilityOf("tables.edit"),
             summary: "Add a table",
             description: "Names are unique within the shop (checked in the same update, so two requests at once can't both pass). The table's QR URL is its page in the front end.",
             parameters: [param("shopId")],
@@ -249,7 +266,7 @@ export const shopPaths: Paths = {
             },
         },
         put: {
-            operationId: "editTable", tags: tables,
+            operationId: "editTable", tags: tables, ...abilityOf("tables.edit"),
             summary: "Rename a table",
             description: "The new name must be unique within the shop. Answers the shop's whole table list, not the one table.",
             parameters: [param("shopId"), param("tableId")],
@@ -263,7 +280,7 @@ export const shopPaths: Paths = {
             },
         },
         delete: {
-            operationId: "deleteTable", tags: tables,
+            operationId: "deleteTable", tags: tables, ...abilityOf("tables.edit"),
             summary: "Delete a table",
             description: "Moved to the shop's deleted tables rather than dropped: it takes no orders and diners don't see it, but the manager can still open its recent carts to refund them. Refused while it has an open cart (close it first) or a payment or refund awaiting its provider. Deleting it twice is a 204 both times.",
             parameters: [param("shopId"), param("tableId")],
@@ -280,7 +297,7 @@ export const shopPaths: Paths = {
     // The sales report.
     "/shops/{shopId}/sales": {
         get: {
-            operationId: "getSales", tags: sales,
+            operationId: "getSales", tags: sales, ...abilityOf("sales.read"),
             summary: "The shop's sales over a range of days",
             description: `Everything the sales page shows, in one answer: totals, a zero-filled series by day, week or month, sales by weekday and hour, items by revenue, refunds by reason and hour, and the tables. Counted as a till would, in the shop's time zone: gross is completed payments by the day paid; refunds count on the day they were made (completed only), whenever their sale was; net is the difference. Visits are distinct carts, diners distinct payers, and a returning diner had paid at this shop before the range began. Items are net of refunded units under the name and price diners saw last. With \`compare=previous\`, the range of the same length ending the day before is reported too. At most ${MAX_REPORT_DAYS} days.`,
             parameters: [param("shopId"), ...queryParams(salesQuerySchema, {
@@ -300,7 +317,7 @@ export const shopPaths: Paths = {
 
     "/shops/{shopId}/sales/export": {
         get: {
-            operationId: "exportSales", tags: sales,
+            operationId: "exportSales", tags: sales, ...abilityOf("sales.read"),
             summary: "One of the report's tables as a CSV file",
             description: "Counted as the report counts, in the shop's time zone, as a download. `orders`: a row per payment made in the range, completed or still pending (paid at, table, provider, status, amount, refunded to date, net, items as \"2× Latte, 1× Sea Bass\"); `items`: a row per menu item sold, by revenue; `days`: a row per day of the range, zero-filled, with the category and provider splits. No diner is named or identified in any of them. UTF-8 with a byte-order mark, CRLF line ends; a cell that would start with `=`, `+`, `-`, `@` or a tab gets a leading apostrophe so a spreadsheet can't run it as a formula.",
             parameters: [param("shopId"), ...queryParams(salesExportSchema, {
@@ -324,7 +341,7 @@ export const shopPaths: Paths = {
     // The manager's view of the tables' carts.
     "/shops/{shopId}/tables/status": {
         get: {
-            operationId: "getTablesStatus", tags: manage,
+            operationId: "getTablesStatus", tags: manage, ...abilityOf("tables.read"),
             summary: "Every table's state at a glance",
             description: "One entry per current table, from its open cart(s): what's owed and paid, who's waiting, and what needs attention (a sold-out item ordered, two open carts, a selection held over 15 minutes, a payment the provider hasn't confirmed, a diner to pay back).",
             parameters: [param("shopId")],
@@ -338,7 +355,7 @@ export const shopPaths: Paths = {
     },
     "/shops/{shopId}/tables/{tableId}/carts": {
         get: {
-            operationId: "getTableCarts", tags: manage,
+            operationId: "getTableCarts", tags: manage, ...abilityOf("tables.read"),
             summary: "A table's carts, with payments",
             description: "The open cart(s), those closed in the last 24 hours (or older but still awaiting a provider), and the table's pay-backs. Payment and refund records and the manager log included; diners by first name only. Works for a deleted table too.",
             parameters: [param("shopId"), param("tableId")],
@@ -352,7 +369,7 @@ export const shopPaths: Paths = {
     },
     "/shops/{shopId}/tables/{tableId}/carts/{cartId}/releaseSelection": {
         post: {
-            operationId: "releaseSelection", tags: manage,
+            operationId: "releaseSelection", tags: manage, ...abilityOf("carts.fix"),
             summary: "Free units diners hold in open selections",
             description: "Everyone's (empty body), one diner's (`userId`), the selections of diners whose account no longer exists (`userId: null`), or one item's (`menuId`), so others can pay for them. Each diner affected gets a note; the manager log gets a line. No money moves.",
             parameters: cartParams,
@@ -369,7 +386,7 @@ export const shopPaths: Paths = {
     },
     "/shops/{shopId}/tables/{tableId}/carts/{cartId}/removeItem": {
         post: {
-            operationId: "managerRemoveItem", tags: manage,
+            operationId: "managerRemoveItem", tags: manage, ...abilityOf("carts.fix"),
             summary: "Take an item's unpaid units out of the cart",
             description: "All of them, diners' selections of it included (the diner's own bin leaves others' selections); paid units stay as the record. A cart left with nothing ordered and nothing paid closes, so the table is free again. The table's diners get a note.",
             parameters: cartParams,
@@ -386,7 +403,7 @@ export const shopPaths: Paths = {
     },
     "/shops/{shopId}/tables/{tableId}/carts/{cartId}/close": {
         post: {
-            operationId: "closeCart", tags: manage,
+            operationId: "closeCart", tags: manage, ...abilityOf("carts.fix"),
             summary: "Close the table's cart",
             description: "Unpaid units and open selections are dropped (the kitchen only acts on paid orders); paid units stay. A cart where nothing was ever paid is deleted instead. Refused while a payment on it awaits its provider.",
             parameters: cartParams,
@@ -401,7 +418,7 @@ export const shopPaths: Paths = {
     },
     "/shops/{shopId}/tables/{tableId}/carts/{cartId}/mergeInto": {
         post: {
-            operationId: "mergeInto", tags: manage,
+            operationId: "mergeInto", tags: manage, ...abilityOf("carts.fix"),
             summary: "Merge a duplicate open cart into the newest one",
             description: "For a table with more than one open cart (data from before the one-open-cart index). Moves this older cart's unpaid units and open selections into the newest cart, the one diners see; its paid units stay on it as the record and it closes (or is deleted if nothing on it was ever paid). Answers the newest cart.",
             parameters: cartParams,
@@ -418,7 +435,7 @@ export const shopPaths: Paths = {
     // Money moves.
     "/shops/{shopId}/carts/{cartId}/refunds": {
         post: {
-            operationId: "refundItems", tags: money,
+            operationId: "refundItems", tags: money, ...abilityOf("payments.manage"),
             summary: "Refund units of one payment",
             description: "At the prices that payment charged; the units leave the cart (cancelled, not made payable again). Open or closed carts of the shop. A `pending` refund record is saved first (so a double click can't refund twice), the provider is asked with the record's id as its idempotency key, then the record is completed or marked failed. If the provider's answer is unclear the record stays pending: retry it. The payer gets a note; a pay-back is opened if Stripe later fails the refund.",
             parameters: [param("shopId"), param("cartId")],
@@ -441,7 +458,7 @@ export const shopPaths: Paths = {
     },
     "/shops/{shopId}/carts/{cartId}/refunds/{refundId}/retry": {
         post: {
-            operationId: "retryRefund", tags: money,
+            operationId: "retryRefund", tags: money, ...abilityOf("payments.manage"),
             summary: "Settle a refund left in progress",
             description: "Asks the provider whether it has the refund (by the record's id). If so, it's recorded as the provider says (completed, or failed); if not, it's sent again under the same id, which the provider can't apply twice.",
             parameters: [param("shopId"), param("cartId"), param("refundId")],
@@ -457,7 +474,7 @@ export const shopPaths: Paths = {
     },
     "/shops/{shopId}/carts/{cartId}/payments/{paymentId}/check": {
         post: {
-            operationId: "checkPayment", tags: money,
+            operationId: "checkPayment", tags: money, ...abilityOf("payments.manage"),
             summary: "Ask the provider about a pending payment",
             description: "For a payment the provider hadn't confirmed at checkout (`status: pending`). Confirmed: it becomes `completed`, and the cart closes if that was all it waited for. Failed: it becomes `failed`, its units are unpaid again and back in the payer's selection (the cart reopens if it had closed). Still pending: nothing changes. The payer is told either way.",
             parameters: [param("shopId"), param("cartId"), param("paymentId")],
@@ -473,7 +490,7 @@ export const shopPaths: Paths = {
     },
     "/shops/{shopId}/paybacks/{paybackId}/done": {
         post: {
-            operationId: "markPaybackDone", tags: money,
+            operationId: "markPaybackDone", tags: money, ...abilityOf("payments.manage"),
             summary: "Mark a pay-back done",
             description: "`as` must be what the sheet showed: `paidBack` (staff gave the diner the money another way), `handled` (a disputed payment: the bank returns it), or `checked` (a hand-over whose payment a cart now shows as paid). One already done answers as it was marked, whatever was asked. One that changed since the sheet showed it is refused, so what's stored is what the manager confirmed. The cart gets a log line without touching its `updatedAt`.",
             parameters: [param("shopId"), param("paybackId")],

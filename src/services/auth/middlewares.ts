@@ -4,6 +4,7 @@ import { verifyJWT } from "./tools"
 import { JwtPayload } from "jsonwebtoken"
 import UserModel, { isAdmin } from "../users/model"
 import { membershipOf } from "../shops/model"
+import { Ability, can } from "../shops/roles"
 import { IUserDocument } from "src/typings/users"
 import { Request } from "express"
 
@@ -97,9 +98,13 @@ export const isShopManager: TController = async ( req, res, next ) => {
     }
 }
 
+// A guard that decides by ability says which (shops/roles.ts): the OpenAPI
+// test reads them off the route and checks the document says the same.
+export type AbilityGuard = TController & { abilities: readonly Ability[] }
+
 // After JWTAuthMiddleware: the user owns the shop in :shopId, or is an
 // administrator. A member who isn't the owner is refused, as is everyone else.
-export const isShopOwner: TController = async ( req, res, next ) => {
+const ownerOnly: TController = async ( req, res, next ) => {
     try {
         const role = await shopRoleOf(req)
         if (role === undefined) return next(createError(404, `Shop Not Found!`))
@@ -110,6 +115,32 @@ export const isShopOwner: TController = async ( req, res, next ) => {
         next(error)
     }
 }
+export const isShopOwner: AbilityGuard = Object.assign(ownerOnly, { abilities: ["shop.own"] as const })
+
+// The one refusal for every ability: the route says what was asked, and the
+// document's x-roles say who may.
+export const ROLE_REFUSED = "Your role on this shop doesn't allow this"
+
+// After isShopManager: the caller's role on the shop holds the ability.
+export const allows = (ability: Ability): AbilityGuard => {
+    const guard: TController = async ( req, res, next ) => {
+        if (can(req.shopRole, ability)) next()
+        else next(createError(403, ROLE_REFUSED))
+    }
+    return Object.assign(guard, { abilities: [ability] })
+}
+
+// After isShopManager and validate, on PUT /shops/:shopId/menu/:itemId: a body
+// of `available` and nothing else is the availability switch, which every role
+// may flip; any other body (an empty one included) edits the item. validate has
+// replaced the body with the parsed one, so its keys are exactly what was sent.
+const menuChange: TController = async ( req, res, next ) => {
+    const keys = Object.keys(req.body ?? {})
+    const ability: Ability = keys.length === 1 && keys[0] === "available" ? "menu.availability" : "menu.edit"
+    if (can(req.shopRole, ability)) next()
+    else next(createError(403, ROLE_REFUSED))
+}
+export const allowsMenuChange: AbilityGuard = Object.assign(menuChange, { abilities: ["menu.edit", "menu.availability"] as const })
 
 // The caller's standing on the shop in :shopId: "admin", their member role,
 // null for a stranger, undefined for no such shop. Reads the membership, which
