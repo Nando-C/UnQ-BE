@@ -137,8 +137,7 @@ export const allows = (ability: Ability): AbilityGuard => {
 const menuChange: TController = async ( req, res, next ) => {
     const keys = Object.keys(req.body ?? {})
     const ability: Ability = keys.length === 1 && keys[0] === "available" ? "menu.availability" : "menu.edit"
-    if (can(req.shopRole, ability)) next()
-    else next(createError(403, ROLE_REFUSED))
+    return allows(ability)(req, res, next)
 }
 export const allowsMenuChange: AbilityGuard = Object.assign(menuChange, { abilities: ["menu.edit", "menu.availability"] as const })
 

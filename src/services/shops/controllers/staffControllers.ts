@@ -165,9 +165,10 @@ export const removeStaff: TController = async ( req, res, next ) => {
     }
 }
 
-// The shop's owner (or an administrator) makes another member the owner; the
-// previous owner becomes a manager. One update, matched on the current owner,
-// so two hand-overs at once land once.
+// The shop's owner (or an administrator) makes a manager the owner; the
+// previous owner becomes a manager. A till, floor or kitchen member is made a
+// manager first (one step up the ladder at a time, as the client offers it).
+// One update, matched on the current owner, so two hand-overs at once land once.
 export const handOver: TController = async ( req, res, next ) => {
     try {
         const { shopId } = req.params
@@ -177,6 +178,7 @@ export const handOver: TController = async ( req, res, next ) => {
         const member = shop.members.find((m) => m.userId.equals(userId))
         if (!member) return next(createError(404, "Not a member of this shop"))
         if (member.role === "owner") return next(createError(409, "Already the owner"))
+        if (member.role !== "manager") return next(createError(403, "Make them a manager first"))
 
         const previous = shop.ownerId!
         const handed = await ShopModel.updateOne(
