@@ -55,7 +55,7 @@ Indexes: `email` unique; `googleId` sparse.
 | `phone` | string | as typed ("0161 496 0000"); older shops hold a number, read as text; "" clears it |
 | `web_URL` | string |  |
 | `timeZone` | string | an IANA name, `Europe/London` unless set: the zone the shop's days are counted in ([api.md](./api.md#sales-report)); shops from before it read as the default |
-| `shopMg` | [ObjectId → User] | required: every member's id, the owner's included (what the guards read) |
+| `shopMg` | [ObjectId → User] | required: every member's id, the owner's included (what `/shops/me` and the account routes query; the guards read the role from `members`) |
 | `ownerId` | ObjectId → User | the owner; absent on a shop no member or administrator has opened since membership arrived |
 | `members[].userId` | ObjectId → User | required; one entry per id in `shopMg` |
 | `members[].role` | `owner` \| `manager` \| `till` \| `floor` \| `kitchen` | required; one `owner` per shop. What each may do: [auth.md](./auth.md#what-each-role-may-do) |

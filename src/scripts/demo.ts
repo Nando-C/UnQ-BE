@@ -18,8 +18,9 @@
 // evenings), and one bad week at the café. Days and hours are the shops' own
 // (Europe/London), wherever the seed runs.
 //
-// Reproducible: every id, name, quantity and date comes from one seeded random
-// generator and a reference time (`now`, rounded to the hour), so two runs in
+// Reproducible: every id, name, quantity and date comes from a seeded random
+// generator (one main sequence; the café's till and kitchen, added later, draw
+// from one of their own so nothing earlier moved) and a reference time (`now`, rounded to the hour), so two runs in
 // the same hour write the same documents. The two ids the front end's README
 // has carried since 2021 (the demo shop and its QR table) are fixed, so the
 // printed QR code stays valid.
@@ -50,6 +51,9 @@ export const DEMO_TABLE_ID = "61702525cc1ec6af70a92f35"
 export const DEMO_MANAGER_EMAIL = "manager@mail.com"
 export const DEMO_DINER_EMAIL = "frank@mail.com"
 export const DEMO_STAFF_EMAIL = "alex.demo@example.com"
+// The café's till and kitchen, so the staff list shows the roles below manager.
+export const DEMO_TILL_EMAIL = "kim.demo@example.com"
+export const DEMO_KITCHEN_EMAIL = "jo.demo@example.com"
 
 const HOUR = 60 * 60 * 1000
 const MINUTE = 60 * 1000
@@ -66,7 +70,8 @@ const mulberry32 = (seed: number) => () => {
 }
 
 class Rng {
-    private next = mulberry32(20211109)
+    private next: () => number
+    constructor(seed = 20211109) { this.next = mulberry32(seed) }
     float() { return this.next() }
     int(min: number, max: number) { return min + Math.floor(this.next() * (max - min + 1)) }
     chance(p: number) { return this.next() < p }
@@ -389,6 +394,11 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
     // account by email with the id it was given, so an id drawn earlier in the
     // sequence for a new account would be one an older account already holds.
     const userIds = { manager: rng.oid(), frank: rng.oid(), diners: DINERS.map(() => rng.oid()), alex: rng.oid() }
+    // The café's till and kitchen came after the history was shaped: their ids
+    // come from a generator of their own, so drawing them shifts nothing the
+    // main sequence writes (a draw from it would move every later id and date).
+    const staffRng = new Rng(20261022)
+    const staffIds = { kim: staffRng.oid(), jo: staffRng.oid() }
     const user = async (id: Types.ObjectId, email: string, fields: { name: string; surname: string; role: "customer" | "shopMg"; createdBy?: Types.ObjectId }, password?: string) => {
         const existing = await UserModel.findOne({ email })
         // A new address never takes an id another account holds (one seeded
@@ -407,6 +417,9 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
     // The café's second manager, added by Sam: an account with no sign-in (no
     // password, no Google), on a reserved domain so no one can claim it.
     const alexId = await user(userIds.alex, DEMO_STAFF_EMAIL, { name: "Alex", surname: "Demo", role: "customer", createdBy: managerId })
+    // The café's till (added by Sam) and kitchen (added by Alex, the manager): the same kind of account.
+    const kimId = await user(staffIds.kim, DEMO_TILL_EMAIL, { name: "Kim", surname: "Demo", role: "customer", createdBy: managerId })
+    const joId = await user(staffIds.jo, DEMO_KITCHEN_EMAIL, { name: "Jo", surname: "Demo", role: "customer", createdBy: alexId })
     const dinerIds: Types.ObjectId[] = [frankId]
     for (const [i, d] of DINERS.entries()) {
         dinerIds.push(await user(userIds.diners[i], `${d.name.toLowerCase()}.${d.surname.toLowerCase()}@example.com`, { ...d, role: "customer" }))
@@ -436,7 +449,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
         debuts.set(String(id), { shop, daysAgo: openDayNear(shop, nth === 0 ? 1 : spread), done: false })
     })
     const arrivals = new Map([...debuts].map(([id, d]) => [id, d.daysAgo]))
-    log(`Users: ${dinerIds.length + 2} (sign-ins: ${DEMO_MANAGER_EMAIL}, ${DEMO_DINER_EMAIL}; ${DEMO_STAFF_EMAIL} manages the café, no sign-in)`)
+    log(`Users: ${dinerIds.length + 4} (sign-ins: ${DEMO_MANAGER_EMAIL}, ${DEMO_DINER_EMAIL}; the café's staff ${DEMO_STAFF_EMAIL}, ${DEMO_TILL_EMAIL}, ${DEMO_KITCHEN_EMAIL} have no sign-in)`)
 
     // ---- Reset what the seed owns ------------------------------------------
 
@@ -475,12 +488,18 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
             web_URL: shop.web_URL,
             cover: shop.cover,
             timeZone: zone,
-            // Sam owns every shop; the café has a second manager, added a month in.
-            shopMg: [managerId, ...(String(shop.id) === DEMO_SHOP_ID ? [alexId] : [])],
+            // Sam owns every shop; the café has a second manager, added a month
+            // in, and a till and a kitchen added later (the staff list shows
+            // every role but floor).
+            shopMg: [managerId, ...(String(shop.id) === DEMO_SHOP_ID ? [alexId, kimId, joId] : [])],
             ownerId: managerId,
             members: [
                 { userId: managerId, role: "owner", since: at(shop.since * DAY + 2 * HOUR) },
-                ...(String(shop.id) === DEMO_SHOP_ID ? [{ userId: alexId, role: "manager", since: at((shop.since - 30) * DAY + 2 * HOUR), addedBy: managerId }] : []),
+                ...(String(shop.id) === DEMO_SHOP_ID ? [
+                    { userId: alexId, role: "manager", since: at((shop.since - 30) * DAY + 2 * HOUR), addedBy: managerId },
+                    { userId: kimId, role: "till", since: at((shop.since - 45) * DAY + 2 * HOUR), addedBy: managerId },
+                    { userId: joId, role: "kitchen", since: at((shop.since - 60) * DAY + 2 * HOUR), addedBy: alexId },
+                ] : []),
             ],
             tables: shop.tables.map((t) => ({ _id: t.id, name: t.name, Qr_Url: `${env.FRONTEND_ORIGIN}/shops/${shop.id}/tables/${t.id}` })),
             deletedTables: shop.deletedTables.map((t) => ({ _id: t.id, name: t.name, deletedAt: t.deletedAt })),
@@ -841,7 +860,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
         shops: shops.length,
         tables: shops.reduce((n, s) => n + s.tables.length, 0),
         menuItems: menuIds.length,
-        users: dinerIds.length + 2,
+        users: dinerIds.length + 4,
         carts: specs.length,
         payments,
         refunds,

@@ -123,13 +123,13 @@ To see card payments finish on their own, forward Stripe's events to the dev ser
 stripe listen --events payment_intent.amount_capturable_updated,payment_intent.succeeded,payment_intent.payment_failed,payment_intent.canceled,refund.failed --forward-to localhost:3001/payments/stripe/webhook
 ```
 
-For something to look at, and a manager to sign in as, write the demo data: three venues with menus and tables, a second manager at the café, forty diners, ninety days of payments and refunds shaped the way a real history is (busy hours, regulars, a new dish, a bad week), and the live table states. Set `DEMO_MANAGER_PASSWORD` and `DEMO_DINER_PASSWORD` in `.env` first; the manager is `manager@mail.com`. The tables' QR codes point at `FRONTEND_URL`, so a deployed database is seeded with it set to the live client. The live demo is reseeded every night by a workflow, from repository secrets ([operations](./docs/operations.md#the-demo-data)).
+For something to look at, and a manager to sign in as, write the demo data: three venues with menus and tables, the café's staff (a second manager, a till, a kitchen), forty diners, ninety days of payments and refunds shaped the way a real history is (busy hours, regulars, a new dish, a bad week), and the live table states. Set `DEMO_MANAGER_PASSWORD` and `DEMO_DINER_PASSWORD` in `.env` first; the manager is `manager@mail.com`. The tables' QR codes point at `FRONTEND_URL`, so a deployed database is seeded with it set to the live client. The live demo is reseeded every night by a workflow, from repository secrets ([operations](./docs/operations.md#the-demo-data)).
 
 ```bash
 npm run seed:demo
 ```
 
-A shop's staff are its members: an owner, who adds the managers by email (an existing account is attached, a new one is created with a first password the owner passes on), and managers. An account with the `shopMg` role can open shops of its own, and one with the `admin` role can do everything on every shop and manage accounts; neither role comes from the sign-up form. An administrator gives them from the app; the first administrator is set in the database ([operations](./docs/operations.md#the-first-administrator)):
+A shop's staff are its members, each with a role: an owner, who adds the managers by email (an existing account is attached, a new one is created with a first password the owner passes on); managers, who run the shop and add the three roles below them; and till (the tables and the money), floor (the tables, no money) and kitchen (reads the tables and their orders), each able to call exactly the routes its role holds ([auth.md](./docs/auth.md#what-each-role-may-do)). An account with the `shopMg` role can open shops of its own, and one with the `admin` role can do everything on every shop and manage accounts; neither role comes from the sign-up form. An administrator gives them from the app; the first administrator is set in the database ([operations](./docs/operations.md#the-first-administrator)):
 
 ```js
 db.users.updateOne({ email: "you@example.com" }, { $set: { role: "admin" } })
@@ -204,7 +204,7 @@ The contract is an OpenAPI 3.1 document the server builds from its own code, bro
 
 ## Roadmap
 
-Next is staff roles (till, floor, kitchen), narrowing what each member of a shop can do, then kitchen screens with live updates. The list and its order are in [known-gaps.md](./docs/known-gaps.md#roadmap).
+Next is kitchen screens with live updates: a queue, prep states and live push, for the kitchen role that now exists. The list and its order are in [known-gaps.md](./docs/known-gaps.md#roadmap).
 
 ## About
 
