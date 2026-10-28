@@ -134,8 +134,11 @@ describe("the demo seed", () => {
         ])
         expect(evenings[0]).toMatchObject({ _id: "long_wait" })
         expect(evenings[0].n).toBeGreaterThan(evenings.reduce((s, r) => s + r.n, 0) / 2)
-        // The bad week: fewer sales than the weeks either side.
-        const week = (from: number) => sales({ paidAt: { $gte: days(from), $lt: days(from - 7) } })
+        // The bad week: fewer sales than the weeks either side. Counted on the
+        // shop's calendar days, as the seed halves them: a window slid from the
+        // test's clock lets part of an ordinary day in.
+        const dayStart = (ago: number) => startOfDay(addDays(dayIn(NOW, "Europe/London"), -ago), "Europe/London")
+        const week = (from: number) => sales({ paidAt: { $gte: dayStart(from), $lt: dayStart(from - 7) } })
         expect(await week(38)).toBeLessThan(0.8 * Math.min(await week(45), await week(31)))
     })
 

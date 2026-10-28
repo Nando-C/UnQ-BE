@@ -6,6 +6,10 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-10-22
+
+Staff roles: a shop's members hold one of five roles, owner, manager, and below manager till, floor and kitchen, and each shop route names the ability a role must hold. Nothing changes on the host, in the data (every stored role is still valid) or for a front end at 2.4.0. The front end at 2.5.0 shows each member the controls their role may press, asks for the role when adding staff and changes a member's role.
+
 ### Added
 
 - **Staff roles.** Three roles below manager on a shop's `members`: `till` (the tables and the money), `floor` (the tables, no money) and `kitchen` (reads the tables and their orders); every member may flip a dish's availability. The owner adds, removes and re-roles anyone but the owner; a manager handles the three below. A new route changes a member's role (`PUT /shops/:shopId/staff/:userId`). Each shop route names an ability and one table says which roles hold it; every guarded operation in the OpenAPI document carries `x-ability` and `x-roles`, checked against the routes by the tests. A member whose role lacks the ability gets `403 "Your role on this shop doesn't allow this"`. The shop is handed over to a manager only (`403 "Make them a manager first"` for the roles below). The demo seed gives the café a till and a kitchen beside its second manager, with no sign-in, so the staff list shows the roles. [docs/auth.md](./docs/auth.md#what-each-role-may-do), [docs/decisions.md](./docs/decisions.md#2026-10-22-routes-check-abilities-not-roles-the-ability-travels-in-the-contract).
