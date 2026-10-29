@@ -11,12 +11,14 @@
 // the real sync, so the sales report has data.
 //
 // The history has the shapes a sales page should show: a lunch and a dinner
-// peak within each shop's hours, a gentle rise in visits over the 90 days,
-// regulars who come back and newcomers at every shop in any month and on its
-// latest open days, a dish launched in week six,
+// peak within each shop's hours, regulars who come back and newcomers at every
+// shop in any month and on its latest open days, a dish launched in week six,
 // refund causes weighted the way a kitchen's are (long waits cluster on busy
-// evenings), and one bad week at the café. Days and hours are the shops' own
-// (Europe/London), wherever the seed runs.
+// evenings), and one story per shop, strong enough to read through the random
+// draws on any day: the café doing well (a rise over the 90 days, a bad week
+// five weeks back, its best week the one just gone), the restaurant struggling
+// (a fall, and its worst week the one just gone), the pop-up new and growing.
+// Days and hours are the shops' own (Europe/London), wherever the seed runs.
 //
 // Reproducible: every id, name, quantity and date comes from a seeded random
 // generator (one main sequence; the café's till and kitchen, added later, draw
@@ -117,10 +119,14 @@ type ShopDef = {
     closeHour: number
     // The busy hours (from, to), where most visits start.
     peaks: [from: number, to: number][]
-    // How much busier the last day is than the first (0.3: thirty per cent).
+    // How much busier the last day is than the first (0.3: thirty per cent
+    // more; -0.5: half as busy), a straight line through the history.
     growth: number
-    // A week (first and last day, as days ago) of fewer visits and more refunds.
+    // A week (first and last day, as days ago) of half the visits and more
+    // refunds, mostly for the wait.
     badWeek?: [from: number, to: number]
+    // A week of a third more visits.
+    goodWeek?: [from: number, to: number]
     // The first day of its history.
     since: number
 }
@@ -309,12 +315,13 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
                 { name: "Carrot Cake", short_description: "Spiced, loaded with walnuts, under a thick cream-cheese frosting", description: "A tall slice of moist spiced carrot cake with toasted walnuts and a thick layer of cream-cheese frosting. Our bestseller with a flat white.", price: 4.2, category: "food" },
                 { name: "Pumpkin Soup", short_description: "Roasted pumpkin, toasted seeds, warm bread (autumn only)", description: "Slow-roasted pumpkin blended with onion and a touch of nutmeg, topped with toasted seeds and served with warm bread. On the menu for the autumn months only.", price: 6.5, category: "food", deleted: true },
             ].map((item): ShopDef["items"][number] => ({ ...(item as Item), id: rng.oid() })),
-            visits: (dow) => (dow === 0 || dow === 6 ? [6, 9] : [3, 5]),
+            visits: (dow) => (dow === 0 || dow === 6 ? [12, 16] : [6, 9]),
             openHour: 8,
             closeHour: 16,
             peaks: [[8, 10], [12, 14]],
-            growth: 0.5,
+            growth: 0.8,
             badWeek: [38, 32],
+            goodWeek: [7, 1],
             since: 90,
         },
         {
@@ -347,11 +354,12 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
                 { name: "Affogato", short_description: "A scoop of vanilla gelato drowned in a hot double espresso", description: "Madagascan vanilla gelato in a cold glass, drowned at the table with a hot double espresso. Dessert and coffee in one; add amaretto if you like.", price: 5.5, category: "food" },
                 { name: "Sea Bass", short_description: "Whole sea bass grilled over charcoal with lemon and herbs (summer menu)", description: "A whole sea bass grilled over charcoal and dressed with lemon, olive oil and soft herbs, served with new potatoes. A summer-menu dish.", price: 21, category: "food", deleted: true },
             ].map((item): ShopDef["items"][number] => ({ ...(item as Item), id: rng.oid() })),
-            visits: (dow) => (dow === 1 ? null : dow === 5 || dow === 6 ? [8, 11] : [4, 7]),
+            visits: (dow) => (dow === 1 ? null : dow === 5 || dow === 6 ? [16, 18] : [9, 10]),
             openHour: 12,
             closeHour: 22,
             peaks: [[12, 14], [18, 21]],
-            growth: 0.2,
+            growth: -0.5,
+            badWeek: [7, 1],
             since: 90,
         },
         {
@@ -373,11 +381,11 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
                 { name: "Iced Tea", short_description: "Cold-brewed jasmine tea over ice, lightly sweet", description: "Jasmine green tea cold-brewed overnight so it's smooth and never bitter, poured over ice and just lightly sweetened.", price: 3, category: "drinks" },
                 { name: "Yuzu Lemonade", short_description: "Fresh lemonade sharpened with Japanese yuzu, over crushed ice", description: "Fresh-squeezed lemonade with a shot of Japanese yuzu juice for a floral, sharp finish, served over crushed ice.", price: 3, category: "drinks" },
             ].map((item): ShopDef["items"][number] => ({ ...(item as Item), id: rng.oid() })),
-            visits: (dow) => (dow === 6 ? [10, 16] : null),
+            visits: (dow) => (dow === 6 ? [16, 16] : null),
             openHour: 10,
             closeHour: 16,
             peaks: [[12, 14]],
-            growth: 0,
+            growth: 0.6,
             since: 20,
         },
     ]
@@ -540,9 +548,11 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
             const dow = weekdayOf(dayOf(daysAgo))
             const range = shop.visits(dow)
             if (!range) continue
-            const bad = !!shop.badWeek && daysAgo <= shop.badWeek[0] && daysAgo >= shop.badWeek[1]
-            // Busier as the days go by; the bad week well under.
-            const trend = (1 + shop.growth * (1 - daysAgo / shop.since)) * (bad ? 0.5 : 1)
+            const within = (week?: [number, number]) => !!week && daysAgo <= week[0] && daysAgo >= week[1]
+            const bad = within(shop.badWeek)
+            // The shop's line through its days (a rise or a fall); the bad week
+            // well under it, the good week over.
+            const trend = (1 + shop.growth * (1 - daysAgo / shop.since)) * (bad ? 0.5 : within(shop.goodWeek) ? 1.3 : 1)
             // Whoever's first visit here is due (on the shop's next open day).
             const debutants = occasionals.filter((id) => { const d = debuts.get(String(id))!; return d.shop === shop && !d.done && d.daysAgo >= daysAgo })
             debutants.forEach((id) => { debuts.get(String(id))!.done = true })
@@ -556,7 +566,7 @@ export const seedDemo = async ({ managerPassword, dinerPassword, now = new Date(
                 const hour = Math.min(rng.int(from, to), shop.closeHour - 2)
                 const openedAt = dayAt(daysAgo, hour, rng.int(0, 59))
                 const onMenu = shop.items.filter((i) => !i.soldOut && (!i.deleted || daysAgo > 30) && (i.launchedDaysAgo == null || daysAgo <= i.launchedDaysAgo))
-                const lines: Line[] = rng.some(onMenu, rng.int(2, 5)).map((item) => ({ item, qty: rng.int(1, 3) }))
+                const lines: Line[] = rng.some(onMenu, rng.int(2, 5)).map((item) => ({ item, qty: rng.weighted([[1, 70], [2, 25], [3, 5]]) }))
                 // Regulars bring most of the visits; the others, those who have
                 // turned up by this day, come now and then. A first visit is
                 // the newcomer's, with a regular or two along.

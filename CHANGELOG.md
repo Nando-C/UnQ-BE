@@ -6,6 +6,10 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 
 ## [Unreleased]
 
+### Changed
+
+- **The demo's three venues each tell one story.** The café is doing well, nearly twice as busy at the end of its ninety days as at the start, with its bad week five weeks back and its best week the one just gone; the restaurant is struggling, half as busy as it was and with its worst week the one just gone; the pop-up opened less than three weeks ago and is growing fast. The figures on My Shops and the Sales tab now read the same way whatever day the seed runs: the café and the pop-up up on the week and the month before, the restaurant down on both. The venues are busier than before, and most lines are for one of an item. [docs/operations.md](./docs/operations.md#the-demo-data).
+
 ## [2.5.0] - 2026-10-22
 
 Staff roles: a shop's members hold one of five roles, owner, manager, and below manager till, floor and kitchen, and each shop route names the ability a role must hold. Nothing changes on the host, in the data (every stored role is still valid) or for a front end at 2.4.0. The front end at 2.5.0 shows each member the controls their role may press, asks for the role when adding staff and changes a member's role.
