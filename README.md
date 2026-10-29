@@ -204,7 +204,7 @@ The contract is an OpenAPI 3.1 document the server builds from its own code, bro
 
 ## Roadmap
 
-Next is kitchen screens with live updates: a queue, prep states and live push, for the kitchen role that now exists. The list and its order are in [known-gaps.md](./docs/known-gaps.md#roadmap).
+Next is kitchen screens with live updates: a queue, prep states and live push, for the kitchen role that now exists; then a map of the venues, a position on each shop and a near query. The list and its order are in [known-gaps.md](./docs/known-gaps.md#roadmap).
 
 ## About
 

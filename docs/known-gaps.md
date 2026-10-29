@@ -48,4 +48,4 @@ Each changes behaviour, a contract, stored data or several layers at once, so ea
 
 ## Roadmap
 
-In the order decided with the product roadmap, now that the sales report, the shop at a glance on My Shops, staff on a shop (members, the owner, the administrator, the account and staff routes) and staff roles (till, floor, kitchen, by ability) are in: **kitchen** (queue, prep states, live push); **live payment keys**, a deliberate switch rather than a release step.
+In the order decided with the product roadmap, now that the sales report, the shop at a glance on My Shops, staff on a shop (members, the owner, the administrator, the account and staff routes) and staff roles (till, floor, kitchen, by ability) are in: **kitchen** (queue, prep states, live push); **a map of the venues**, a position on each shop set by its staff and a near query with a 2dsphere index; **live payment keys**, a deliberate switch rather than a release step.
