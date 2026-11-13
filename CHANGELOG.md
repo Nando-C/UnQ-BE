@@ -9,6 +9,11 @@ UnQ ships as two repositories that release together. A front-end release `x.y.*`
 ### Changed
 
 - **The demo's three venues each tell one story.** The café is doing well, nearly twice as busy at the end of its ninety days as at the start, with its bad week five weeks back and its best week the one just gone; the restaurant is struggling, half as busy as it was and with its worst week the one just gone; the pop-up opened less than three weeks ago and is growing fast. The figures on My Shops and the Sales tab now read the same way whatever day the seed runs: the café and the pop-up up on the week and the month before, the restaurant down on both. The venues are busier than before, and most lines are for one of an item. [docs/operations.md](./docs/operations.md#the-demo-data).
+- **Stripe's API version is `2026-10-28.endive`**, the one the Stripe client at 23.1.0 is built for. The calls UnQ makes (card payments held and captured, refunds) answer in the same shapes under both versions.
+
+### Security
+
+- `body-parser` 2.4.0 and `qs` 6.17.1, under Express: a compressed request body with trailing bytes could keep the server busy (GHSA advisory on `body-parser` 2.0.0 to 2.3.0), and `qs` could throw on an unusual array. `npm audit --omit=dev` reports nothing.
 
 ## [2.5.0] - 2026-10-22
 
