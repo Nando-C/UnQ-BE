@@ -28,7 +28,7 @@
   "devDependencies": {
     "@emnapi/core": "^1.11.3",
     "@emnapi/runtime": "^1.11.3",
-    "@seriousme/openapi-schema-validator": "^2.11.0",
+    "@seriousme/openapi-schema-validator": "^2.12.0",
     "@types/bcrypt": "^6.0.0",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
@@ -44,27 +44,27 @@
     "eslint": "^10.14.0",
     "jest": "^30.4.2",
     "mongodb-memory-server": "^11.2.0",
-    "supertest": "^7.3.1",
+    "supertest": "^7.3.2",
     "ts-jest": "^29.4.15",
     "tsx": "^4.23.0",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.72.1"
+    "typescript-eslint": "^8.73.0"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
     "cloudinary": "^2.7.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
-    "dotenv": "^18.0.9",
+    "dotenv": "^18.0.10",
     "express": "^5.2.1",
-    "express-rate-limit": "^8.7.2",
+    "express-rate-limit": "^8.7.5",
     "http-errors": "^2.0.1",
     "jsonwebtoken": "^9.0.2",
-    "mongoose": "^9.11.4",
+    "mongoose": "^9.12.2",
     "multer": "^2.5.0",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
-    "stripe": "^23.1.0",
+    "stripe": "^23.2.0",
     "zod": "^4.6.7"
   },
   "overrides": {
